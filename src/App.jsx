@@ -3,6 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import Tickets from './pages/Tickets'
+import NewTicket from './pages/NewTicket'
+import TicketDetail from './pages/TicketDetail'
 
 const queryClient = new QueryClient()
 
@@ -36,6 +39,30 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tickets"
+              element={
+                <ProtectedRoute>
+                  <Tickets />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tickets/new"
+              element={
+                <ProtectedRoute>
+                  <NewTicket />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tickets/:id"
+              element={
+                <ProtectedRoute>
+                  <TicketDetail />
                 </ProtectedRoute>
               }
             />
