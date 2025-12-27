@@ -179,6 +179,37 @@ export default function TicketDetail() {
             </div>
           </div>
 
+          {/* Photos */}
+          {ticket.photos && ticket.photos.length > 0 && (
+            <div className="p-6 border-b">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Photos</h2>
+              <div className="space-y-2">
+                {ticket.photos.map((photoUrl, index) => (
+                  <a
+                    key={index}
+                    href={photoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors group"
+                  >
+                    <svg className="w-5 h-5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span className="flex-1 text-sm text-gray-700 group-hover:text-gray-900 truncate">
+                      Photo {index + 1}
+                    </span>
+                    <svg className="w-5 h-5 text-gray-400 group-hover:text-blue-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-gray-500">
+                💡 Click on a link to open the photo in Google Drive
+              </p>
+            </div>
+          )}
+
           {/* Management Section (Editable for Maintenance Exec) */}
           {canEdit && (
             <div className="p-6 border-b bg-gray-50">
