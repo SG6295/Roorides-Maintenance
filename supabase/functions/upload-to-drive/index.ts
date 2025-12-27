@@ -121,26 +121,50 @@ serve(async (req) => {
     const fileBuffer = await file.arrayBuffer()
     const fileName = `${Date.now()}-${file.name}`
 
-    // Upload to Google Drive
+    // Upload to Google Drive using proper binary multipart
+    const boundary = '-------314159265358979323846'
     const metadata = {
       name: fileName,
       parents: [driveFolderId],
     }
 
-    // Create file in Google Drive
-    const boundary = '-------314159265358979323846'
-    const delimiter = `\r\n--${boundary}\r\n`
-    const closeDelimiter = `\r\n--${boundary}--`
+    // Build multipart body parts
+    const encoder = new TextEncoder()
 
-    const multipartRequestBody =
-      delimiter +
-      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-      JSON.stringify(metadata) +
-      delimiter +
-      `Content-Type: ${file.type}\r\n` +
-      'Content-Transfer-Encoding: base64\r\n\r\n' +
-      btoa(String.fromCharCode(...new Uint8Array(fileBuffer))) +
-      closeDelimiter
+    const metadataPart = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      ''
+    ].join('\r\n')
+
+    const filePart = [
+      `--${boundary}`,
+      `Content-Type: ${file.type || 'application/octet-stream'}`,
+      '',
+      ''
+    ].join('\r\n')
+
+    const footer = `\r\n--${boundary}--`
+
+    // Combine as binary (handles large files)
+    const metadataBytes = encoder.encode(metadataPart)
+    const fileHeaderBytes = encoder.encode(filePart)
+    const fileBytes = new Uint8Array(fileBuffer)
+    const footerBytes = encoder.encode(footer)
+
+    const totalLength = metadataBytes.length + fileHeaderBytes.length + fileBytes.length + footerBytes.length
+    const multipartBody = new Uint8Array(totalLength)
+
+    let offset = 0
+    multipartBody.set(metadataBytes, offset)
+    offset += metadataBytes.length
+    multipartBody.set(fileHeaderBytes, offset)
+    offset += fileHeaderBytes.length
+    multipartBody.set(fileBytes, offset)
+    offset += fileBytes.length
+    multipartBody.set(footerBytes, offset)
 
     const uploadResponse = await fetch(
       'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
@@ -150,7 +174,7 @@ serve(async (req) => {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': `multipart/related; boundary=${boundary}`,
         },
-        body: multipartRequestBody,
+        body: multipartBody, // Binary body, not string
       }
     )
 
