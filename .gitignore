@@ -34,3 +34,6 @@ service-account.json
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI temp files
+supabase/.temp/

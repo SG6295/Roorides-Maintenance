@@ -79,6 +79,40 @@ serve(async (req) => {
       )
     }
 
+    // Debug: Verify key format
+    console.log('Environment check:', {
+      hasEmail: !!serviceAccountEmail,
+      hasKey: !!serviceAccountKey,
+      hasFolderId: !!driveFolderId,
+      emailValue: serviceAccountEmail,
+      keyPrefix: serviceAccountKey?.substring(0, 30),
+      keyHasBegin: serviceAccountKey.includes('BEGIN PRIVATE KEY'),
+      keyHasEnd: serviceAccountKey.includes('END PRIVATE KEY'),
+      keyLength: serviceAccountKey.length
+    })
+
+    // Validate file before processing
+    if (file.size > 50 * 1024 * 1024) { // 50MB limit
+      return new Response(
+        JSON.stringify({ error: 'File too large. Max 50MB.' }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      )
+    }
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg']
+    if (!allowedTypes.includes(file.type)) {
+      return new Response(
+        JSON.stringify({ error: `Invalid file type: ${file.type}. Only images allowed.` }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      )
+    }
+
     // Get access token using service account
     const jwtToken = await createJWT(serviceAccountEmail, serviceAccountKey)
     const accessToken = await getAccessToken(jwtToken)
@@ -122,9 +156,17 @@ serve(async (req) => {
 
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text()
-      console.error('Google Drive upload failed:', errorText)
+      console.error('Google Drive upload failed:', {
+        status: uploadResponse.status,
+        statusText: uploadResponse.statusText,
+        error: errorText
+      })
       return new Response(
-        JSON.stringify({ error: 'Failed to upload to Google Drive' }),
+        JSON.stringify({
+          error: 'Failed to upload to Google Drive',
+          details: errorText,
+          status: uploadResponse.status
+        }),
         {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -135,8 +177,19 @@ serve(async (req) => {
     const uploadResult = await uploadResponse.json()
     const fileId = uploadResult.id
 
+    if (!fileId) {
+      console.error('No file ID in upload response:', uploadResult)
+      return new Response(
+        JSON.stringify({ error: 'Upload succeeded but no file ID returned' }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      )
+    }
+
     // Make file publicly accessible
-    await fetch(
+    const permResponse = await fetch(
       `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`,
       {
         method: 'POST',
@@ -150,6 +203,16 @@ serve(async (req) => {
         }),
       }
     )
+
+    if (!permResponse.ok) {
+      const permError = await permResponse.text()
+      console.error('Failed to set file permissions:', {
+        status: permResponse.status,
+        error: permError
+      })
+      // Don't fail the upload, but log the warning
+      console.warn('File uploaded but permissions not set. File may not be publicly accessible.')
+    }
 
     // Return the shareable link
     const shareableLink = `https://drive.google.com/file/d/${fileId}/view`
@@ -246,6 +309,23 @@ async function getAccessToken(jwt: string): Promise<string> {
   })
 
   const data = await response.json()
+
+  // CRITICAL: Check for errors from Google
+  if (!response.ok) {
+    console.error('Token exchange failed:', {
+      status: response.status,
+      error: data.error,
+      description: data.error_description,
+      fullResponse: data
+    })
+    throw new Error(`Token exchange failed: ${data.error_description || data.error || 'Unknown error'}`)
+  }
+
+  if (!data.access_token) {
+    console.error('No access token in response:', data)
+    throw new Error('No access token in response from Google')
+  }
+
   return data.access_token
 }
 
