@@ -1,37 +1,13 @@
 import { useAuth } from '../hooks/useAuth'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
+import Navigation from '../components/shared/Navigation'
 
 export default function Dashboard() {
-  const { userProfile, signOut } = useAuth()
-  const navigate = useNavigate()
-
-  const handleSignOut = async () => {
-    await signOut()
-    navigate('/login')
-  }
+  const { userProfile } = useAuth()
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <h1 className="text-xl font-bold text-gray-900">NVS Maintenance</h1>
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-700">
-                {userProfile?.name} ({userProfile?.role})
-              </span>
-              <button
-                onClick={handleSignOut}
-                className="text-sm text-gray-700 hover:text-gray-900"
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <Navigation />
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">

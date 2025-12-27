@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useCreateTicket, useSites, useVehicles } from '../../hooks/useTickets'
+import Navigation from '../shared/Navigation'
 
 export default function TicketForm() {
   const { userProfile } = useAuth()
@@ -51,13 +52,20 @@ export default function TicketForm() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm sticky top-0 z-10">
+      <Navigation
+        breadcrumbs={[
+          { label: 'Tickets', href: '/tickets' },
+          { label: 'New Ticket' },
+        ]}
+      />
+
+      {/* Header with Back Button */}
+      <div className="bg-white border-b">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center">
             <button
               onClick={() => navigate(-1)}
-              className="mr-4 text-gray-600 hover:text-gray-900"
+              className="mr-4 text-gray-600 hover:text-gray-900 font-medium"
             >
               ← Back
             </button>

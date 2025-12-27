@@ -3,6 +3,8 @@ import { format } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
 import { useTicket, useUpdateTicket } from '../hooks/useTickets'
 import { useState } from 'react'
+import Navigation from '../components/shared/Navigation'
+import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 
 export default function TicketDetail() {
   const { id } = useParams()
@@ -15,20 +17,30 @@ export default function TicketDetail() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading ticket...</div>
+      <div className="min-h-screen bg-gray-50">
+        <Navigation breadcrumbs={[{ label: 'Tickets', href: '/tickets' }, { label: 'Loading...' }]} />
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+          <TicketDetailSkeleton />
+        </div>
       </div>
     )
   }
 
   if (!ticket) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600 mb-4">Ticket not found</p>
-          <Link to="/tickets" className="text-blue-600 hover:text-blue-800">
-            ← Back to tickets
-          </Link>
+      <div className="min-h-screen bg-gray-50">
+        <Navigation breadcrumbs={[{ label: 'Tickets', href: '/tickets' }, { label: 'Not Found' }]} />
+        <div className="flex items-center justify-center py-16">
+          <div className="bg-white rounded-lg shadow p-12 text-center max-w-md">
+            <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 className="text-xl font-semibold text-gray-900 mb-2">Ticket not found</h2>
+            <p className="text-gray-600 mb-6">The ticket you're looking for doesn't exist or has been removed.</p>
+            <Link to="/tickets" className="inline-block bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
+              ← Back to Tickets
+            </Link>
+          </div>
         </div>
       </div>
     )
@@ -50,14 +62,21 @@ export default function TicketDetail() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <Navigation
+        breadcrumbs={[
+          { label: 'Tickets', href: '/tickets' },
+          { label: `Ticket #${ticket.ticket_number}` },
+        ]}
+      />
+
       {/* Header */}
-      <div className="bg-white shadow-sm sticky top-0 z-10">
+      <div className="bg-white border-b">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
                 onClick={() => navigate('/tickets')}
-                className="text-gray-600 hover:text-gray-900"
+                className="text-gray-600 hover:text-gray-900 font-medium"
               >
                 ← Back
               </button>
