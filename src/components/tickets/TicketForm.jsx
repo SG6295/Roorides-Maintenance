@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useCreateTicket, useSites, useVehicles } from '../../hooks/useTickets'
 import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
+import CustomSelect from '../shared/CustomSelect'
 
 export default function TicketForm() {
   const { userProfile } = useAuth()
@@ -18,6 +19,7 @@ export default function TicketForm() {
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors },
     watch,
   } = useForm({
@@ -87,66 +89,63 @@ export default function TicketForm() {
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Site */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Site <span className="text-red-500">*</span>
-            </label>
-            <select
-              {...register('site', { required: 'Site is required' })}
-              disabled={userProfile?.role === 'supervisor'}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-            >
-              <option value="">Select site</option>
-              {sites.map((site) => (
-                <option key={site.id} value={site.name}>
-                  {site.name}
-                </option>
-              ))}
-            </select>
-            {errors.site && (
-              <p className="mt-1 text-sm text-red-600">{errors.site.message}</p>
-            )}
+            <Controller
+              name="site"
+              control={control}
+              rules={{ required: 'Site is required' }}
+              render={({ field: { value, onChange }, fieldState: { error } }) => (
+                <CustomSelect
+                  label={<span>Site <span className="text-red-500">*</span></span>}
+                  value={value}
+                  onChange={onChange}
+                  options={sites}
+                  disabled={userProfile?.role === 'supervisor'}
+                  error={error}
+                  placeholder="Select site"
+                />
+              )}
+            />
           </div>
 
           {/* Vehicle Number */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Vehicle Number <span className="text-red-500">*</span>
-            </label>
-            <select
-              {...register('vehicle_number', { required: 'Vehicle number is required' })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Select vehicle</option>
-              {vehicles.map((vehicle) => (
-                <option key={vehicle.id} value={vehicle.number}>
-                  {vehicle.number} {vehicle.type && `(${vehicle.type})`}
-                </option>
-              ))}
-            </select>
-            {errors.vehicle_number && (
-              <p className="mt-1 text-sm text-red-600">{errors.vehicle_number.message}</p>
-            )}
+            <Controller
+              name="vehicle_number"
+              control={control}
+              rules={{ required: 'Vehicle number is required' }}
+              render={({ field: { value, onChange }, fieldState: { error } }) => (
+                <CustomSelect
+                  label={<span>Vehicle Number <span className="text-red-500">*</span></span>}
+                  value={value}
+                  onChange={onChange}
+                  options={vehicles.map(v => ({
+                    value: v.number,
+                    label: `${v.number} ${v.type ? `(${v.type})` : ''}`
+                  }))}
+                  error={error}
+                  placeholder="Select vehicle"
+                />
+              )}
+            />
           </div>
 
           {/* Category */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Category <span className="text-red-500">*</span>
-            </label>
-            <select
-              {...register('category', { required: 'Category is required' })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Select category</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-            {errors.category && (
-              <p className="mt-1 text-sm text-red-600">{errors.category.message}</p>
-            )}
+            <Controller
+              name="category"
+              control={control}
+              rules={{ required: 'Category is required' }}
+              render={({ field: { value, onChange }, fieldState: { error } }) => (
+                <CustomSelect
+                  label={<span>Category <span className="text-red-500">*</span></span>}
+                  value={value}
+                  onChange={onChange}
+                  options={categories}
+                  error={error}
+                  placeholder="Select category"
+                />
+              )}
+            />
           </div>
 
           {/* Complaint */}
