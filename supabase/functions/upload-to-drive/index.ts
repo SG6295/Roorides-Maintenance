@@ -67,7 +67,7 @@ serve(async (req) => {
     // Read service account credentials from environment
     const serviceAccountEmail = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_EMAIL')
     const serviceAccountKey = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY')
-    const driveFolderId = Deno.env.get('GOOGLE_DRIVE_FOLDER_ID')
+    const driveFolderId = '0ACqst8kJVkKPUk9PVA' // Deno.env.get('GOOGLE_DRIVE_FOLDER_ID')
 
     if (!serviceAccountEmail || !serviceAccountKey || !driveFolderId) {
       return new Response(
@@ -167,7 +167,7 @@ serve(async (req) => {
     multipartBody.set(footerBytes, offset)
 
     const uploadResponse = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
       {
         method: 'POST',
         headers: {
