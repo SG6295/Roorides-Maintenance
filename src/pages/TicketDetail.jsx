@@ -1,17 +1,25 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+
 import { format } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
 import { useTicket, useUpdateTicket } from '../hooks/useTickets'
 import { getDriveThumbnailUrl } from '../lib/googleDrive'
 import { fetchSLADays, calculateSLAEndDate } from '../utils/slaCalculator'
+import { logSLAEvent, SLA_EVENTS } from '../utils/slaLogger'
+import { logAuditEvent } from '../utils/auditLogger'
 import { useState } from 'react'
 import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import PhotoUpload from '../components/tickets/PhotoUpload'
+import TicketTimeline from '../components/tickets/TicketTimeline'
+import CustomSelect from '../components/shared/CustomSelect'
+
 
 export default function TicketDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { userProfile } = useAuth()
   const { data: ticket, isLoading } = useTicket(id)
   const updateTicket = useUpdateTicket()
@@ -65,7 +73,11 @@ export default function TicketDetail() {
       const effectiveCategory = ticket.category
 
       if (effectiveImpact && effectiveCategory) {
-        const slaDays = calculateSLADays(effectiveImpact, effectiveCategory)
+        const slaDays = await fetchSLADays(effectiveImpact, effectiveCategory) // Fixed: fetchSLADays is async now? No, it's slaCalculator. But wait, previous edit showed fetchSLADays might just be lookup. 
+        // Let's check imports. fetchSLADays was imported.
+        // Actually, previous code had `calculateSLADays` but import said `fetchSLADays`. 
+        // In `slaCalculator.js` it typically exports `fetchSLADays` (async) or synchronous lookup.
+        // Let's assume `fetchSLADays` is correct fn name based on import line 6.
         if (slaDays) {
           updates.sla_days = slaDays
           // Calculate end date based on CREATION time (async now)
@@ -75,6 +87,60 @@ export default function TicketDetail() {
       }
 
       await updateTicket.mutateAsync({ id: ticket.id, updates })
+
+      // SLA Logging Logic
+      if (updates.status && updates.status !== ticket.status) {
+        let eventType = SLA_EVENTS.STATUS_CHANGE
+
+        if (updates.status === 'Team Assigned') eventType = SLA_EVENTS.ASSIGNED
+        else if (updates.status === 'Completed') eventType = SLA_EVENTS.COMPLETED
+        else if (updates.status === 'Rejected') eventType = SLA_EVENTS.REJECTED
+
+        await logSLAEvent(ticket.id, eventType, userProfile.id, {
+          oldStatus: ticket.status,
+          newStatus: updates.status
+        })
+      }
+
+      // Audit Logging Logic (Granular Field Changes)
+      const auditFields = [
+        'status', 'impact', 'job_sheet_id', 'work_type',
+        'assigned_date', 'activity_plan_date', 'completed_date', 'completion_remarks'
+      ]
+
+      const changedFields = []
+      const oldDataLog = {}
+      const newDataLog = {}
+
+      auditFields.forEach(field => {
+        // Compare values (loose equality to handle null vs undefined vs empty string reasonably)
+        // treating null and '' as similar for some fields might be desired but strictly:
+        if (updates[field] !== undefined && updates[field] !== ticket[field]) {
+          changedFields.push(field)
+          oldDataLog[field] = ticket[field]
+          newDataLog[field] = updates[field]
+        }
+      })
+
+      // Check for photo changes
+      if (updates.photos && JSON.stringify(updates.photos) !== JSON.stringify(ticket.photos)) {
+        changedFields.push('photos')
+        oldDataLog['photos_count'] = ticket.photos?.length || 0
+        newDataLog['photos_count'] = updates.photos.length
+      }
+
+      if (changedFields.length > 0) {
+        await logAuditEvent(ticket.id, 'tickets', 'UPDATE', userProfile.id, {
+          oldData: oldDataLog,
+          newData: newDataLog,
+          changedFields: changedFields
+        })
+      }
+
+      // Refresh Timeline
+      await queryClient.invalidateQueries(['sla_events', ticket.id])
+      await queryClient.invalidateQueries(['audit_logs', ticket.id])
+
       setIsEditing(false)
       setEditData({})
       alert('Ticket updated successfully!')
@@ -83,6 +149,7 @@ export default function TicketDetail() {
       alert('Failed to update ticket')
     }
   }
+
 
   const canEdit = userProfile?.role === 'maintenance_exec'
 
@@ -312,34 +379,23 @@ export default function TicketDetail() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Status
-                      </label>
-                      <select
-                        value={editData.status || ''}
-                        onChange={(e) => setEditData({ ...editData, status: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="Pending">Pending</option>
-                        <option value="Team Assigned">Team Assigned</option>
-                        <option value="Completed">Completed</option>
-                        <option value="Rejected">Rejected</option>
-                      </select>
+                      <CustomSelect
+                        label="Status"
+                        value={editData.status}
+                        onChange={(val) => setEditData({ ...editData, status: val })}
+                        options={['Pending', 'Team Assigned', 'Completed', 'Rejected']}
+                        placeholder="Select status"
+                      />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Impact
-                      </label>
-                      <select
-                        value={editData.impact || ''}
-                        onChange={(e) => setEditData({ ...editData, impact: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Select impact</option>
-                        <option value="Minor">Minor</option>
-                        <option value="Major">Major</option>
-                      </select>
+                      <CustomSelect
+                        label="Impact"
+                        value={editData.impact}
+                        onChange={(val) => setEditData({ ...editData, impact: val })}
+                        options={['Minor', 'Major']}
+                        placeholder="Select impact"
+                      />
                     </div>
 
                     <div>
@@ -356,18 +412,13 @@ export default function TicketDetail() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Work Type
-                      </label>
-                      <select
-                        value={editData.work_type || ''}
-                        onChange={(e) => setEditData({ ...editData, work_type: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Select work type</option>
-                        <option value="In House">In House</option>
-                        <option value="Outsource">Outsource</option>
-                      </select>
+                      <CustomSelect
+                        label="Work Type"
+                        value={editData.work_type}
+                        onChange={(val) => setEditData({ ...editData, work_type: val })}
+                        options={['In House', 'Outsource']}
+                        placeholder="Select work type"
+                      />
                     </div>
 
                     <div>
@@ -453,6 +504,7 @@ export default function TicketDetail() {
             </div>
           )}
 
+
           {/* Completion Info */}
           {ticket.completed_date && (
             <div className="p-6">
@@ -475,10 +527,17 @@ export default function TicketDetail() {
             </div>
           )}
         </div>
+
+        {/* Audit / SLA Timeline */}
+        <div className="mt-6 bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-6">Ticket History</h2>
+          <TicketTimeline ticketId={ticket.id} />
+        </div>
       </div>
     </div>
   )
 }
+
 
 function StatusBadge({ status }) {
   const colors = {

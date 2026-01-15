@@ -6,6 +6,7 @@ import { useCreateTicket, useSites, useVehicles } from '../../hooks/useTickets'
 import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
 import CustomSelect from '../shared/CustomSelect'
+import { logSLAEvent, SLA_EVENTS } from '../../utils/slaLogger'
 
 export default function TicketForm() {
   const { userProfile } = useAuth()
@@ -47,7 +48,14 @@ export default function TicketForm() {
         photos: photoUrls.length > 0 ? photoUrls : null
       }
 
-      await createTicket.mutateAsync(ticketData)
+      // Create ticket and get the new record
+      const newTicket = await createTicket.mutateAsync(ticketData)
+
+      // Log SLA Event: CREATED
+      if (newTicket?.id) {
+        await logSLAEvent(newTicket.id, SLA_EVENTS.CREATED, userProfile.id)
+      }
+
       alert('Ticket submitted successfully!')
       navigate('/tickets')
     } catch (error) {
@@ -57,6 +65,7 @@ export default function TicketForm() {
   }
 
   const categories = ['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS/Camera', 'Other']
+
 
   const [photoUrls, setPhotoUrls] = useState([])
 
