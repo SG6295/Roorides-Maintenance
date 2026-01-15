@@ -8,10 +8,12 @@ import NewTicket from './pages/NewTicket'
 import TicketDetail from './pages/TicketDetail'
 import SLASettings from './pages/SLASettings'
 
+import Users from './pages/Users'
+
 const queryClient = new QueryClient()
 
-function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth()
+function ProtectedRoute({ children, allowedRoles = [] }) {
+  const { user, userProfile, loading } = useAuth()
 
   if (loading) {
     return (
@@ -23,6 +25,11 @@ function ProtectedRoute({ children }) {
 
   if (!user) {
     return <Navigate to="/login" />
+  }
+
+  // Role check
+  if (allowedRoles.length > 0 && userProfile && !allowedRoles.includes(userProfile.role)) {
+    return <Navigate to="/dashboard" replace />
   }
 
   return children
@@ -64,6 +71,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <TicketDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec']}>
+                  <Users />
                 </ProtectedRoute>
               }
             />

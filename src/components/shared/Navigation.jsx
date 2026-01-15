@@ -1,7 +1,7 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 
-export default function Navigation({ breadcrumbs = [] }) {
+export default function Navigation({ breadcrumbs = [], actions }) {
   const { userProfile, signOut } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -16,18 +16,31 @@ export default function Navigation({ breadcrumbs = [] }) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Top Bar */}
         <div className="flex justify-between h-16 items-center">
-          <Link to="/dashboard" className="text-xl font-bold text-gray-900 hover:text-blue-600">
-            NVS Maintenance
-          </Link>
+          <div className="flex items-center">
+            <Link to="/dashboard" className="text-xl font-bold text-gray-900 hover:text-blue-600 mr-8">
+              NVS Maintenance
+            </Link>
+          </div>
 
           <div className="flex items-center space-x-4">
+            {actions && (
+              <div className="mr-4">
+                {actions}
+              </div>
+            )}
+
             <span className="text-sm text-gray-700 hidden sm:inline">
               {userProfile?.name} ({userProfile?.role})
             </span>
             {userProfile?.role === 'maintenance_exec' && (
-              <Link to="/sla-settings" className="text-sm text-blue-600 hover:text-blue-800">
-                SLA Settings
-              </Link>
+              <>
+                <Link to="/users" className="text-sm text-blue-600 hover:text-blue-800">
+                  Users
+                </Link>
+                <Link to="/sla-settings" className="text-sm text-blue-600 hover:text-blue-800">
+                  SLA Settings
+                </Link>
+              </>
             )}
             <button
               onClick={handleSignOut}
