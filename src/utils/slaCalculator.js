@@ -1,59 +1,121 @@
-// SLA Rules from PRD
-const SLA_RULES = {
-  'Major-Electrical': 7,
-  'Major-Mechanical': 15,
-  'Major-Body': 30,
-  'Major-Tyre': 15,
-  'Major-GPS/Camera': 3,
-  'Minor-Electrical': 3,
-  'Minor-Mechanical': 3,
-  'Minor-Body': 3,
-  'Minor-Tyre': 3,
-  'Minor-GPS/Camera': 3,
-  'Minor-Other': 3,
-  'Major-Other': 7,
-}
+import { supabase } from '../lib/supabase'
 
-const ASSIGNMENT_SLA_DAYS = 1
+/* 
+ * NOTE: Assignment SLA is dynamic based on system_settings.
+ * Completion SLA is dynamic based on database rules.
+ */
+
+// Default fallback if DB fetch fails
+const DEFAULT_ASSIGNMENT_SLA_DAYS = 1
 
 /**
- * Calculate SLA days based on impact and category
+ * Fetch a system setting by key
  */
-export function calculateSLADays(impact, category) {
-  if (!impact || !category) return null
+export async function fetchSystemSetting(key) {
+  try {
+    const { data, error } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', key)
+      .single()
 
-  const key = `${impact}-${category}`
-  return SLA_RULES[key] || 3 // default to 3 days
+    if (error) return null
+    return data.value
+  } catch (err) {
+    console.error(`Error fetching setting ${key}:`, err)
+    return null
+  }
 }
 
 /**
- * Calculate SLA end date from creation date
+ * Fetch SLA days from database based on impact and category
+ * Returns default 3 if not found or error
  */
-export function calculateSLAEndDate(createdAt, slaDays) {
+export async function fetchSLADays(impact, category) {
+  if (!impact || !category) return 3
+
+  try {
+    const { data, error } = await supabase
+      .from('sla_rules')
+      .select('days')
+      .eq('impact', impact)
+      .eq('category', category)
+      .single()
+
+    if (error || !data) {
+      console.warn('SLA rule not found, using default 3 days', error)
+      return 3
+    }
+
+    return data.days
+  } catch (err) {
+    console.error('Error fetching SLA:', err)
+    return 3
+  }
+}
+
+/**
+ * Calculate SLA end date skipping holidays and weekly offs
+ */
+export async function calculateSLAEndDate(createdAt, slaDays) {
   if (!createdAt || !slaDays) return null
 
-  const date = new Date(createdAt)
-  date.setDate(date.getDate() + slaDays)
-  return date
+  try {
+    // 1. Fetch configuration
+    const [settingsRes, holidaysRes] = await Promise.all([
+      supabase.from('system_settings').select('value').eq('key', 'sla_weekly_offs').single(),
+      supabase.from('holidays').select('date')
+    ])
+
+    const weeklyOffs = settingsRes.data ? JSON.parse(settingsRes.data.value) : [0] // Default Sunday (0)
+    const holidays = new Set(holidaysRes.data?.map(h => h.date) || [])
+
+    let currentDate = new Date(createdAt)
+    let daysAdded = 0
+
+    // 2. Add days one by one, skipping offs
+    while (daysAdded < slaDays) {
+      currentDate.setDate(currentDate.getDate() + 1)
+
+      const dayOfWeek = currentDate.getDay() // 0-6
+      const dateString = currentDate.toISOString().split('T')[0] // YYYY-MM-DD
+
+      // Check if working day
+      const isWeeklyOff = weeklyOffs.includes(dayOfWeek)
+      const isHoliday = holidays.has(dateString)
+
+      if (!isWeeklyOff && !isHoliday) {
+        daysAdded++
+      }
+    }
+
+    return currentDate
+  } catch (err) {
+    console.error('Error calculating SLA end date:', err)
+    // Fallback to simple calculation
+    const date = new Date(createdAt)
+    date.setDate(date.getDate() + slaDays)
+    return date
+  }
 }
 
 /**
  * Check if assignment SLA is violated
- * Must be assigned within 1 day of creation
+ * Must be assigned within limit days of creation
  */
-export function checkAssignmentSLA(createdAt, assignedDate) {
+export function checkAssignmentSLA(createdAt, assignedDate, limitDays = DEFAULT_ASSIGNMENT_SLA_DAYS) {
   if (!createdAt) return 'Pending'
   if (!assignedDate) {
-    // Check if more than 1 day has passed since creation
+    // Check if more than limit has passed since creation
     const daysSinceCreation = Math.floor((new Date() - new Date(createdAt)) / (1000 * 60 * 60 * 24))
-    return daysSinceCreation > ASSIGNMENT_SLA_DAYS ? 'Violated' : 'Pending'
+    return daysSinceCreation > limitDays ? 'Violated' : 'Pending'
   }
 
   const created = new Date(createdAt)
   const assigned = new Date(assignedDate)
   const daysDiff = Math.floor((assigned - created) / (1000 * 60 * 60 * 24))
 
-  return daysDiff <= ASSIGNMENT_SLA_DAYS ? 'Adhered' : 'Violated'
+  return daysDiff <= limitDays ? 'Adhered' : 'Violated'
 }
 
 /**

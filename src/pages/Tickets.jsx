@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useTickets, useSites } from '../hooks/useTickets'
 import Navigation from '../components/shared/Navigation'
@@ -12,6 +13,10 @@ import FilterModal from '../components/tickets/FilterModal'
 export default function Tickets() {
   const { userProfile } = useAuth()
   const { data: sites = [] } = useSites()
+
+  // SLA & Timer State
+  const [assignmentSLADays, setAssignmentSLADays] = useState(1)
+  const [now, setNow] = useState(new Date())
 
   // Initialize with current month as default
   const [dateRange, setDateRange] = useState({
@@ -32,6 +37,38 @@ export default function Tickets() {
 
   // Fetch all tickets (we'll filter by date on client side)
   const { data: allTickets, isLoading } = useTickets({})
+
+  // Fetch System Settings & Start Timer
+  useEffect(() => {
+    // 1. Fetch Assignment SLA Threshold
+    const fetchSettings = async () => {
+      const { data } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'assignment_sla_days')
+        .single()
+
+      if (data) {
+        setAssignmentSLADays(parseInt(data.value) || 1)
+      }
+    }
+    fetchSettings()
+
+    // 2. Sync timer to next full minute for cleaner updates
+    const delay = 60000 - (new Date().getTime() % 60000)
+    let interval
+    const timeout = setTimeout(() => {
+      setNow(new Date())
+      interval = setInterval(() => {
+        setNow(new Date())
+      }, 60000)
+    }, delay)
+
+    return () => {
+      clearTimeout(timeout)
+      if (interval) clearInterval(interval)
+    }
+  }, [])
 
   // Filter tickets by date range and other filters
   const filteredTickets = useMemo(() => {
@@ -213,7 +250,12 @@ export default function Tickets() {
             </div>
           </div>
         ) : (
-          <StatusAccordion tickets={filteredTickets} statusCounts={statusCounts} />
+          <StatusAccordion
+            tickets={filteredTickets}
+            statusCounts={statusCounts}
+            currentDate={now}
+            assignmentSLADays={assignmentSLADays}
+          />
         )}
       </div>
 

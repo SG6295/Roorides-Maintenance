@@ -3,6 +3,7 @@ import { format } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
 import { useTicket, useUpdateTicket } from '../hooks/useTickets'
 import { getDriveThumbnailUrl } from '../lib/googleDrive'
+import { fetchSLADays, calculateSLAEndDate } from '../utils/slaCalculator'
 import { useState } from 'react'
 import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
@@ -57,6 +58,20 @@ export default function TicketDetail() {
         const currentPhotos = ticket.photos || []
         updates.photos = [...currentPhotos, ...updates.newPhotos]
         delete updates.newPhotos // Clean up temporary field
+      }
+
+      // Calculate SLA if impact is set or updated
+      const effectiveImpact = updates.impact || ticket.impact
+      const effectiveCategory = ticket.category
+
+      if (effectiveImpact && effectiveCategory) {
+        const slaDays = calculateSLADays(effectiveImpact, effectiveCategory)
+        if (slaDays) {
+          updates.sla_days = slaDays
+          // Calculate end date based on CREATION time (async now)
+          const endDate = await calculateSLAEndDate(ticket.created_at, slaDays)
+          updates.sla_end_date = endDate.toISOString()
+        }
       }
 
       await updateTicket.mutateAsync({ id: ticket.id, updates })
@@ -144,9 +159,33 @@ export default function TicketDetail() {
                   {ticket.work_type}
                 </span>
               )}
+              {/* SLA Status Badge */}
+              {ticket.status !== 'Completed' && ticket.status !== 'Rejected' && ticket.sla_end_date && (() => {
+                const now = new Date()
+                const end = new Date(ticket.sla_end_date)
+                const diffTime = end - now
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+                if (diffDays < 0) {
+                  return (
+                    <span className="px-3 py-1 rounded text-sm bg-red-100 text-red-800 font-medium border border-red-200">
+                      ⚠️ Overdue by {Math.abs(diffDays)} days
+                    </span>
+                  )
+                } else if (diffDays <= 2) {
+                  return (
+                    <span className="px-3 py-1 rounded text-sm bg-yellow-100 text-yellow-800 font-medium border border-yellow-200">
+                      ⏱️ Due in {diffDays} days
+                    </span>
+                  )
+                }
+                // Optional: Show "On Track" or just nothing if far out
+                return null
+              })()}
+
               {ticket.completion_sla_status === 'Violated' && (
                 <span className="px-3 py-1 rounded text-sm bg-red-100 text-red-800">
-                  ⚠️ SLA Violated
+                  ⚠️ SLA Violated (Recorded)
                 </span>
               )}
             </div>
@@ -264,6 +303,10 @@ export default function TicketDetail() {
                     value={ticket.completed_date ? format(new Date(ticket.completed_date), 'MMM d, yyyy') : 'Not completed'}
                   />
                   <InfoField label="SLA Days" value={ticket.sla_days || 'Not calculated'} />
+                  <InfoField
+                    label="SLA Target"
+                    value={ticket.sla_end_date ? format(new Date(ticket.sla_end_date), 'MMM d, yyyy') : 'Not calculated'}
+                  />
                 </div>
               ) : (
                 <div className="space-y-4">

@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import Tickets from './pages/Tickets'
 import NewTicket from './pages/NewTicket'
 import TicketDetail from './pages/TicketDetail'
+import SLASettings from './pages/SLASettings'
 
 const queryClient = new QueryClient()
 
@@ -63,6 +64,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <TicketDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sla-settings"
+              element={
+                <ProtectedRoute>
+                  <SLASettings />
                 </ProtectedRoute>
               }
             />
