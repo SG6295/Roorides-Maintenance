@@ -41,32 +41,9 @@
 ## 🚧 In Progress
 
 ### Phase 1 - Core Ticket Flow
-Currently starting implementation
-
-## 📋 Next Up
+[Implemented - Untested] (Waiting for DB Verification)
 
 ### Phase 1 Features (Week 1-2)
-1. **Ticket Submission Form** (Supervisor - Mobile)
-   - Form with all PRD fields
-   - Photo upload (Google Drive integration)
-   - Site/vehicle dropdowns
-   - Validation
-
-2. **Ticket List View** (All Roles)
-   - Supervisors: See only their site
-   - Maintenance Exec: See all tickets
-   - Filters: Site, date range, status, vehicle
-   - Search: Vehicle number
-   - Sort: Date, status, SLA
-
-3. **Ticket Management** (Maintenance Exec - Desktop)
-   - View ticket details
-   - Assign job sheet ID
-   - Set impact (Minor/Major)
-   - Set work type (In House/Outsource)
-   - Update status
-   - Mark duplicate/merge tickets
-
 4. **Basic Dashboard** (Both Roles)
    - Supervisor: Site ticket counts by status
    - Maintenance Exec: Global stats
@@ -98,6 +75,7 @@ Currently starting implementation
 - Email: `sg@nvstravelsolutions.in`
 - Role: `maintenance_exec` (full access)
 - Employee ID: `NVS2723`
+- **Password**: *(Stored securely - check `.env.local` or ask admin)*
 
 ## 📊 Database Stats
 
@@ -108,7 +86,7 @@ Currently starting implementation
 
 ## 🎯 Current Sprint Goal
 
-Build Phase 1 core ticket flow:
+Verify Phase 1 core ticket flow after DB restoration:
 1. Enable supervisors to submit tickets from mobile
 2. Enable maintenance exec to manage tickets from desktop
 3. Replace manual Google Sheets workflow
