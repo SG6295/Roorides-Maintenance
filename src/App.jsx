@@ -9,6 +9,24 @@ import TicketDetail from './pages/TicketDetail'
 import SLASettings from './pages/SLASettings'
 
 import Users from './pages/Users'
+import ForgotPassword from './pages/auth/ForgotPassword'
+import UpdatePassword from './pages/auth/UpdatePassword'
+
+import SettingsLayout from './pages/settings/SettingsLayout'
+import NotificationSettings from './pages/settings/NotificationSettings'
+
+import { sendEmail } from './lib/email'
+
+// Expose for testing
+window.testResend = async (email) => {
+  const res = await sendEmail({
+    to: email,
+    subject: 'NVS Maintenance: Test Email',
+    html: '<strong>Resend Integration is Working!</strong> 🚀'
+  })
+  console.log('Email Result:', res)
+  return res
+}
 
 const queryClient = new QueryClient()
 
@@ -90,6 +108,30 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route
+              path="/update-password"
+              element={
+                <ProtectedRoute>
+                  <UpdatePassword />
+                </ProtectedRoute>
+              }
+            />
+            {/* Settings Nested Routes */}
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <SettingsLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="notifications" element={<NotificationSettings />} />
+              <Route path="users" element={<Users />} />
+              <Route path="sla" element={<SLASettings />} />
+              <Route index element={<Navigate to="notifications" replace />} />
+            </Route>
+
             <Route path="/" element={<Navigate to="/dashboard" />} />
           </Routes>
         </BrowserRouter>

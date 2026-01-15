@@ -1,7 +1,7 @@
 
 import { useState, Fragment } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
-import { XMarkIcon, EyeIcon, EyeSlashIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, EyeIcon, EyeSlashIcon, ArrowPathIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import { supabase } from '../../lib/supabase'
 import { useSites } from '../../hooks/useSites'
@@ -39,10 +39,17 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
     })
     const [loading, setLoading] = useState(false)
     const [showPassword, setShowPassword] = useState(true)
+    const [isCopied, setIsCopied] = useState(false)
     const [error, setError] = useState(null)
 
     function generatePassword() {
         return Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-2).toUpperCase();
+    }
+
+    const copyToClipboard = () => {
+        navigator.clipboard.writeText(formData.password)
+        setIsCopied(true)
+        setTimeout(() => setIsCopied(false), 2000)
     }
 
     const handleSubmit = async (e) => {
@@ -131,22 +138,24 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                     )}
 
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
                                         <input
                                             type="text"
                                             required
-                                            className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                            className="block w-full rounded-lg border-gray-300 py-3 px-4 text-left shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                            placeholder="e.g. John Doe"
                                             value={formData.name}
                                             onChange={e => setFormData({ ...formData, name: e.target.value })}
                                         />
                                     </div>
 
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
                                         <input
                                             type="email"
                                             required
-                                            className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                            className="block w-full rounded-lg border-gray-300 py-3 px-4 text-left shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                            placeholder="e.g. john@example.com"
                                             value={formData.email}
                                             onChange={e => setFormData({ ...formData, email: e.target.value })}
                                         />
@@ -167,10 +176,11 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Employee ID</label>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">Employee ID</label>
                                             <input
                                                 type="text"
-                                                className="w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                                                className="block w-full rounded-lg border-gray-300 py-3 px-4 text-left shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                                placeholder="e.g. EMP-001"
                                                 value={formData.employee_id}
                                                 onChange={e => setFormData({ ...formData, employee_id: e.target.value })}
                                             />
@@ -179,7 +189,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
 
                                     {formData.role === 'supervisor' && (
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Site</label>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">Assigned Site</label>
                                             <SiteSelect
                                                 value={formData.site}
                                                 onChange={val => setFormData({ ...formData, site: val })}
@@ -188,33 +198,50 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                     )}
 
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Temporary Password</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Temporary Password</label>
                                         <div className="relative">
+                                            <div className="absolute inset-y-0 left-0 flex items-center pl-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={copyToClipboard}
+                                                    className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                                    title="Copy to clipboard"
+                                                >
+                                                    {isCopied ?
+                                                        <CheckIcon className="h-5 w-5 text-green-500" /> :
+                                                        <ClipboardDocumentIcon className="h-5 w-5" />
+                                                    }
+                                                </button>
+                                            </div>
                                             <input
                                                 type={showPassword ? "text" : "password"}
                                                 readOnly
-                                                className="w-full rounded-lg border-gray-300 bg-gray-50 focus:ring-blue-500 focus:border-blue-500 pr-20"
+                                                className="block w-full rounded-lg border-gray-300 bg-gray-50 py-3 pl-10 pr-24 text-left shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-gray-600"
                                                 value={formData.password}
                                             />
-                                            <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+                                            <div className="absolute inset-y-0 right-0 flex items-center pr-2 gap-1">
                                                 <button
                                                     type="button"
                                                     onClick={() => setFormData({ ...formData, password: generatePassword() })}
-                                                    className="p-1 text-gray-400 hover:text-gray-600"
-                                                    title="Generate new"
+                                                    className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors"
+                                                    title="Generate new password"
                                                 >
                                                     <ArrowPathIcon className="h-5 w-5" />
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => setShowPassword(!showPassword)}
-                                                    className="p-1 text-gray-400 hover:text-gray-600"
+                                                    className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
+                                                    title={showPassword ? "Hide password" : "Show password"}
                                                 >
                                                     {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
                                                 </button>
                                             </div>
                                         </div>
-                                        <p className="mt-1 text-xs text-gray-500">Share this password with the user.</p>
+                                        <p className="mt-2 text-xs text-gray-500 flex items-center">
+                                            <span className="inline-block w-2 h-2 rounded-full bg-blue-400 mr-2"></span>
+                                            Copy this password. It will not be shown again.
+                                        </p>
                                     </div>
 
                                     <div className="mt-6 flex justify-end gap-3">
