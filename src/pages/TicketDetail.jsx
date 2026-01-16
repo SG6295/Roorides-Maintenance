@@ -86,6 +86,17 @@ export default function TicketDetail() {
         }
       }
 
+      // Auto-capture dates based on status change
+      if (updates.status && updates.status !== ticket.status) {
+        const now = new Date().toISOString()
+
+        if (updates.status === 'Team Assigned') {
+          updates.assigned_date = now
+        } else if (updates.status === 'Completed') {
+          updates.completed_date = now
+        }
+      }
+
       await updateTicket.mutateAsync({ id: ticket.id, updates })
 
       // SLA Logging Logic
@@ -421,17 +432,7 @@ export default function TicketDetail() {
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Assigned Date
-                      </label>
-                      <input
-                        type="date"
-                        value={editData.assigned_date || ''}
-                        onChange={(e) => setEditData({ ...editData, assigned_date: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
+
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -445,17 +446,7 @@ export default function TicketDetail() {
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Completed Date
-                      </label>
-                      <input
-                        type="date"
-                        value={editData.completed_date || ''}
-                        onChange={(e) => setEditData({ ...editData, completed_date: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
+
                   </div>
 
                   <div>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { format, differenceInDays, addDays, isWeekend, isSameDay } from 'date-fns'
 import SLATimer from '../shared/SLATimer'
 import TicketRating from './TicketRating'
+import { logAuditEvent } from '../../utils/auditLogger'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 
@@ -17,6 +18,11 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
     }
 
     const handleRate = async (rating) => {
+        if (user?.id !== ticket.created_by_user_id) {
+            alert('Only the ticket creator can provide a rating.')
+            return
+        }
+
         setIsRating(true)
         try {
             const { error } = await supabase
@@ -26,8 +32,24 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
                     rated_at: new Date().toISOString()
                 })
                 .eq('id', ticket.id)
+            // Double check RLS or backend constraint if redundant
+            // .eq('created_by_user_id', user.id) 
 
             if (error) throw error
+
+            // Log to Audit History
+            await logAuditEvent(
+                ticket.id,
+                'tickets',
+                'UPDATE',
+                user.id,
+                {
+                    oldData: { rating: ticket.rating || 'none' },
+                    newData: { rating: rating },
+                    changedFields: ['rating', 'rated_at']
+                }
+            )
+
             if (onUpdate) onUpdate()
         } catch (err) {
             console.error('Error rating ticket:', err)
