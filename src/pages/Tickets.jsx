@@ -36,7 +36,7 @@ export default function Tickets() {
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false)
 
   // Fetch all tickets (we'll filter by date on client side)
-  const { data: allTickets, isLoading } = useTickets({})
+  const { data: allTickets, isLoading, refetch } = useTickets({})
 
   // Fetch System Settings & Start Timer
   useEffect(() => {
@@ -255,6 +255,7 @@ export default function Tickets() {
             statusCounts={statusCounts}
             currentDate={now}
             assignmentSLADays={assignmentSLADays}
+            onUpdate={refetch}
           />
         )}
       </div>

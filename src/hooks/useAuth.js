@@ -46,6 +46,14 @@ export function AuthProvider({ children }) {
 
       console.log('Profile fetch result:', { data, error })
       if (error) throw error
+
+      if (!data.is_active) {
+        await supabase.auth.signOut()
+        setUser(null)
+        setUserProfile(null)
+        throw new Error('Account is deactivated. Please contact administrator.')
+      }
+
       setUserProfile(data)
     } catch (error) {
       console.error('Error fetching user profile:', error)

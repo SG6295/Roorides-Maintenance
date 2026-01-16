@@ -7,6 +7,7 @@ import Tickets from './pages/Tickets'
 import NewTicket from './pages/NewTicket'
 import TicketDetail from './pages/TicketDetail'
 import SLASettings from './pages/SLASettings'
+import Analytics from './pages/Analytics'
 
 import Users from './pages/Users'
 import ForgotPassword from './pages/auth/ForgotPassword'
@@ -108,6 +109,14 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/analytics"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec']}>
+                  <Analytics />
+                </ProtectedRoute>
+              }
+            />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route
               path="/update-password"
@@ -127,8 +136,8 @@ function App() {
               }
             >
               <Route path="notifications" element={<NotificationSettings />} />
-              <Route path="users" element={<Users />} />
-              <Route path="sla" element={<SLASettings />} />
+              <Route path="users" element={<Users embedded={true} />} />
+              <Route path="sla" element={<SLASettings embedded={true} />} />
               <Route index element={<Navigate to="notifications" replace />} />
             </Route>
 

@@ -32,6 +32,11 @@ export default function Navigation({ breadcrumbs = [], actions }) {
             <span className="text-sm text-gray-700 hidden sm:inline">
               {userProfile?.name} ({userProfile?.role})
             </span>
+            {userProfile?.role === 'maintenance_exec' && (
+              <Link to="/analytics" className="text-sm text-blue-600 hover:text-blue-800">
+                Analytics
+              </Link>
+            )}
             <Link to="/settings" className="text-sm text-blue-600 hover:text-blue-800">
               Settings
             </Link>

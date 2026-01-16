@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import Navigation from '../components/shared/Navigation'
 import { useAuth } from '../hooks/useAuth'
 
-export default function SLASettings() {
+export default function SLASettings({ embedded = false }) {
     const { userProfile } = useAuth()
     const [rules, setRules] = useState([])
     const [assignmentSLA, setAssignmentSLA] = useState(1)
@@ -134,10 +134,12 @@ export default function SLASettings() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <Navigation breadcrumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'SLA Settings' }]} />
+        <div className={embedded ? "" : "min-h-screen bg-gray-50"}>
+            {!embedded && (
+                <Navigation breadcrumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'SLA Settings' }]} />
+            )}
 
-            <div className="max-w-4xl mx-auto px-4 py-8">
+            <div className={embedded ? "" : "max-w-4xl mx-auto px-4 py-8"}>
                 <h1 className="text-2xl font-bold text-gray-900 mb-6">SLA Configuration</h1>
 
                 {message && (

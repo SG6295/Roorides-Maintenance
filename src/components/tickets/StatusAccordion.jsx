@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import TicketCard from './TicketCard'
 
-export default function StatusAccordion({ tickets, statusCounts, currentDate, assignmentSLADays }) {
+export default function StatusAccordion({ tickets, statusCounts, currentDate, assignmentSLADays, onUpdate }) {
   const [openStatuses, setOpenStatuses] = useState({
     'Pending': true,
     'Team Assigned': false,
@@ -9,6 +9,8 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, as
     'Completed': false,
     'Rejected': false,
   })
+
+  // ... (keep statuses and toggleStatus same)
 
   const statuses = [
     { value: 'Pending', label: 'Pending', color: 'text-yellow-700', bgColor: 'bg-yellow-50' },
@@ -74,6 +76,7 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, as
                       ticket={ticket}
                       currentDate={currentDate}
                       assignmentSLADays={assignmentSLADays}
+                      onUpdate={onUpdate}
                     />
                   ))
                 ) : (

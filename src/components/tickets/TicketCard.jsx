@@ -1,12 +1,40 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format, differenceInDays, addDays, isWeekend, isSameDay } from 'date-fns'
 import SLATimer from '../shared/SLATimer'
+import TicketRating from './TicketRating'
+import { useAuth } from '../../hooks/useAuth'
+import { supabase } from '../../lib/supabase'
 
-export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1 }) {
+export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1, onUpdate }) {
+    const { user } = useAuth()
+    const [isRating, setIsRating] = useState(false)
+
     // Compute assignment deadline for Pending tickets
     let assignmentDeadline = null
     if (ticket.status === 'Pending') {
         assignmentDeadline = addDays(new Date(ticket.created_at), assignmentSLADays)
+    }
+
+    const handleRate = async (rating) => {
+        setIsRating(true)
+        try {
+            const { error } = await supabase
+                .from('tickets')
+                .update({
+                    rating,
+                    rated_at: new Date().toISOString()
+                })
+                .eq('id', ticket.id)
+
+            if (error) throw error
+            if (onUpdate) onUpdate()
+        } catch (err) {
+            console.error('Error rating ticket:', err)
+            alert('Failed to save rating')
+        } finally {
+            setIsRating(false)
+        }
     }
 
     return (
@@ -14,17 +42,22 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1 
             to={`/tickets/${ticket.id}`}
             className="block bg-white rounded-lg shadow card-hover p-4 sm:p-5 active:scale-[0.99] transition-transform relative"
         >
-            {/* SLA Badge/Timer - Absolute Top Right */}
-            <div className="absolute top-4 right-4">
+            {/* SLA Badge/Timer/Rating - Absolute Top Right */}
+            <div className="absolute top-4 right-4" onClick={(e) => e.preventDefault()}>
                 <SLABadge
                     ticket={ticket}
                     currentDate={currentDate}
                     assignmentDeadline={assignmentDeadline}
+                    interactions={{
+                        isCreator: user?.id === ticket.created_by_user_id,
+                        onRate: handleRate,
+                        isRating: isRating
+                    }}
                 />
             </div>
 
             <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-3">
-                <div className="flex-1 min-w-0 pr-16 w-full"> {/* Added pr-16 to prevent overlap with timer */}
+                <div className="flex-1 min-w-0 pr-24 w-full"> {/* Increased padding for Rating component */}
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className="font-semibold text-gray-900 text-base">
                             #{ticket.ticket_number}
@@ -79,22 +112,24 @@ function StatusBadge({ status }) {
     )
 }
 
-function SLABadge({ ticket, currentDate, assignmentDeadline }) {
+function SLABadge({ ticket, currentDate, assignmentDeadline, interactions }) {
     // 1. Check Assignment SLA (Pending Tickets)
     if (ticket.status === 'Pending' && assignmentDeadline) {
         return <SLATimer targetDate={assignmentDeadline} currentDate={currentDate} />
     }
 
-    // 2. Check Completion SLA (Completed Tickets)
-    if (ticket.status === 'Completed') {
-        if (ticket.completion_sla_status === 'Violated') {
-            return (
-                <span className="text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded font-medium border border-red-200">
-                    Late
-                </span>
-            )
-        }
-        return null
+    // 2. Check Rating (Completed Tickets)
+    if (ticket.status === 'Completed' || ticket.status === 'Closed') {
+        const { isCreator, onRate, isRating } = interactions
+
+        return (
+            <TicketRating
+                rating={ticket.rating}
+                onRate={onRate}
+                disabled={!isCreator}
+                isUpdating={isRating}
+            />
+        )
     }
 
     // 3. Active Ticket Logic (Assigned/WIP) - Show SLA Timer
