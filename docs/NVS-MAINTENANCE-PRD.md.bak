@@ -3146,18 +3146,3 @@ From your 12,000+ ticket analysis:
 **END OF PRD**
 
 *This document is a living document. Update as requirements evolve.*
-
-## Future Improvements (v2.0)
-
-### Dashboard Enhancements
-- **Metrics Overview**: Add real-time counters to the dashboard cards.
-    - **Tickets**: Total Open, SLA Warning Count.
-    - **Issues**: Open Issues, High Severity Count.
-    - **Job Cards**: Active Job Cards, Assigned to Vendor Count.
-    - **SLA**: "About to be Violated" warning list.
-- **Charts**: Visual breakdown of issues by category and vehicle.
-
-### Advanced Features
-- **Vendor Portal**: Limited access for vendors to update job cards directly.
-- **Inventory Integration**: Link spare parts usage in Job Cards to an inventory system.
-- **Mobile App**: Native mobile app for mechanics for offline capability.

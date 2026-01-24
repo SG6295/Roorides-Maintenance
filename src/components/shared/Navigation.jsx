@@ -20,6 +20,11 @@ export default function Navigation({ breadcrumbs = [], actions }) {
             <Link to="/dashboard" className="text-xl font-bold text-gray-900 hover:text-blue-600 mr-8">
               NVS Maintenance
             </Link>
+            {(userProfile?.role === 'maintenance_exec' || userProfile?.role === 'mechanic') && (
+              <Link to="/job-cards" className="text-sm font-medium text-gray-700 hover:text-blue-600">
+                Job Cards
+              </Link>
+            )}
           </div>
 
           <div className="flex items-center space-x-4">

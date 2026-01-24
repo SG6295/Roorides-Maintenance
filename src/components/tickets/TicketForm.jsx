@@ -43,8 +43,15 @@ export default function TicketForm() {
 
   const onSubmit = async (data) => {
     try {
+      // Map form fields to DB columns
       const ticketData = {
-        ...data,
+        site: data.site,
+        vehicle_number: data.vehicle_number,
+        supervisor_name: data.supervisor_name,
+        supervisor_id: data.supervisor_id,
+        supervisor_contact: data.supervisor_contact,
+        initial_remarks: data.complaint + (data.remarks ? `\n\nAdditional: ${data.remarks}` : ''),
+        // Existing fields handled by defaults/triggers: status, created_at, ticket_number
         photos: photoUrls.length > 0 ? photoUrls : null
       }
 
@@ -60,7 +67,7 @@ export default function TicketForm() {
       navigate('/tickets')
     } catch (error) {
       console.error('Error creating ticket:', error)
-      alert('Failed to submit ticket. Please try again.')
+      alert(error.message || 'Failed to submit ticket. Please try again.')
     }
   }
 
@@ -138,24 +145,7 @@ export default function TicketForm() {
             />
           </div>
 
-          {/* Category */}
-          <div>
-            <Controller
-              name="category"
-              control={control}
-              rules={{ required: 'Category is required' }}
-              render={({ field: { value, onChange }, fieldState: { error } }) => (
-                <CustomSelect
-                  label={<span>Category <span className="text-red-500">*</span></span>}
-                  value={value}
-                  onChange={onChange}
-                  options={categories}
-                  error={error}
-                  placeholder="Select category"
-                />
-              )}
-            />
-          </div>
+
 
           {/* Complaint */}
           <div>

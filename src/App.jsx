@@ -6,6 +6,9 @@ import Dashboard from './pages/Dashboard'
 import Tickets from './pages/Tickets'
 import NewTicket from './pages/NewTicket'
 import TicketDetail from './pages/TicketDetail'
+import JobCards from './pages/JobCards'
+import JobCardDetail from './pages/JobCardDetail'
+import Issues from './pages/Issues'
 import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
 
@@ -90,6 +93,30 @@ function App() {
               element={
                 <ProtectedRoute>
                   <TicketDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/issues"
+              element={
+                <ProtectedRoute>
+                  <Issues />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/job-cards"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'mechanic']}>
+                  <JobCards />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/job-cards/:id"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'mechanic']}>
+                  <JobCardDetail />
                 </ProtectedRoute>
               }
             />
