@@ -39,14 +39,17 @@ export default function JobCardDetail() {
     const isMechanic = userProfile?.role === 'mechanic' || userProfile?.role === 'maintenance_exec' // Mechanic or Exec can work on it
 
     // Handlers
-    const handleIssueStatus = async (issueId, newStatus) => {
+    const handleIssueStatus = async (issue, newStatus) => {
         try {
             await updateIssue.mutateAsync({
-                id: issueId,
-                updates: { status: newStatus }
+                id: issue.id,
+                updates: { status: newStatus },
+                userId: userProfile?.id,
+                oldData: issue
             })
         } catch (e) {
-            alert('Failed to update issue')
+            console.error('Failed to update issue:', e)
+            alert('Failed to update issue: ' + e.message)
         }
     }
 
@@ -138,8 +141,8 @@ export default function JobCardDetail() {
                                     onClick={handleCompleteJobCard}
                                     disabled={!isAllDone}
                                     className={`mt-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm transition-colors ${isAllDone
-                                            ? 'bg-green-600 hover:bg-green-700'
-                                            : 'bg-gray-400 cursor-not-allowed'
+                                        ? 'bg-green-600 hover:bg-green-700'
+                                        : 'bg-gray-400 cursor-not-allowed'
                                         }`}
                                     title={!isAllDone ? "All issues must be 'Done' first" : ""}
                                 >
@@ -155,41 +158,79 @@ export default function JobCardDetail() {
                     <div className="px-6 py-4 border-b border-gray-200">
                         <h2 className="text-lg font-semibold text-gray-900">Work Items</h2>
                     </div>
-                    <ul className="divide-y divide-gray-200">
-                        {jobCard.issues?.map(issue => (
-                            <li key={issue.id} className="p-6 hover:bg-gray-50 transition-colors">
-                                <div className="flex items-start justify-between">
-                                    <div>
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="font-medium text-gray-900">{issue.description}</span>
-                                            <span className="text-xs px-2 py-0.5 bg-gray-100 rounded text-gray-600">{issue.category}</span>
-                                        </div>
-                                        <p className="text-sm text-gray-500">
-                                            SLA Due: {issue.sla_end_date ? format(new Date(issue.sla_end_date), 'MMM d') : '-'}
-                                        </p>
-                                    </div>
-
-                                    {isMechanic && jobCard.status !== 'Completed' && (
-                                        <button
-                                            onClick={() => handleIssueStatus(issue.id, issue.status === 'Done' ? 'Open' : 'Done')}
-                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${issue.status === 'Done'
-                                                    ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                                }`}
-                                        >
-                                            <CheckCircleIcon className={`w-5 h-5 ${issue.status === 'Done' ? 'text-green-600' : 'text-gray-400'}`} />
-                                            {issue.status === 'Done' ? 'Done' : 'Mark Done'}
-                                        </button>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Ticket #
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Description
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Category
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        SLA Due
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Status
+                                    </th>
+                                    {(isMechanic && jobCard.status !== 'Completed') && (
+                                        <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Action
+                                        </th>
                                     )}
-                                    {!isMechanic && (
-                                        <span className={`px-2 py-1 rounded text-xs ${issue.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}>
-                                            {issue.status}
-                                        </span>
-                                    )}
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {jobCard.issues?.map(issue => (
+                                    <tr key={issue.id} className="hover:bg-gray-50 transition-colors">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <Link
+                                                to={`/tickets/${issue.ticket_id}`}
+                                                className="text-blue-600 hover:text-blue-800 hover:underline"
+                                            >
+                                                #{issue.ticket?.ticket_number || issue.ticket_id.slice(0, 8)}
+                                            </Link>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-gray-900">
+                                            {issue.description}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span className="text-xs px-2 py-0.5 bg-gray-100 rounded text-gray-600">
+                                                {issue.category}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {issue.sla_end_date ? format(new Date(issue.sla_end_date), 'MMM d') : '-'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span className={`px-2 py-1 rounded text-xs ${issue.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                {issue.status}
+                                            </span>
+                                        </td>
+                                        {(isMechanic && jobCard.status !== 'Completed') && (
+                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                <button
+                                                    onClick={() => handleIssueStatus(issue, issue.status === 'Done' ? 'Open' : 'Done')}
+                                                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors ${issue.status === 'Done'
+                                                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                        }`}
+                                                >
+                                                    <CheckCircleIcon className={`w-4 h-4 ${issue.status === 'Done' ? 'text-green-600' : 'text-gray-400'}`} />
+                                                    {issue.status === 'Done' ? 'Done' : 'Mark Done'}
+                                                </button>
+                                            </td>
+                                        )}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
 
                 {/* Remarks / Notes */}

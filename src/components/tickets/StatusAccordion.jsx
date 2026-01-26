@@ -3,20 +3,22 @@ import TicketCard from './TicketCard'
 
 export default function StatusAccordion({ tickets, statusCounts, currentDate, assignmentSLADays, onUpdate }) {
   const [openStatuses, setOpenStatuses] = useState({
-    'Pending': true,
-    'Team Assigned': false,
-    'Work in Progress': false,
-    'Completed': false,
+    'New': true,
+    'Accepted': false,
+    'Work In Progress': false,
+    'Resolved': false,
+    'Closed': false,
     'Rejected': false,
   })
 
   // ... (keep statuses and toggleStatus same)
 
   const statuses = [
-    { value: 'Pending', label: 'Pending', color: 'text-yellow-700', bgColor: 'bg-yellow-50' },
-    { value: 'Team Assigned', label: 'Team Assigned', color: 'text-blue-700', bgColor: 'bg-blue-50' },
-    { value: 'Work in Progress', label: 'Work in Progress', color: 'text-purple-700', bgColor: 'bg-purple-50' },
-    { value: 'Completed', label: 'Completed', color: 'text-green-700', bgColor: 'bg-green-50' },
+    { value: 'New', label: 'New', color: 'text-yellow-700', bgColor: 'bg-yellow-50' },
+    { value: 'Accepted', label: 'Accepted', color: 'text-blue-700', bgColor: 'bg-blue-50' },
+    { value: 'Work In Progress', label: 'Work In Progress', color: 'text-purple-700', bgColor: 'bg-purple-50' },
+    { value: 'Resolved', label: 'Resolved', color: 'text-green-700', bgColor: 'bg-green-50' },
+    { value: 'Closed', label: 'Closed', color: 'text-gray-700', bgColor: 'bg-gray-50' },
     { value: 'Rejected', label: 'Rejected', color: 'text-red-700', bgColor: 'bg-red-50' },
   ]
 

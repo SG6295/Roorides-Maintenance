@@ -11,6 +11,7 @@ import JobCardDetail from './pages/JobCardDetail'
 import Issues from './pages/Issues'
 import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
+import FeedbackReport from './pages/FeedbackReport'
 
 import Users from './pages/Users'
 import ForgotPassword from './pages/auth/ForgotPassword'
@@ -141,6 +142,14 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec']}>
                   <Analytics />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/feedback"
+              element={
+                <ProtectedRoute>
+                  <FeedbackReport />
                 </ProtectedRoute>
               }
             />

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { logAuditEvent } from '../utils/auditLogger'
 
 /**
  * Hook to fetch Job Cards (General list or by ticket?)
@@ -48,7 +49,7 @@ export function useJobCard(id) {
                 .select(`
           *,
           mechanic:assigned_mechanic_id(name, email, contact),
-          issues(*)
+          issues(*, ticket:ticket_id(ticket_number))
         `)
                 .eq('id', id)
                 .single()
@@ -61,17 +62,24 @@ export function useJobCard(id) {
 }
 
 /**
- * Hook to create a Job Card and link issues to it
- */
-/**
  * Hook to link multiple issues to an existing Job Card
+ * @param {object} options
+ * @param {string} options.userId - User ID for audit logging
+ * @param {array} options.issues - Full issue objects for audit logging
  */
 export function useLinkIssuesToJobCard() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ jobCardId, issueIds }) => {
-            if (!issueIds || issueIds.length === 0) return
+        mutationFn: async ({ jobCardId, issueIds, userId, issues }) => {
+            if (!issueIds || issueIds.length === 0) return { jobCardId, ticketIds: [] }
+
+            // Get job card info for audit log
+            const { data: jobCard } = await supabase
+                .from('job_cards')
+                .select('job_card_number')
+                .eq('id', jobCardId)
+                .single()
 
             const { error } = await supabase
                 .from('issues')
@@ -79,23 +87,59 @@ export function useLinkIssuesToJobCard() {
                 .in('id', issueIds)
 
             if (error) throw error
+
+            // Log audit events for each issue being linked
+            const ticketIds = new Set()
+            if (userId && issues) {
+                for (const issue of issues) {
+                    if (issueIds.includes(issue.id)) {
+                        ticketIds.add(issue.ticket_id)
+                        await logAuditEvent(
+                            issue.ticket_id,
+                            'issues',
+                            'UPDATE',
+                            userId,
+                            {
+                                oldData: {
+                                    ...issue,
+                                    _actionType: 'issue_linked_to_job_card',
+                                    _jobCardNumber: jobCard?.job_card_number
+                                },
+                                newData: { ...issue, job_card_id: jobCardId },
+                                changedFields: ['job_card_id']
+                            }
+                        )
+                    }
+                }
+            }
+
+            return { jobCardId, ticketIds: Array.from(ticketIds) }
         },
-        onSuccess: () => {
+        onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['issues'] })
             queryClient.invalidateQueries({ queryKey: ['tickets'] })
+            // Invalidate audit logs for affected tickets
+            if (data?.ticketIds) {
+                data.ticketIds.forEach(ticketId => {
+                    queryClient.invalidateQueries({ queryKey: ['audit_logs', ticketId] })
+                })
+            }
         },
     })
 }
 
 /**
  * Hook to create a Job Card and link issues to it
+ * @param {object} options
+ * @param {string} options.userId - User ID for audit logging
+ * @param {array} options.issues - Full issue objects for audit logging
  */
 export function useCreateJobCard() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ jobCardData, issueIds }) => {
+        mutationFn: async ({ jobCardData, issueIds, userId, issues }) => {
             // 1. Create Job Card
             const { data: jobCard, error: jcError } = await supabase
                 .from('job_cards')
@@ -106,21 +150,52 @@ export function useCreateJobCard() {
             if (jcError) throw jcError
 
             // 2. Link Issues to this Job Card
+            const ticketIds = new Set()
             if (issueIds && issueIds.length > 0) {
                 const { error: linkError } = await supabase
                     .from('issues')
-                    .update({ job_card_id: jobCard.id }) // We don't overwrite status here, assume triggers/logic handles it or it stays Open
+                    .update({ job_card_id: jobCard.id })
                     .in('id', issueIds)
 
                 if (linkError) throw linkError
+
+                // Log audit events for each issue being linked
+                if (userId && issues) {
+                    for (const issue of issues) {
+                        if (issueIds.includes(issue.id)) {
+                            ticketIds.add(issue.ticket_id)
+                            await logAuditEvent(
+                                issue.ticket_id,
+                                'issues',
+                                'UPDATE',
+                                userId,
+                                {
+                                    oldData: {
+                                        ...issue,
+                                        _actionType: 'issue_linked_to_job_card',
+                                        _jobCardNumber: jobCard.job_card_number
+                                    },
+                                    newData: { ...issue, job_card_id: jobCard.id },
+                                    changedFields: ['job_card_id']
+                                }
+                            )
+                        }
+                    }
+                }
             }
 
-            return jobCard
+            return { ...jobCard, ticketIds: Array.from(ticketIds) }
         },
-        onSuccess: () => {
+        onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['issues'] })
             queryClient.invalidateQueries({ queryKey: ['tickets'] })
+            // Invalidate audit logs for affected tickets
+            if (data?.ticketIds) {
+                data.ticketIds.forEach(ticketId => {
+                    queryClient.invalidateQueries({ queryKey: ['audit_logs', ticketId] })
+                })
+            }
         },
     })
 }

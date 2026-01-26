@@ -37,6 +37,9 @@
 - [x] SLA calculator utilities
 - [x] Basic dashboard skeleton
 - [x] Mobile-first Tailwind CSS configuration
+- [x] Job Card Enhancements
+  - [x] Work Items table view
+  - [x] Human-readable ticket numbers with links
 
 ## 🚧 In Progress
 

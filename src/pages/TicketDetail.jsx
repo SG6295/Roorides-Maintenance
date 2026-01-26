@@ -13,9 +13,10 @@ import PhotoUpload from '../components/tickets/PhotoUpload'
 import TicketTimeline from '../components/tickets/TicketTimeline'
 import CustomSelect from '../components/shared/CustomSelect'
 import CustomInput from '../components/shared/CustomInput'
+import RejectTicketModal from '../components/tickets/RejectTicketModal'
+import FeedbackModal from '../components/tickets/FeedbackModal'
 
 
-// Icons
 import {
   ClipboardDocumentCheckIcon,
   WrenchScrewdriverIcon,
@@ -23,7 +24,11 @@ import {
   ChatBubbleBottomCenterTextIcon,
   PlusIcon,
   TrashIcon,
-  ChevronDownIcon
+  ChevronDownIcon,
+  PencilIcon,
+  XMarkIcon,
+  CheckIcon,
+  NoSymbolIcon
 } from '@heroicons/react/24/outline'
 import { Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
@@ -37,7 +42,11 @@ export default function TicketDetail() {
   const { data: ticket, isLoading: ticketLoading } = useTicket(id)
   const { data: issues, isLoading: issuesLoading } = useIssues({ ticket_id: id })
 
+  // Mutations
+  const updateTicket = useUpdateTicket()
+
   // State
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
 
 
   if (ticketLoading) {
@@ -50,6 +59,23 @@ export default function TicketDetail() {
 
   const isSupervisor = userProfile?.role === 'supervisor'
   const isExec = userProfile?.role === 'maintenance_exec'
+
+  // Handle ticket rejection
+  const handleRejectTicket = async ({ rejection_reason, rejection_comment }) => {
+    try {
+      await updateTicket.mutateAsync({
+        id: ticket.id,
+        updates: {
+          status: 'Rejected',
+          rejection_reason,
+          rejection_comment
+        }
+      })
+      setIsRejectModalOpen(false)
+    } catch (e) {
+      alert('Failed to reject ticket: ' + e.message)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12">
@@ -80,7 +106,40 @@ export default function TicketDetail() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Actions */}
+              {/* Status Actions Dropdown */}
+              {isExec && ticket.status !== 'Rejected' && ticket.status !== 'Closed' && (
+                <Menu as="div" className="relative inline-block text-left">
+                  <MenuButton className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors">
+                    Actions
+                    <ChevronDownIcon className="w-4 h-4" />
+                  </MenuButton>
+                  <Transition
+                    as={Fragment}
+                    enter="transition ease-out duration-100"
+                    enterFrom="transform opacity-0 scale-95"
+                    enterTo="transform opacity-100 scale-100"
+                    leave="transition ease-in duration-75"
+                    leaveFrom="transform opacity-100 scale-100"
+                    leaveTo="transform opacity-0 scale-95"
+                  >
+                    <MenuItems anchor="bottom end" className="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                      <div className="py-1">
+                        <MenuItem>
+                          {({ active }) => (
+                            <button
+                              onClick={() => setIsRejectModalOpen(true)}
+                              className={`${active ? 'bg-red-50 text-red-700' : 'text-red-600'} flex items-center gap-2 w-full px-4 py-2 text-left text-sm`}
+                            >
+                              <NoSymbolIcon className="w-4 h-4" />
+                              Reject Ticket
+                            </button>
+                          )}
+                        </MenuItem>
+                      </div>
+                    </MenuItems>
+                  </Transition>
+                </Menu>
+              )}
             </div>
           </div>
 
@@ -111,7 +170,7 @@ export default function TicketDetail() {
               Issues ({issues?.length || 0})
             </h2>
           </div>
-          <IssuesTab ticket={ticket} issues={issues} canEdit={isExec} />
+          <IssuesTab ticket={ticket} issues={issues} canEdit={isExec} userProfile={userProfile} />
         </section>
 
         {/* Section 3: Job Cards */}
@@ -137,6 +196,14 @@ export default function TicketDetail() {
         </section>
 
       </main>
+
+      {/* Reject Ticket Modal */}
+      <RejectTicketModal
+        isOpen={isRejectModalOpen}
+        onClose={() => setIsRejectModalOpen(false)}
+        onConfirm={handleRejectTicket}
+        isLoading={updateTicket.isPending}
+      />
     </div>
   )
 }
@@ -146,9 +213,10 @@ export default function TicketDetail() {
 
 function StatusBadge({ status }) {
   const styles = {
-    'Pending': 'bg-yellow-100 text-yellow-800',
+    'New': 'bg-yellow-100 text-yellow-800',
+    'Pending': 'bg-yellow-100 text-yellow-800', // Legacy support
     'Accepted': 'bg-blue-100 text-blue-800',
-    'Work in Progress': 'bg-purple-100 text-purple-800',
+    'Work In Progress': 'bg-purple-100 text-purple-800',
     'Resolved': 'bg-green-100 text-green-800',
     'Closed': 'bg-gray-100 text-gray-800',
     'Rejected': 'bg-red-100 text-red-800'
@@ -157,6 +225,115 @@ function StatusBadge({ status }) {
     <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[status] || 'bg-gray-100 text-gray-800'}`}>
       {status}
     </span>
+  )
+}
+
+// Feedback Smileys Component - Enhanced with hover, creator-only, and modal
+// Uses database columns: rating ('Good', 'Ok', 'Bad'), rating_remarks, rated_at
+function FeedbackSmileys({ issue, ticket, userProfile, onUpdateFeedback, isUpdating }) {
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [hoveredSmiley, setHoveredSmiley] = useState(null)
+
+  const smileys = [
+    { value: 'Good', emoji: '😊', activeColor: 'text-green-500', label: 'Good' },
+    { value: 'Ok', emoji: '😐', activeColor: 'text-yellow-500', label: 'Ok' },
+    { value: 'Bad', emoji: '☹️', activeColor: 'text-red-500', label: 'Bad' }
+  ]
+
+  // Only ticket creator (supervisor who created the ticket) can give/edit feedback
+  const isTicketCreator = ticket?.supervisor_id === userProfile?.employee_id
+  const isDone = issue.status === 'Done'
+  const hasRating = issue.rating !== null && issue.rating !== undefined
+  const canInteract = isDone && isTicketCreator
+
+  // Debug: log the comparison values
+  console.log('FeedbackSmileys debug:', {
+    'ticket.supervisor_id': ticket?.supervisor_id,
+    'userProfile.employee_id': userProfile?.employee_id,
+    isTicketCreator,
+    isDone,
+    hasRating
+  })
+
+  const handleSubmitFeedback = (feedbackData) => {
+    onUpdateFeedback(feedbackData)
+    setIsModalOpen(false)
+  }
+
+  // Show greyed out smileys if issue not done
+  if (!isDone) {
+    return (
+      <div className="flex items-center gap-1">
+        {smileys.map((s) => (
+          <span
+            key={s.value}
+            className="text-gray-300 text-lg cursor-not-allowed grayscale opacity-50"
+            title="Feedback available after issue is marked Done"
+          >
+            {s.emoji}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  // Not ticket creator - show read-only (greyed if no rating, or show selected)
+  if (!isTicketCreator) {
+    return (
+      <div className="flex items-center gap-1">
+        {smileys.map((s) => (
+          <span
+            key={s.value}
+            className={`text-lg transition-all ${hasRating && issue.rating === s.value
+              ? s.activeColor
+              : 'grayscale opacity-40 cursor-not-allowed'
+              }`}
+            title={hasRating && issue.rating === s.value
+              ? `${s.label}${issue.rating_remarks ? `: ${issue.rating_remarks}` : ''}`
+              : 'Only ticket creator can provide feedback'}
+          >
+            {s.emoji}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  // Ticket creator - can interact (add or edit rating)
+  return (
+    <>
+      <div className="flex items-center gap-1">
+        {smileys.map((s) => (
+          <button
+            key={s.value}
+            onClick={() => setIsModalOpen(true)}
+            onMouseEnter={() => setHoveredSmiley(s.value)}
+            onMouseLeave={() => setHoveredSmiley(null)}
+            className={`text-lg transition-all duration-150 hover:scale-125 cursor-pointer ${hasRating && issue.rating === s.value
+              ? s.activeColor
+              : hoveredSmiley === s.value
+                ? s.activeColor
+                : hasRating
+                  ? 'grayscale opacity-30 hover:grayscale-0 hover:opacity-100'
+                  : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'
+              }`}
+            title={hasRating ? 'Click to edit rating' : `Click to rate as ${s.label}`}
+          >
+            {s.emoji}
+          </button>
+        ))}
+      </div>
+
+      <FeedbackModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleSubmitFeedback}
+        isLoading={isUpdating}
+        issueDescription={issue.description}
+        initialRating={issue.rating}
+        initialRemarks={issue.rating_remarks}
+      />
+    </>
   )
 }
 
@@ -253,7 +430,7 @@ function OverviewTab({ ticket }) {
   )
 }
 
-function IssuesTab({ ticket, issues, canEdit }) {
+function IssuesTab({ ticket, issues, canEdit, userProfile }) {
   const navigate = useNavigate()
   const createIssue = useCreateIssue()
   const updateIssue = useUpdateIssue()
@@ -272,6 +449,10 @@ function IssuesTab({ ticket, issues, canEdit }) {
     severity: null,
     work_type: 'InHouse'
   })
+
+  // Edit Mode State
+  const [editingIssueId, setEditingIssueId] = useState(null)
+  const [editedIssue, setEditedIssue] = useState(null)
 
   // Toggle Selection
   const toggleSelect = (id) => {
@@ -298,8 +479,11 @@ function IssuesTab({ ticket, issues, canEdit }) {
     if (!newIssue.description) return
     try {
       await createIssue.mutateAsync({
-        ticket_id: ticket.id,
-        ...newIssue
+        issueData: {
+          ticket_id: ticket.id,
+          ...newIssue
+        },
+        userId: userProfile?.id
       })
       setNewIssue({ description: '', category: null, severity: null, work_type: 'InHouse' })
     } catch (e) {
@@ -313,7 +497,14 @@ function IssuesTab({ ticket, issues, canEdit }) {
 
     try {
       // Execute all deletes
-      await Promise.all(Array.from(selectedIssueIds).map(id => deleteIssue.mutateAsync(id)))
+      await Promise.all(Array.from(selectedIssueIds).map(id => {
+        const issue = issues?.find(i => i.id === id)
+        return deleteIssue.mutateAsync({
+          issueId: id,
+          userId: userProfile?.id,
+          oldData: issue
+        })
+      }))
       setSelectedIssueIds(new Set())
     } catch (e) {
       console.error("Delete error:", e)
@@ -334,9 +525,14 @@ function IssuesTab({ ticket, issues, canEdit }) {
     }
 
     try {
+      // Get selected issues for audit logging
+      const selectedIssues = issues?.filter(i => selectedIssueIds.has(i.id)) || []
+
       const newJC = await createJobCard.mutateAsync({
         jobCardData,
-        issueIds: Array.from(selectedIssueIds)
+        issueIds: Array.from(selectedIssueIds),
+        userId: userProfile?.id,
+        issues: selectedIssues
       })
 
       setSelectedIssueIds(new Set()) // Clear selection
@@ -354,9 +550,14 @@ function IssuesTab({ ticket, issues, canEdit }) {
     if (selectedIssueIds.size === 0) return
 
     try {
+      // Get selected issues for audit logging
+      const selectedIssues = issues?.filter(i => selectedIssueIds.has(i.id)) || []
+
       await linkIssues.mutateAsync({
         jobCardId,
-        issueIds: Array.from(selectedIssueIds)
+        issueIds: Array.from(selectedIssueIds),
+        userId: userProfile?.id,
+        issues: selectedIssues
       })
       setSelectedIssueIds(new Set())
       alert('Issues added to Job Card successfully!')
@@ -368,39 +569,92 @@ function IssuesTab({ ticket, issues, canEdit }) {
 
   const openJobCards = jobCards?.filter(jc => jc.status !== 'Closed' && jc.status !== 'Deleted') || []
 
-  // Handle Unassign Job Card
-  const handleUnassign = async (issueId) => {
-    if (!window.confirm('Are you sure you want to remove this issue from the Job Card?')) return
+  const unassignedIssues = issues?.filter(i => !i.job_card_id) || []
+  const assignedIssues = issues?.filter(i => i.job_card_id) || []
+  const allIssues = [...unassignedIssues, ...assignedIssues]
+
+  // Start editing an issue
+  const startEditing = (issue) => {
+    setEditingIssueId(issue.id)
+    setEditedIssue({
+      description: issue.description,
+      category: issue.category,
+      severity: issue.severity
+    })
+  }
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setEditingIssueId(null)
+    setEditedIssue(null)
+  }
+
+  // Check if there are unsaved changes
+  const hasChanges = (issue) => {
+    if (!editedIssue || editingIssueId !== issue.id) return false
+    return (
+      editedIssue.description !== issue.description ||
+      editedIssue.category !== issue.category ||
+      editedIssue.severity !== issue.severity
+    )
+  }
+
+  // Save edited issue
+  const handleSaveEdit = async (issue) => {
+    if (!hasChanges(issue)) {
+      cancelEditing()
+      return
+    }
 
     try {
       await updateIssue.mutateAsync({
-        id: issueId,
-        updates: { job_card_id: null, status: 'Open' } // Reset status to Open? Verify workflow.
+        id: issue.id,
+        updates: {
+          description: editedIssue.description,
+          category: editedIssue.category,
+          severity: editedIssue.severity
+        },
+        userId: userProfile?.id,
+        oldData: issue
       })
+      cancelEditing()
     } catch (e) {
       alert(e.message)
     }
   }
 
-  const unassignedIssues = issues?.filter(i => !i.job_card_id) || []
-  const assignedIssues = issues?.filter(i => i.job_card_id) || []
-  const allIssues = [...unassignedIssues, ...assignedIssues]
+  // Handle unassign from job card (only in edit mode)
+  const handleUnassignInEditMode = async (issue) => {
+    if (!window.confirm('Are you sure you want to remove this issue from the Job Card?')) return
+
+    try {
+      await updateIssue.mutateAsync({
+        id: issue.id,
+        updates: { job_card_id: null, status: 'Open' },
+        userId: userProfile?.id,
+        oldData: issue
+      })
+      cancelEditing()
+    } catch (e) {
+      alert(e.message)
+    }
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header Actions */}
-      <div className="flex justify-between items-center bg-gray-50 p-4 rounded-lg border border-gray-200">
-        <div className="flex items-center gap-4">
-          {selectedIssueIds.size > 0 ? (
-            <span className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
-              {selectedIssueIds.size} selected
-            </span>
-          ) : (
-            <span className="text-sm text-gray-500">Select issues to perform an action</span>
-          )}
-        </div>
+      {/* Header Actions - Only visible if user can edit */}
+      {canEdit && (
+        <div className="flex justify-between items-center bg-gray-50 p-4 rounded-lg border border-gray-200">
+          <div className="flex items-center gap-4">
+            {selectedIssueIds.size > 0 ? (
+              <span className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
+                {selectedIssueIds.size} selected
+              </span>
+            ) : (
+              <span className="text-sm text-gray-500">Select issues to perform an action</span>
+            )}
+          </div>
 
-        {canEdit && (
           <div className="flex items-center gap-2">
 
             <Menu as="div" className="relative inline-block text-left">
@@ -465,134 +719,230 @@ function IssuesTab({ ticket, issues, canEdit }) {
               {deleteIssue.isPending ? 'Deleting...' : 'Delete'}
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Issues Table */}
       <div className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 w-12 text-center">
-                {unassignedIssues.length > 0 && canEdit && (
-                  <input
-                    type="checkbox"
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    checked={selectedIssueIds.size === unassignedIssues.length && unassignedIssues.length > 0}
-                    onChange={toggleSelectAll}
-                  />
-                )}
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">Description</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Card</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {allIssues.map(issue => {
-              const isAssigned = !!issue.job_card_id
-              return (
-                <tr key={issue.id} className={isAssigned ? 'bg-gray-50/50' : 'hover:bg-gray-50'}>
-                  <td className="px-4 py-4 text-center">
-                    {!isAssigned && canEdit && (
-                      <input
-                        type="checkbox"
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        checked={selectedIssueIds.has(issue.id)}
-                        onChange={() => toggleSelect(issue.id)}
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 w-12 text-center">
+                  {unassignedIssues.length > 0 && canEdit && (
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={selectedIssueIds.size === unassignedIssues.length && unassignedIssues.length > 0}
+                      onChange={toggleSelectAll}
+                    />
+                  )}
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">Description</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Card</th>
+                {canEdit && <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {allIssues.map(issue => {
+                const isAssigned = !!issue.job_card_id
+                return (
+                  <tr key={issue.id} className={isAssigned ? 'bg-gray-50/50' : 'hover:bg-gray-50'}>
+                    <td className="px-4 py-4 text-center">
+                      {!isAssigned && canEdit && (
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={selectedIssueIds.has(issue.id)}
+                          onChange={() => toggleSelect(issue.id)}
+                        />
+                      )}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{issue.issue_number}</td>
+                    <td className="px-4 py-4 text-sm text-gray-700">
+                      {editingIssueId === issue.id ? (
+                        <CustomInput
+                          value={editedIssue?.description || ''}
+                          onChange={e => setEditedIssue({ ...editedIssue, description: e.target.value })}
+                          className="w-full"
+                        />
+                      ) : (
+                        issue.description
+                      )}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {editingIssueId === issue.id ? (
+                        <CustomSelect
+                          value={editedIssue?.category}
+                          onChange={val => setEditedIssue({ ...editedIssue, category: val })}
+                          options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other']}
+                          placeholder="Select"
+                        />
+                      ) : (
+                        issue.category
+                      )}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {editingIssueId === issue.id ? (
+                        <CustomSelect
+                          value={editedIssue?.severity}
+                          onChange={val => setEditedIssue({ ...editedIssue, severity: val })}
+                          options={['Minor', 'Major']}
+                          placeholder="Select"
+                        />
+                      ) : (
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${issue.severity === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}`}>
+                          {issue.severity}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${issue.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
+                        {issue.status}
+                      </span>
+                    </td>
+                    {/* Feedback Column */}
+                    <td className="px-4 py-4 whitespace-nowrap text-sm">
+                      <FeedbackSmileys
+                        issue={issue}
+                        ticket={ticket}
+                        userProfile={userProfile}
+                        isUpdating={updateIssue.isPending}
+                        onUpdateFeedback={(feedbackData) => {
+                          console.log('Rating update:', {
+                            issueId: issue.id,
+                            feedbackData,
+                            updates: {
+                              rating: feedbackData.rating,
+                              rating_remarks: feedbackData.rating_remarks,
+                              rated_at: new Date().toISOString()
+                            }
+                          })
+                          updateIssue.mutate({
+                            id: issue.id,
+                            updates: {
+                              rating: feedbackData.rating,
+                              rating_remarks: feedbackData.rating_remarks,
+                              rated_at: new Date().toISOString()
+                            },
+                            userId: userProfile?.id,
+                            oldData: issue
+                          })
+                        }}
                       />
-                    )}
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{issue.issue_number}</td>
-                  <td className="px-4 py-4 text-sm text-gray-700">{issue.description}</td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{issue.category}</td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${issue.severity === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}`}>
-                      {issue.severity}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${issue.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
-                      {issue.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {issue.job_card?.job_card_number ? (
-                      <div className="flex items-center gap-2">
-                        <Link to={`/job-cards/${issue.job_card.id}`} className="text-blue-600 hover:underline font-medium">
-                          #{issue.job_card.job_card_number}
-                        </Link>
-                        {canEdit && (
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {issue.job_card?.job_card_number ? (
+                        <div className="flex items-center gap-2">
+                          <Link to={`/job-cards/${issue.job_card.id}`} className="text-blue-600 hover:underline font-medium">
+                            #{issue.job_card.job_card_number}
+                          </Link>
+                          {canEdit && editingIssueId === issue.id && (
+                            <button
+                              onClick={() => handleUnassignInEditMode(issue)}
+                              className="text-gray-400 hover:text-red-500 transition-colors p-1"
+                              title="Remove from Job Card"
+                            >
+                              <XMarkIcon className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 italic text-xs">Unassigned</span>
+                      )}
+                    </td>
+                    {/* Actions Column */}
+                    {canEdit && (
+                      <td className="px-4 py-4 whitespace-nowrap text-right">
+                        {editingIssueId === issue.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            {hasChanges(issue) && (
+                              <button
+                                onClick={() => handleSaveEdit(issue)}
+                                disabled={updateIssue.isPending}
+                                className="text-green-600 hover:text-green-700 transition-colors p-1.5 rounded hover:bg-green-50"
+                                title="Save changes"
+                              >
+                                <CheckIcon className="w-4 h-4" />
+                              </button>
+                            )}
+                            <button
+                              onClick={cancelEditing}
+                              className="text-gray-400 hover:text-gray-600 transition-colors p-1.5 rounded hover:bg-gray-100"
+                              title="Cancel editing"
+                            >
+                              <XMarkIcon className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={() => handleUnassign(issue.id)}
-                            className="text-gray-400 hover:text-red-500 transition-colors p-1"
-                            title="Unassign from Job Card"
+                            onClick={() => startEditing(issue)}
+                            className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50"
+                            title="Edit issue"
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                            </svg>
+                            <PencilIcon className="w-4 h-4" />
                           </button>
                         )}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400 italic text-xs">Unassigned</span>
+                      </td>
                     )}
+                  </tr>
+                )
+              })}
+
+              {/* INLINE CREATE ROW */}
+              {canEdit && (
+                <tr className="bg-blue-50/30">
+                  <td className="px-4 py-4"></td>
+                  <td className="px-4 py-4 font-mono text-xs text-gray-400">NEW</td>
+                  <td className="px-4 py-2">
+                    <CustomInput
+                      placeholder="Description..."
+                      value={newIssue.description}
+                      onChange={e => setNewIssue({ ...newIssue, description: e.target.value })}
+                      onKeyDown={e => e.key === 'Enter' && handleCreate()}
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <CustomSelect
+                      value={newIssue.category}
+                      onChange={val => setNewIssue({ ...newIssue, category: val })}
+                      options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other']}
+                      placeholder="Select"
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <CustomSelect
+                      value={newIssue.severity}
+                      onChange={val => setNewIssue({ ...newIssue, severity: val })}
+                      options={['Minor', 'Major']}
+                      placeholder="Select"
+                    />
+                  </td>
+                  <td className="px-4 py-2" colSpan={3}>
+                    <button
+                      onClick={handleCreate}
+                      disabled={!newIssue.description || !newIssue.category || !newIssue.severity || createIssue.isPending}
+                      className="w-full bg-blue-600 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
+                    >
+                      {createIssue.isPending ? '...' : <><PlusIcon className="w-4 h-4" /> Add Issue</>}
+                    </button>
                   </td>
                 </tr>
-              )
-            })}
+              )}
 
-            {/* INLINE CREATE ROW */}
-            {canEdit && (
-              <tr className="bg-blue-50/30">
-                <td className="px-4 py-4"></td>
-                <td className="px-4 py-4 font-mono text-xs text-gray-400">NEW</td>
-                <td className="px-4 py-2">
-                  <CustomInput
-                    placeholder="Description..."
-                    value={newIssue.description}
-                    onChange={e => setNewIssue({ ...newIssue, description: e.target.value })}
-                    onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <CustomSelect
-                    value={newIssue.category}
-                    onChange={val => setNewIssue({ ...newIssue, category: val })}
-                    options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other']}
-                    placeholder="Select"
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <CustomSelect
-                    value={newIssue.severity}
-                    onChange={val => setNewIssue({ ...newIssue, severity: val })}
-                    options={['Minor', 'Major']}
-                    placeholder="Select"
-                  />
-                </td>
-                <td className="px-4 py-2" colSpan={2}>
-                  <button
-                    onClick={handleCreate}
-                    disabled={!newIssue.description || !newIssue.category || !newIssue.severity || createIssue.isPending}
-                    className="w-full bg-blue-600 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
-                  >
-                    {createIssue.isPending ? '...' : <><PlusIcon className="w-4 h-4" /> Add Issue</>}
-                  </button>
-                </td>
-              </tr>
-            )}
-
-            {allIssues.length === 0 && !canEdit && (
-              <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-gray-500 italic">No issues recorded.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              {allIssues.length === 0 && !canEdit && (
+                <tr>
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500 italic">No issues recorded.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

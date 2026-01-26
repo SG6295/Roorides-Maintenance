@@ -8,7 +8,6 @@ import Navigation from '../components/shared/Navigation'
 import StatusAccordion from '../components/tickets/StatusAccordion'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import SiteFilter from '../components/tickets/SiteFilter'
-import FilterModal from '../components/tickets/FilterModal'
 
 export default function Tickets() {
   const { userProfile } = useAuth()
@@ -24,16 +23,13 @@ export default function Tickets() {
     end: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
   })
 
+  // Only keep active filters: status (from accordion logic likely, though not here), site, vehicle
   const [filters, setFilters] = useState({
     status: '',
     site: '',
     vehicle_number: '',
-    work_type: '',
-    impact: '',
-    category: '',
   })
 
-  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false)
 
   // Fetch all tickets (we'll filter by date on client side)
   const { data: allTickets, isLoading, refetch } = useTickets({})
@@ -92,15 +88,6 @@ export default function Tickets() {
         return false
       }
 
-      // Work type filter
-      if (filters.work_type && ticket.work_type !== filters.work_type) return false
-
-      // Impact filter
-      if (filters.impact && ticket.impact !== filters.impact) return false
-
-      // Category filter
-      if (filters.category && ticket.category !== filters.category) return false
-
       return true
     })
   }, [allTickets, dateRange, filters])
@@ -111,9 +98,11 @@ export default function Tickets() {
 
     const counts = {
       total: 0,
-      Pending: 0,
-      'Team Assigned': 0,
-      Completed: 0,
+      New: 0,
+      Accepted: 0,
+      'Work In Progress': 0,
+      Resolved: 0,
+      Closed: 0,
       Rejected: 0,
     }
 
@@ -131,28 +120,16 @@ export default function Tickets() {
     return counts
   }, [allTickets, dateRange])
 
-  const handleApplyModalFilters = (modalFilters) => {
-    setFilters({ ...filters, ...modalFilters })
-  }
 
   const clearFilters = () => {
     setFilters({
       status: '',
       site: '',
       vehicle_number: '',
-      work_type: '',
-      impact: '',
-      category: '',
     })
   }
 
-  const hasActiveFilters = filters.site || filters.vehicle_number || filters.work_type || filters.impact || filters.category
-
-  const activeFilterCount = [
-    filters.work_type,
-    filters.impact,
-    filters.category,
-  ].filter(Boolean).length
+  const hasActiveFilters = filters.site || filters.vehicle_number
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -201,21 +178,6 @@ export default function Tickets() {
               className="px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-w-[160px] sm:min-w-[200px] min-h-[48px] flex-1 sm:flex-none"
             />
 
-            {/* More Filters Button */}
-            <button
-              onClick={() => setIsFilterModalOpen(true)}
-              className="relative flex items-center gap-2 px-4 py-2.5 text-sm border border-gray-300 rounded-lg bg-white hover:bg-gray-50 min-h-[48px] whitespace-nowrap font-medium"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-              </svg>
-              <span>Filters</span>
-              {activeFilterCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                  {activeFilterCount}
-                </span>
-              )}
-            </button>
 
             {/* Clear All Button */}
             {hasActiveFilters && (
@@ -260,13 +222,7 @@ export default function Tickets() {
         )}
       </div>
 
-      {/* Filter Modal */}
-      <FilterModal
-        isOpen={isFilterModalOpen}
-        onClose={() => setIsFilterModalOpen(false)}
-        filters={filters}
-        onApplyFilters={handleApplyModalFilters}
-      />
     </div>
   )
 }
+

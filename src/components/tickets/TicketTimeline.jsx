@@ -78,8 +78,23 @@ function getEventColor(event) {
             default: return 'bg-blue-300' // STATUS_CHANGE
         }
     } else {
-        // Audit
-        return 'bg-gray-300'
+        // Audit - check if it's an issue-related event
+        const actionType = event.old_data?._actionType
+
+        switch (actionType) {
+            case 'issue_linked_to_job_card': return 'bg-purple-500'
+            case 'issue_unlinked_from_job_card': return 'bg-orange-400'
+            default:
+                // Check action type for issues
+                if (event.table_name === 'issues') {
+                    switch (event.action) {
+                        case 'INSERT': return 'bg-green-400'
+                        case 'DELETE': return 'bg-red-400'
+                        default: return 'bg-blue-300'
+                    }
+                }
+                return 'bg-gray-300'
+        }
     }
 }
 
@@ -93,7 +108,23 @@ function getEventIcon(event) {
             default: return '🔄'
         }
     } else {
-        return '✏️' // Audit Edit
+        // Audit - check if it's an issue-related event
+        const actionType = event.old_data?._actionType
+
+        switch (actionType) {
+            case 'issue_linked_to_job_card': return '🔗'
+            case 'issue_unlinked_from_job_card': return '🔓'
+            default:
+                // Check action type for issues
+                if (event.table_name === 'issues') {
+                    switch (event.action) {
+                        case 'INSERT': return '🔧'
+                        case 'DELETE': return '🗑️'
+                        default: return '✏️'
+                    }
+                }
+                return '✏️' // Default for ticket edits
+        }
     }
 }
 
@@ -108,17 +139,78 @@ function getEventLabel(event) {
             default: return 'Updated by'
         }
     } else {
-        return 'Edited by'
+        // Audit - check if it's an issue-related event
+        const actionType = event.old_data?._actionType
+
+        switch (actionType) {
+            case 'issue_linked_to_job_card': return 'Issue linked to Job Card by'
+            case 'issue_unlinked_from_job_card': return 'Issue unlinked from Job Card by'
+            default:
+                // Check action type for issues
+                if (event.table_name === 'issues') {
+                    switch (event.action) {
+                        case 'INSERT': return 'Issue created by'
+                        case 'DELETE': return 'Issue deleted by'
+                        default: return 'Issue edited by'
+                    }
+                }
+                return 'Edited by'
+        }
     }
 }
 
 function formatMetadata(event) {
     if (event.type === 'SLA') {
-        if (event.event_type === 'STATUS_CHANGE' && event.metadata.oldStatus && event.metadata.newStatus) {
+        if (event.event_type === 'STATUS_CHANGE' && event.metadata?.oldStatus && event.metadata?.newStatus) {
             return `${event.metadata.oldStatus} → ${event.metadata.newStatus}`
         }
     } else {
         // Audit Log
+        const actionType = event.old_data?._actionType
+
+        // Handle issue-specific events
+        if (event.table_name === 'issues') {
+            const issueNumber = event.new_data?.issue_number || event.old_data?.issue_number
+            const description = event.new_data?.description || event.old_data?.description
+            const truncatedDesc = description ? (description.length > 40 ? description.substring(0, 40) + '...' : description) : ''
+
+            switch (actionType) {
+                case 'issue_linked_to_job_card': {
+                    const jobCardNumber = event.old_data?._jobCardNumber
+                    return `${issueNumber ? issueNumber + ': ' : ''}${truncatedDesc}${jobCardNumber ? `\n→ Job Card #${jobCardNumber}` : ''}`
+                }
+                case 'issue_unlinked_from_job_card': {
+                    const jobCardNumber = event.old_data?._jobCardNumber
+                    return `${issueNumber ? issueNumber + ': ' : ''}${truncatedDesc}${jobCardNumber ? `\n← Removed from Job Card #${jobCardNumber}` : ''}`
+                }
+                default:
+                    if (event.action === 'INSERT') {
+                        return `${issueNumber ? issueNumber + ': ' : ''}${truncatedDesc}`
+                    }
+                    if (event.action === 'DELETE') {
+                        return `${issueNumber ? issueNumber + ': ' : ''}${truncatedDesc}`
+                    }
+                    // For updates, show changed fields
+                    if (event.changed_fields && event.changed_fields.length > 0) {
+                        const fieldsToShow = event.changed_fields.filter(f => !f.startsWith('_'))
+                        if (fieldsToShow.length > 0) {
+                            return `${issueNumber ? issueNumber + ': ' : ''}${fieldsToShow.map(field => {
+                                const oldVal = event.old_data?.[field]
+                                const newVal = event.new_data?.[field]
+                                const formatVal = (v) => {
+                                    if (v === null || v === undefined) return 'Empty'
+                                    const s = String(v)
+                                    return s.length > 20 ? s.substring(0, 20) + '...' : s
+                                }
+                                return `${formatFieldName(field)}: ${formatVal(oldVal)} → ${formatVal(newVal)}`
+                            }).join('\n')}`
+                        }
+                    }
+                    return truncatedDesc
+            }
+        }
+
+        // Default ticket audit formatting
         if (event.changed_fields && event.changed_fields.length > 0) {
             return event.changed_fields.map(field => {
                 const oldVal = event.old_data?.[field]

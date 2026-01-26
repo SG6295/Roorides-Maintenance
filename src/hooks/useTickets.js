@@ -16,6 +16,9 @@ export function useTickets(filters = {}) {
         .select('*')
         .order('created_at', { ascending: false })
 
+
+
+
       // Apply filters
       if (filters.site) {
         query = query.eq('site', filters.site)
@@ -25,9 +28,6 @@ export function useTickets(filters = {}) {
       }
       if (filters.vehicle_number) {
         query = query.ilike('vehicle_number', `%${filters.vehicle_number}%`)
-      }
-      if (filters.category) {
-        query = query.eq('category', filters.category)
       }
 
       const { data, error } = await query

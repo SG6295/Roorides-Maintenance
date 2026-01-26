@@ -63,6 +63,19 @@ export default function Dashboard() {
               <h3 className="text-lg font-semibold text-gray-900 mb-1">View Job Cards</h3>
             </Link>
 
+            {/* 4. View Feedback */}
+            <Link
+              to="/feedback"
+              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"
+            >
+              <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mb-4 group-hover:bg-teal-200 transition-colors">
+                <svg className="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">View Feedback</h3>
+            </Link>
+
             {/* 4. Analysis */}
             {userProfile?.role === 'maintenance_exec' ? (
               <Link

@@ -11,9 +11,9 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
     const { user } = useAuth()
     const [isRating, setIsRating] = useState(false)
 
-    // Compute assignment deadline for Pending tickets
+    // Compute assignment deadline for New/Pending tickets
     let assignmentDeadline = null
-    if (ticket.status === 'Pending') {
+    if (ticket.status === 'Pending' || ticket.status === 'New') {
         assignmentDeadline = addDays(new Date(ticket.created_at), assignmentSLADays)
     }
 
@@ -90,15 +90,12 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
                         {ticket.vehicle_number}
                     </h3>
                     <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
-                        {ticket.complaint}
+                        {ticket.initial_remarks || ticket.complaint}
                     </p>
                 </div>
             </div>
 
             <div className="flex flex-wrap gap-2 text-xs text-gray-500 mt-2 sm:mt-4 pt-3 border-t border-gray-100">
-                <span className="bg-gray-100 px-2.5 py-1.5 rounded font-medium">
-                    {ticket.category}
-                </span>
                 <span className="bg-gray-100 px-2.5 py-1.5 rounded font-medium">
                     {ticket.site}
                 </span>
@@ -110,9 +107,14 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
                         {ticket.impact}
                     </span>
                 )}
-                <span className="ml-auto text-gray-400">
-                    {format(new Date(ticket.created_at), 'MMM d, yyyy')}
-                </span>
+                <div className="ml-auto text-right">
+                    <div className="text-gray-900 font-medium mb-0.5">
+                        {ticket.supervisor_name}
+                    </div>
+                    <div className="text-gray-400">
+                        {format(new Date(ticket.created_at), 'MMM d, yyyy h:mm a')}
+                    </div>
+                </div>
             </div>
         </Link>
     )
@@ -120,10 +122,15 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
 
 function StatusBadge({ status }) {
     const colors = {
-        'Pending': 'bg-yellow-100 text-yellow-800',
-        'Team Assigned': 'bg-blue-100 text-blue-800',
-        'Work in Progress': 'bg-purple-100 text-purple-800',
-        'Completed': 'bg-green-100 text-green-800',
+        'New': 'bg-yellow-100 text-yellow-800',
+        'Pending': 'bg-yellow-100 text-yellow-800', // Legacy
+        'Accepted': 'bg-blue-100 text-blue-800',
+        'Team Assigned': 'bg-blue-100 text-blue-800', // Legacy
+        'Work in Progress': 'bg-purple-100 text-purple-800', // Note: TicketDetail uses 'Work In Progress' (Capital I), ensuring consistency
+        'Work In Progress': 'bg-purple-100 text-purple-800',
+        'Resolved': 'bg-green-100 text-green-800',
+        'Completed': 'bg-green-100 text-green-800', // Legacy
+        'Closed': 'bg-gray-100 text-gray-800',
         'Rejected': 'bg-red-100 text-red-800',
     }
 
@@ -135,8 +142,8 @@ function StatusBadge({ status }) {
 }
 
 function SLABadge({ ticket, currentDate, assignmentDeadline, interactions }) {
-    // 1. Check Assignment SLA (Pending Tickets)
-    if (ticket.status === 'Pending' && assignmentDeadline) {
+    // 1. Check Assignment SLA (New/Pending Tickets)
+    if ((ticket.status === 'Pending' || ticket.status === 'New') && assignmentDeadline) {
         return <SLATimer targetDate={assignmentDeadline} currentDate={currentDate} />
     }
 
