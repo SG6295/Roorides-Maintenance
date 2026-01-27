@@ -171,9 +171,9 @@ tickets {
   initial_remarks: text (Supervisor's initial description)
   
   -- Status Workflow
-  status: enum (Pending, Accepted, Rejected, Work in Progress, Resolved, Closed)
+  status: enum (New, Accepted, Rejected, Work in Progress, Resolved, Closed)
   -- Status Logic:
-  -- Pending: Initial state
+  -- New: Initial state (default)
   -- Accepted: When Exec creates Issues for the ticket
   -- Rejected: Exec rejects ticket
   -- Work in Progress: When FIRST Job Card is created for any issue

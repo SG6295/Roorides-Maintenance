@@ -5,7 +5,7 @@
 | Heading | Contents | Rules/Guidance |
 |---------|----------|----------------|
 | No of Tickets by status | All | count using relevant filter |
-| No of Tickets by status | Pending | count using relevant filter |
+| No of Tickets by status | New | count using relevant filter |
 | No of Tickets by status | Team Assigned | count using relevant filter |
 | No of Tickets by status | Completed | count using relevant filter |
 | No of Tickets by status | Rejected | count using relevant filter |
