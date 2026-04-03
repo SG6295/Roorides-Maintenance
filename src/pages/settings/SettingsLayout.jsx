@@ -49,7 +49,7 @@ export default function SettingsLayout() {
                                     >
                                         <tab.icon
                                             className={classNames(
-                                                isActive ? 'text-blue-500 group-hover:text-blue-500' : 'text-gray-400 group-hover:text-gray-500',
+                                                isActive ? 'text-blue-500 group-hover:text-blue-500' : 'text-gray-500 group-hover:text-gray-600',
                                                 'flex-shrink-0 -ml-1 mr-3 h-6 w-6'
                                             )}
                                             aria-hidden="true"

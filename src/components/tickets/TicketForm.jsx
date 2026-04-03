@@ -181,29 +181,29 @@ export default function TicketForm() {
             <h3 className="text-sm font-medium text-gray-700">Supervisor Information</h3>
 
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Name</label>
+              <label className="block text-xs text-gray-600 mb-1">Name</label>
               <input
                 {...register('supervisor_name')}
                 readOnly
-                className="w-full px-3 py-2 bg-white border border-gray-200 rounded text-sm"
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded text-sm"
               />
             </div>
 
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Employee ID</label>
+              <label className="block text-xs text-gray-600 mb-1">Employee ID</label>
               <input
                 {...register('supervisor_id')}
                 readOnly
-                className="w-full px-3 py-2 bg-white border border-gray-200 rounded text-sm"
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded text-sm"
               />
             </div>
 
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Contact</label>
+              <label className="block text-xs text-gray-600 mb-1">Contact</label>
               <input
                 {...register('supervisor_contact')}
                 placeholder="Phone number (optional)"
-                className="w-full px-3 py-2 bg-white border border-gray-200 rounded text-sm"
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded text-sm"
               />
             </div>
           </div>
@@ -212,7 +212,7 @@ export default function TicketForm() {
           <PhotoUpload onPhotosChange={setPhotoUrls} maxPhotos={5} />
 
           {/* Submit Button */}
-          <div className="sticky bottom-0 bg-white py-4 -mx-4 px-4 border-t border-gray-200">
+          <div className="sticky bottom-0 bg-white py-4 -mx-4 px-4 border-t border-gray-300">
             <button
               type="submit"
               disabled={createTicket.isPending}

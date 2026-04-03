@@ -65,7 +65,7 @@ export default function JobCards() {
                                 value={filters.search}
                                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
                             />
-                            <MagnifyingGlassIcon className="w-5 h-5 text-gray-400 absolute left-3 top-2.5" />
+                            <MagnifyingGlassIcon className="w-5 h-5 text-gray-500 absolute left-3 top-2.5" />
                         </div>
 
                         <select
@@ -85,22 +85,22 @@ export default function JobCards() {
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Job Card
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Vehicle
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Type / Assignee
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Created
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Status
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Open Issues
                                 </th>
                             </tr>
@@ -112,7 +112,7 @@ export default function JobCards() {
                                     <tr
                                         key={jc.id}
                                         className="hover:bg-gray-50 cursor-pointer transition-colors"
-                                        onClick={() => navigate(`/job-cards/${jc.id}`)}
+                                        onClick={() => navigate(`/job-cards/${jc.job_card_number}`)}
                                     >
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span className="text-blue-600 font-medium hover:underline">
@@ -121,7 +121,7 @@ export default function JobCards() {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span className="text-gray-900 font-medium">{jc.vehicle_number}</span>
-                                            <span className="block text-xs text-gray-500">{jc.site}</span>
+                                            <span className="block text-xs text-gray-600">{jc.site}</span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div>
@@ -135,7 +135,7 @@ export default function JobCards() {
                                                 </span>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                             {format(new Date(jc.created_at), 'MMM d, yyyy')}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
@@ -144,7 +144,7 @@ export default function JobCards() {
                                                 {jc.status}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                             {openIssues > 0 ? (
                                                 <span className="text-red-600 font-medium">{openIssues} Open</span>
                                             ) : (
@@ -156,7 +156,7 @@ export default function JobCards() {
                             })}
                             {filteredJobCards?.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-600">
                                         No job cards found.
                                     </td>
                                 </tr>

@@ -91,7 +91,7 @@ export default function TicketDetail() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <button onClick={() => navigate('/tickets')} className="text-gray-500 hover:text-gray-700">
+              <button onClick={() => navigate('/tickets')} className="text-gray-600 hover:text-gray-700">
                 ← Back
               </button>
               <div>
@@ -99,7 +99,7 @@ export default function TicketDetail() {
                   <h1 className="text-2xl font-bold text-gray-900">Ticket #{ticket.ticket_number}</h1>
                   <StatusBadge status={ticket.status} />
                 </div>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-600 mt-1">
                   Created {format(new Date(ticket.created_at), 'MMM d, yyyy')} by {ticket.supervisor_name}
                 </p>
               </div>
@@ -155,7 +155,7 @@ export default function TicketDetail() {
         <section id="overview" className="scroll-mt-20">
           <div className="border-b pb-4 mb-6">
             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <PhotoIcon className="w-6 h-6 text-gray-400" />
+              <PhotoIcon className="w-6 h-6 text-gray-500" />
               Overview
             </h2>
           </div>
@@ -166,7 +166,7 @@ export default function TicketDetail() {
         <section id="issues" className="scroll-mt-20">
           <div className="border-b pb-4 mb-6">
             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <ClipboardDocumentCheckIcon className="w-6 h-6 text-gray-400" />
+              <ClipboardDocumentCheckIcon className="w-6 h-6 text-gray-500" />
               Issues ({issues?.length || 0})
             </h2>
           </div>
@@ -177,7 +177,7 @@ export default function TicketDetail() {
         <section id="job-cards" className="scroll-mt-20">
           <div className="border-b pb-4 mb-6">
             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <WrenchScrewdriverIcon className="w-6 h-6 text-gray-400" />
+              <WrenchScrewdriverIcon className="w-6 h-6 text-gray-500" />
               Job Cards
             </h2>
           </div>
@@ -188,7 +188,7 @@ export default function TicketDetail() {
         <section id="history" className="scroll-mt-20">
           <div className="border-b pb-4 mb-6">
             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <ChatBubbleBottomCenterTextIcon className="w-6 h-6 text-gray-400" />
+              <ChatBubbleBottomCenterTextIcon className="w-6 h-6 text-gray-500" />
               History
             </h2>
           </div>
@@ -382,7 +382,7 @@ function OverviewTab({ ticket }) {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       {/* Left Column: Details */}
       <div className="lg:col-span-2 space-y-6">
-        <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold mb-4">Initial Report</h2>
           <div className="prose prose-sm text-gray-600 bg-gray-50 p-4 rounded-md">
             {ticket.initial_remarks || ticket.complaint}
@@ -390,7 +390,7 @@ function OverviewTab({ ticket }) {
         </div>
 
         {ticket.photos?.length > 0 && (
-          <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-lg font-semibold mb-4">Photos</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {ticket.photos.map((p, i) => (
@@ -405,22 +405,22 @@ function OverviewTab({ ticket }) {
 
       {/* Right Column: Metadata */}
       <div className="space-y-6">
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Details</h3>
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wider mb-4">Details</h3>
           <dl className="space-y-4">
             <div>
-              <dt className="text-xs text-gray-500">Vehicle</dt>
+              <dt className="text-xs text-gray-600">Vehicle</dt>
               <dd className="text-sm font-medium text-gray-900">{ticket.vehicle_number}</dd>
             </div>
             <div>
-              <dt className="text-xs text-gray-500">Site</dt>
+              <dt className="text-xs text-gray-600">Site</dt>
               <dd className="text-sm font-medium text-gray-900">{ticket.site}</dd>
             </div>
             <div>
-              <dt className="text-xs text-gray-500">Supervisor</dt>
+              <dt className="text-xs text-gray-600">Supervisor</dt>
               <dd className="text-sm font-medium text-gray-900">
                 {ticket.supervisor_name}
-                <span className="block text-xs text-gray-400">{ticket.supervisor_contact}</span>
+                <span className="block text-xs text-gray-500">{ticket.supervisor_contact}</span>
               </dd>
             </div>
           </dl>
@@ -644,14 +644,14 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
     <div className="space-y-6">
       {/* Header Actions - Only visible if user can edit */}
       {canEdit && (
-        <div className="flex justify-between items-center bg-gray-50 p-4 rounded-lg border border-gray-200">
+        <div className="flex justify-between items-center bg-gray-50 p-4 rounded-lg border border-gray-300">
           <div className="flex items-center gap-4">
             {selectedIssueIds.size > 0 ? (
               <span className="text-sm font-medium text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
                 {selectedIssueIds.size} selected
               </span>
             ) : (
-              <span className="text-sm text-gray-500">Select issues to perform an action</span>
+              <span className="text-sm text-gray-600">Select issues to perform an action</span>
             )}
           </div>
 
@@ -687,12 +687,12 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                             className={`${active ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
                               } block w-full px-4 py-2 text-left text-sm`}
                           >
-                            #{jc.job_card_number} <span className="text-gray-400 text-xs">({jc.status})</span>
+                            #{jc.job_card_number} <span className="text-gray-500 text-xs">({jc.status})</span>
                           </button>
                         )}
                       </MenuItem>
                     ))}
-                    {openJobCards.length > 0 && <div className="border-t border-gray-100 my-1"></div>}
+                    {openJobCards.length > 0 && <div className="border-t border-gray-200 my-1"></div>}
                     <MenuItem>
                       {({ active }) => (
                         <button
@@ -723,7 +723,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       )}
 
       {/* Issues Table */}
-      <div className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200">
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-300">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -738,14 +738,14 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                     />
                   )}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">Description</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Card</th>
-                {canEdit && <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Actions</th>}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">ID</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-1/4">Description</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Category</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Severity</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Feedback</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Job Card</th>
+                {canEdit && <th className="px-4 py-3 text-right text-xs font-medium text-gray-600 uppercase tracking-wider w-24">Actions</th>}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -775,7 +775,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         issue.description
                       )}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
                       {editingIssueId === issue.id ? (
                         <CustomSelect
                           value={editedIssue?.category}
@@ -787,7 +787,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         issue.category
                       )}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
                       {editingIssueId === issue.id ? (
                         <CustomSelect
                           value={editedIssue?.severity}
@@ -801,7 +801,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${issue.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
                         {issue.status}
                       </span>
@@ -836,16 +836,16 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         }}
                       />
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
                       {issue.job_card?.job_card_number ? (
                         <div className="flex items-center gap-2">
-                          <Link to={`/job-cards/${issue.job_card.id}`} className="text-blue-600 hover:underline font-medium">
+                          <Link to={`/job-cards/${issue.job_card.job_card_number}`} className="text-blue-600 hover:underline font-medium">
                             #{issue.job_card.job_card_number}
                           </Link>
                           {canEdit && editingIssueId === issue.id && (
                             <button
                               onClick={() => handleUnassignInEditMode(issue)}
-                              className="text-gray-400 hover:text-red-500 transition-colors p-1"
+                              className="text-gray-500 hover:text-red-500 transition-colors p-1"
                               title="Remove from Job Card"
                             >
                               <XMarkIcon className="w-4 h-4" />
@@ -853,7 +853,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                           )}
                         </div>
                       ) : (
-                        <span className="text-gray-400 italic text-xs">Unassigned</span>
+                        <span className="text-gray-500 italic text-xs">Unassigned</span>
                       )}
                     </td>
                     {/* Actions Column */}
@@ -873,7 +873,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                             )}
                             <button
                               onClick={cancelEditing}
-                              className="text-gray-400 hover:text-gray-600 transition-colors p-1.5 rounded hover:bg-gray-100"
+                              className="text-gray-500 hover:text-gray-600 transition-colors p-1.5 rounded hover:bg-gray-100"
                               title="Cancel editing"
                             >
                               <XMarkIcon className="w-4 h-4" />
@@ -882,7 +882,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         ) : (
                           <button
                             onClick={() => startEditing(issue)}
-                            className="text-gray-400 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50"
+                            className="text-gray-500 hover:text-blue-600 transition-colors p-1.5 rounded hover:bg-blue-50"
                             title="Edit issue"
                           >
                             <PencilIcon className="w-4 h-4" />
@@ -898,7 +898,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
               {canEdit && (
                 <tr className="bg-blue-50/30">
                   <td className="px-4 py-4"></td>
-                  <td className="px-4 py-4 font-mono text-xs text-gray-400">NEW</td>
+                  <td className="px-4 py-4 font-mono text-xs text-gray-500">NEW</td>
                   <td className="px-4 py-2">
                     <CustomInput
                       placeholder="Description..."
@@ -937,7 +937,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
 
               {allIssues.length === 0 && !canEdit && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500 italic">No issues recorded.</td>
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-600 italic">No issues recorded.</td>
                 </tr>
               )}
             </tbody>
@@ -977,7 +977,7 @@ function JobCardsTab({ ticket, issues }) {
       </div>
 
       {jobCards.length === 0 ? (
-        <div className="bg-white p-12 text-center text-gray-500 rounded-lg border border-dashed border-gray-300">
+        <div className="bg-white p-12 text-center text-gray-600 rounded-lg border border-dashed border-gray-300">
           No Job Cards created. Go to "Issues" tab to select issues and assign them.
         </div>
       ) : (
@@ -987,17 +987,17 @@ function JobCardsTab({ ticket, issues }) {
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h3 className="text-lg font-medium text-gray-900">
-                    <Link to={`/job-cards/${jc.id}`} className="hover:underline text-blue-600">
+                    <Link to={`/job-cards/${jc.job_card_number}`} className="hover:underline text-blue-600">
                       Job Card #{jc.job_card_number}
                     </Link>
                   </h3>
-                  <p className="text-sm text-gray-500">{jc.type} • {format(new Date(jc.created_at), 'MMM d, yyyy')}</p>
+                  <p className="text-sm text-gray-600">{jc.type} • {format(new Date(jc.created_at), 'MMM d, yyyy')}</p>
                 </div>
                 <StatusBadge status={jc.status} />
               </div>
 
               <div className="bg-gray-50 rounded p-4 mb-4">
-                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Assigned To</h4>
+                <h4 className="text-xs font-semibold text-gray-600 uppercase mb-2">Assigned To</h4>
                 {jc.type === 'InHouse' ? (
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
@@ -1011,16 +1011,16 @@ function JobCardsTab({ ticket, issues }) {
                 ) : (
                   <div>
                     <p className="text-sm font-medium text-gray-900">{jc.vendor_name}</p>
-                    <p className="text-xs text-gray-500">External Vendor</p>
+                    <p className="text-xs text-gray-600">External Vendor</p>
                   </div>
                 )}
               </div>
 
               <div>
-                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Included Issues</h4>
+                <h4 className="text-xs font-semibold text-gray-600 uppercase mb-2">Included Issues</h4>
                 <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
                   {jc.issues.map(i => (
-                    <li key={i.id}>{i.description} <span className="text-gray-400">({i.category})</span></li>
+                    <li key={i.id}>{i.description} <span className="text-gray-500">({i.category})</span></li>
                   ))}
                 </ul>
               </div>

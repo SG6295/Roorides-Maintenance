@@ -12,8 +12,13 @@ import Issues from './pages/Issues'
 import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
 import FeedbackReport from './pages/FeedbackReport'
+import Inventory from './pages/Inventory'
+import VehicleHistory from './pages/VehicleHistory'
+import MechanicDetail from './pages/MechanicDetail'
+import Vehicles from './pages/Vehicles'
 
 import Users from './pages/Users'
+import Profile from './pages/Profile'
 import ForgotPassword from './pages/auth/ForgotPassword'
 import UpdatePassword from './pages/auth/UpdatePassword'
 
@@ -150,6 +155,46 @@ function App() {
               element={
                 <ProtectedRoute>
                   <FeedbackReport />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/inventory"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                  <Inventory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vehicles"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                  <Vehicles />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vehicles/:vehicleNumber"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                  <VehicleHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/mechanics/:mechanicId"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                  <MechanicDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
                 </ProtectedRoute>
               }
             />

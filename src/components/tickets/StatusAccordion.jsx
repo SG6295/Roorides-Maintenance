@@ -44,7 +44,7 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, as
         const statusTickets = getTicketsForStatus(status.value)
 
         return (
-          <div key={status.value} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div key={status.value} className="bg-white border border-gray-300 rounded-lg overflow-hidden">
             {/* Header */}
             <button
               onClick={() => toggleStatus(status.label)}
@@ -52,7 +52,7 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, as
             >
               <div className="flex items-center gap-3">
                 <svg
-                  className={`w-5 h-5 text-gray-500 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                  className={`w-5 h-5 text-gray-600 transition-transform ${isOpen ? 'rotate-90' : ''}`}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -63,14 +63,14 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, as
                   {status.label}
                 </span>
               </div>
-              <span className="px-3 py-1 text-sm font-bold bg-white rounded-full text-gray-700 border border-gray-200">
+              <span className="px-3 py-1 text-sm font-bold bg-white rounded-full text-gray-700 border border-gray-300">
                 {count}
               </span>
             </button>
 
             {/* Content - Tickets */}
             {isOpen && (
-              <div className="border-t border-gray-200 p-3 space-y-3 bg-gray-50">
+              <div className="border-t border-gray-300 p-3 space-y-3 bg-gray-50">
                 {statusTickets.length > 0 ? (
                   statusTickets.map((ticket) => (
                     <TicketCard
@@ -82,7 +82,7 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, as
                     />
                   ))
                 ) : (
-                  <div className="text-center py-8 text-gray-500 text-sm">
+                  <div className="text-center py-8 text-gray-600 text-sm">
                     No tickets in this status
                   </div>
                 )}

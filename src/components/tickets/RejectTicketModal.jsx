@@ -43,7 +43,7 @@ export default function RejectTicketModal({ isOpen, onClose, onConfirm, isLoadin
                         <h3 className="text-lg font-semibold text-gray-900">Reject Ticket</h3>
                         <button
                             onClick={handleClose}
-                            className="text-gray-400 hover:text-gray-600 p-1"
+                            className="text-gray-500 hover:text-gray-600 p-1"
                         >
                             <XMarkIcon className="w-6 h-6" />
                         </button>

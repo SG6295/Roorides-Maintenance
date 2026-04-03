@@ -14,6 +14,42 @@ serve(async (req) => {
     }
 
     try {
+        // Verify the caller is a maintenance_exec
+        const authHeader = req.headers.get('Authorization')
+        if (!authHeader) {
+            return new Response(
+                JSON.stringify({ error: 'Missing authorization header' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
+        const callerClient = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+            { global: { headers: { Authorization: authHeader } } }
+        )
+
+        const { data: { user: callerUser }, error: callerAuthError } = await callerClient.auth.getUser()
+        if (callerAuthError || !callerUser) {
+            return new Response(
+                JSON.stringify({ error: 'Unauthorized' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
+        const { data: callerProfile, error: callerProfileError } = await callerClient
+            .from('users')
+            .select('role')
+            .eq('id', callerUser.id)
+            .single()
+
+        if (callerProfileError || callerProfile?.role !== 'maintenance_exec') {
+            return new Response(
+                JSON.stringify({ error: 'Forbidden: only maintenance_exec can create users' }),
+                { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
         const supabaseClient = createClient(
             // Supabase API URL - env var automatically populated by Supabase
             Deno.env.get('SUPABASE_URL') ?? '',
@@ -52,7 +88,7 @@ serve(async (req) => {
                     email,
                     name,
                     role,
-                    site, // specific site for supervisors
+                    site: site || null, // specific site for supervisors, null for mechanic/exec/finance
                     employee_id,
                     contact,
                     is_active: true

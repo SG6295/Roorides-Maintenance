@@ -105,14 +105,14 @@ export default function DateRangeFilter({ dateRange, onDateRangeChange }) {
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 px-4 py-2.5 text-sm border border-gray-300 rounded-lg bg-white hover:bg-gray-50 min-h-[48px] whitespace-nowrap"
       >
-        <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
         <span className="font-medium">{getDisplayText()}</span>
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 sm:right-0 sm:left-auto mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-20">
+        <div className="absolute left-0 sm:right-0 sm:left-auto mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-300 z-20">
           <div className="p-2">
             {/* Presets */}
             <div className="space-y-1 mb-3">

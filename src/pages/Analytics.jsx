@@ -298,7 +298,7 @@ export default function Analytics() {
 
                         {/* 8. Ratings */}
                         <VerticalTable title="Ratings & Feedback">
-                            <Row label="Rating Pending" value={aggregates.rating_pending} color="text-gray-400" />
+                            <Row label="Rating Pending" value={aggregates.rating_pending} color="text-gray-500" />
                             <Row label="Ratings Collected" value={aggregates.rating_collected} />
                             <Row label="Collection % (Sharan KPI)" value={aggregates.collection_perc} bold />
                             <Row label="Good" value={aggregates.rating_good} color="text-green-600" />
@@ -317,7 +317,7 @@ export default function Analytics() {
 function VerticalTable({ title, children }) {
     return (
         <div className="bg-white shadow sm:rounded-lg overflow-hidden">
-            <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-300">
                 <h3 className="text-base font-semibold text-gray-900">{title}</h3>
             </div>
             <div className="divide-y divide-gray-200">
@@ -330,7 +330,7 @@ function VerticalTable({ title, children }) {
 function Row({ label, value, color = "text-gray-900", bold = false }) {
     return (
         <div className="flex justify-between items-center px-4 py-3 hover:bg-gray-50">
-            <span className="text-sm text-gray-500 font-medium">{label}</span>
+            <span className="text-sm text-gray-600 font-medium">{label}</span>
             <span className={`text-sm ${color} ${bold ? 'font-bold' : ''}`}>{value}</span>
         </div>
     )
@@ -349,7 +349,7 @@ function KPICard({ title, value, color }) {
                     </div>
                     <div className="ml-5 w-0 flex-1">
                         <dl>
-                            <dt className="text-sm font-medium text-gray-500 truncate">{title}</dt>
+                            <dt className="text-sm font-medium text-gray-600 truncate">{title}</dt>
                             <dd className="text-lg font-medium text-gray-900">{value}</dd>
                         </dl>
                     </div>

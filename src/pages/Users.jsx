@@ -51,7 +51,7 @@ export default function Users({ embedded = false }) {
 
     const getRoleIcon = (role) => {
         switch (role) {
-            case 'mechanic': return <WrenchIcon className="h-5 w-5 text-gray-500" />
+            case 'mechanic': return <WrenchIcon className="h-5 w-5 text-gray-600" />
             case 'maintenance_exec': return <BriefcaseIcon className="h-5 w-5 text-purple-500" />
             case 'finance': return <CurrencyDollarIcon className="h-5 w-5 text-green-500" />
             default: return <UserIcon className="h-5 w-5 text-blue-500" />
@@ -109,7 +109,7 @@ export default function Users({ embedded = false }) {
                 <div className="mb-6 flex flex-col sm:flex-row gap-4">
                     <div className="relative flex-grow">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
+                            <MagnifyingGlassIcon className="h-5 w-5 text-gray-500" />
                         </div>
                         <input
                             type="text"
@@ -135,12 +135,12 @@ export default function Users({ embedded = false }) {
                 </div>
 
                 {/* Users List */}
-                <div className="bg-white shadow overflow-hidden sm:rounded-md border border-gray-200">
+                <div className="bg-white shadow overflow-hidden sm:rounded-md border border-gray-300">
                     <ul role="list" className="divide-y divide-gray-200">
                         {isLoading ? (
-                            <li className="px-6 py-12 text-center text-gray-500">Loading users...</li>
+                            <li className="px-6 py-12 text-center text-gray-600">Loading users...</li>
                         ) : filteredUsers?.length === 0 ? (
-                            <li className="px-6 py-12 text-center text-gray-500">No users found matching your filters.</li>
+                            <li className="px-6 py-12 text-center text-gray-600">No users found matching your filters.</li>
                         ) : (
                             filteredUsers.map((user) => (
                                 <li key={user.id} className="hover:bg-gray-50 transition-colors duration-150 ease-in-out">
@@ -155,7 +155,7 @@ export default function Users({ embedded = false }) {
                                                 <div className="min-w-0 flex-1 px-4 md:grid md:grid-cols-2 md:gap-4">
                                                     <div>
                                                         <p className="text-sm font-medium text-blue-600 truncate">{user.name}</p>
-                                                        <p className="mt-1 flex items-center text-sm text-gray-500">
+                                                        <p className="mt-1 flex items-center text-sm text-gray-600">
                                                             <span className="truncate">{user.email}</span>
                                                         </p>
                                                     </div>
@@ -164,7 +164,7 @@ export default function Users({ embedded = false }) {
                                                             <p className="text-sm text-gray-900">
                                                                 {getRoleLabel(user.role)}
                                                             </p>
-                                                            <p className="mt-1 flex items-center text-xs text-gray-500">
+                                                            <p className="mt-1 flex items-center text-xs text-gray-600">
                                                                 {user.site || 'Global'}
                                                             </p>
                                                         </div>
@@ -174,7 +174,7 @@ export default function Users({ embedded = false }) {
                                             <div>
                                                 <div className="flex flex-col items-end space-y-2">
                                                     <div className="flex items-center gap-2">
-                                                        <span className={`text-xs font-medium ${user.is_active ? 'text-green-700' : 'text-gray-500'}`}>
+                                                        <span className={`text-xs font-medium ${user.is_active ? 'text-green-700' : 'text-gray-600'}`}>
                                                             {user.is_active ? 'Active' : 'Inactive'}
                                                         </span>
                                                         <Switch
@@ -192,8 +192,8 @@ export default function Users({ embedded = false }) {
                                                     </div>
                                                     {/* Mobile Only Details */}
                                                     <div className="md:hidden text-right">
-                                                        <p className="text-xs text-gray-500">{getRoleLabel(user.role)}</p>
-                                                        <p className="text-xs text-gray-400">{user.site || 'Global'}</p>
+                                                        <p className="text-xs text-gray-600">{getRoleLabel(user.role)}</p>
+                                                        <p className="text-xs text-gray-500">{user.site || 'Global'}</p>
                                                     </div>
                                                 </div>
                                             </div>

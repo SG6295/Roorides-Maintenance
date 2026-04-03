@@ -62,7 +62,7 @@ export default function FeedbackModal({
                         </h3>
                         <button
                             onClick={handleClose}
-                            className="text-gray-400 hover:text-gray-600 p-1"
+                            className="text-gray-500 hover:text-gray-600 p-1"
                         >
                             <XMarkIcon className="w-6 h-6" />
                         </button>
@@ -72,7 +72,7 @@ export default function FeedbackModal({
                     <div className="p-5 space-y-6">
                         {/* Issue Context */}
                         <div className="bg-gray-50 rounded-lg p-3">
-                            <p className="text-sm text-gray-500">Rating work on:</p>
+                            <p className="text-sm text-gray-600">Rating work on:</p>
                             <p className="text-sm font-medium text-gray-900">{issueDescription}</p>
                         </div>
 
@@ -88,13 +88,13 @@ export default function FeedbackModal({
                                         onClick={() => setSelectedRating(option.value)}
                                         className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all ${selectedRating === option.value
                                             ? `${option.bgColor} ${option.borderColor}`
-                                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                            : 'border-gray-300 hover:border-gray-300 hover:bg-gray-50'
                                             }`}
                                     >
                                         <span className={`text-4xl mb-2 ${selectedRating === option.value ? '' : 'grayscale'}`}>
                                             {option.emoji}
                                         </span>
-                                        <span className={`text-sm font-medium ${selectedRating === option.value ? option.color : 'text-gray-500'
+                                        <span className={`text-sm font-medium ${selectedRating === option.value ? option.color : 'text-gray-600'
                                             }`}>
                                             {option.label}
                                         </span>

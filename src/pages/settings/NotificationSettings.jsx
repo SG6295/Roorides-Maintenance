@@ -11,7 +11,7 @@ function Toggle({ label, description, enabled, onChange }) {
                 <Switch.Label as="span" className="text-sm font-medium text-gray-900" passive>
                     {label}
                 </Switch.Label>
-                <Switch.Description as="span" className="text-sm text-gray-500">
+                <Switch.Description as="span" className="text-sm text-gray-600">
                     {description}
                 </Switch.Description>
             </span>
@@ -98,10 +98,10 @@ export default function NotificationSettings() {
             <div className="space-y-6">
                 <div>
                     <h3 className="text-base font-semibold leading-6 text-gray-900">Daily Digest</h3>
-                    <div className="max-w-xl text-sm text-gray-500">
+                    <div className="max-w-xl text-sm text-gray-600">
                         <p>Receive a summary email every morning at 9:00 AM IST.</p>
                     </div>
-                    <div className="mt-4 border-t border-gray-200 divide-y divide-gray-200">
+                    <div className="mt-4 border-t border-gray-300 divide-y divide-gray-200">
                         <Toggle
                             label="Enable Daily Digest"
                             description="Turn on/off the daily email report."
@@ -114,10 +114,10 @@ export default function NotificationSettings() {
                 {digestEnabled && (
                     <div className="mt-6">
                         <h3 className="text-base font-semibold leading-6 text-gray-900">Digest Content</h3>
-                        <div className="max-w-xl text-sm text-gray-500">
+                        <div className="max-w-xl text-sm text-gray-600">
                             <p>Select what information you want included in your report.</p>
                         </div>
-                        <div className="mt-4 border-t border-gray-200 divide-y divide-gray-200">
+                        <div className="mt-4 border-t border-gray-300 divide-y divide-gray-200">
                             <Toggle
                                 label="SLA Expiring"
                                 description="List of tickets expiring in the next 24 hours."

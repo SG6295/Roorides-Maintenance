@@ -62,7 +62,7 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
     return (
         <Link
             to={`/tickets/${ticket.id}`}
-            className="block bg-white rounded-lg shadow card-hover p-4 sm:p-5 active:scale-[0.99] transition-transform relative"
+            className="block bg-white rounded-lg shadow border border-gray-200 card-hover p-4 sm:p-5 active:scale-[0.99] transition-transform relative"
         >
             {/* SLA Badge/Timer/Rating - Absolute Top Right */}
             <div className="absolute top-4 right-4" onClick={(e) => e.preventDefault()}>
@@ -95,7 +95,7 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
                 </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 text-xs text-gray-500 mt-2 sm:mt-4 pt-3 border-t border-gray-100">
+            <div className="flex flex-wrap gap-2 text-xs text-gray-600 mt-2 sm:mt-4 pt-3 border-t border-gray-200">
                 <span className="bg-gray-100 px-2.5 py-1.5 rounded font-medium">
                     {ticket.site}
                 </span>
@@ -111,7 +111,7 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
                     <div className="text-gray-900 font-medium mb-0.5">
                         {ticket.supervisor_name}
                     </div>
-                    <div className="text-gray-400">
+                    <div className="text-gray-500">
                         {format(new Date(ticket.created_at), 'MMM d, yyyy h:mm a')}
                     </div>
                 </div>

@@ -143,7 +143,7 @@ export function useUpdateIssue() {
             queryClient.invalidateQueries({ queryKey: ['audit_logs', data.ticket_id] })
             // Also invalidate job card queries if this issue has a job_card_id
             if (data.job_card_id) {
-                queryClient.invalidateQueries({ queryKey: ['job_card', data.job_card_id] })
+                queryClient.invalidateQueries({ queryKey: ['job_card'] })
                 queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             }
         },

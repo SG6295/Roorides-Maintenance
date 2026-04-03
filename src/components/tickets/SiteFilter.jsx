@@ -31,7 +31,7 @@ export default function SiteFilter({ sites, selectedSite, onSiteChange }) {
       >
         <span>{getDisplayText()}</span>
         <svg
-          className={`w-5 h-5 text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-5 h-5 text-gray-600 transition-transform ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -41,7 +41,7 @@ export default function SiteFilter({ sites, selectedSite, onSiteChange }) {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 mt-2 w-full min-w-[200px] bg-white rounded-lg shadow-lg border border-gray-200 z-20 max-h-[300px] overflow-y-auto">
+        <div className="absolute left-0 mt-2 w-full min-w-[200px] bg-white rounded-lg shadow-lg border border-gray-300 z-20 max-h-[300px] overflow-y-auto">
           <div className="p-1">
             <button
               onClick={() => handleSiteSelect('')}

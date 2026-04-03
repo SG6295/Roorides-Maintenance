@@ -9,7 +9,7 @@ import { useSites } from '../../hooks/useSites'
 function SiteSelect({ value, onChange }) {
     const { data: sites, isLoading } = useSites()
 
-    if (isLoading) return <div className="text-sm text-gray-500">Loading sites...</div>
+    if (isLoading) return <div className="text-sm text-gray-600">Loading sites...</div>
 
     const siteOptions = sites?.map(site => ({
         id: site.id,
@@ -125,7 +125,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                     <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900">
                                         Add New User
                                     </Dialog.Title>
-                                    <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
+                                    <button onClick={onClose} className="text-gray-500 hover:text-gray-600">
                                         <XMarkIcon className="h-6 w-6" />
                                     </button>
                                 </div>
@@ -204,7 +204,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                                 <button
                                                     type="button"
                                                     onClick={copyToClipboard}
-                                                    className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                                    className="p-1 text-gray-500 hover:text-blue-600 transition-colors"
                                                     title="Copy to clipboard"
                                                 >
                                                     {isCopied ?
@@ -223,7 +223,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                                 <button
                                                     type="button"
                                                     onClick={() => setFormData({ ...formData, password: generatePassword() })}
-                                                    className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors"
+                                                    className="p-2 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors"
                                                     title="Generate new password"
                                                 >
                                                     <ArrowPathIcon className="h-5 w-5" />
@@ -231,14 +231,14 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                                 <button
                                                     type="button"
                                                     onClick={() => setShowPassword(!showPassword)}
-                                                    className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
+                                                    className="p-2 text-gray-500 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
                                                     title={showPassword ? "Hide password" : "Show password"}
                                                 >
                                                     {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
                                                 </button>
                                             </div>
                                         </div>
-                                        <p className="mt-2 text-xs text-gray-500 flex items-center">
+                                        <p className="mt-2 text-xs text-gray-600 flex items-center">
                                             <span className="inline-block w-2 h-2 rounded-full bg-blue-400 mr-2"></span>
                                             Copy this password. It will not be shown again.
                                         </p>

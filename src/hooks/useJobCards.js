@@ -40,24 +40,24 @@ export function useJobCards(filters = {}) {
 /**
  * Hook to fetch a single Job Card by ID
  */
-export function useJobCard(id) {
+export function useJobCard(jobCardNumber) {
     return useQuery({
-        queryKey: ['job_card', id],
+        queryKey: ['job_card', jobCardNumber],
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('job_cards')
                 .select(`
           *,
           mechanic:assigned_mechanic_id(name, email, contact),
-          issues(*, ticket:ticket_id(ticket_number))
+          issues(*, ticket:ticket_id(ticket_number), issue_parts(*, part:part_id(name, unit)))
         `)
-                .eq('id', id)
+                .eq('job_card_number', jobCardNumber)
                 .single()
 
             if (error) throw error
             return data
         },
-        enabled: !!id,
+        enabled: !!jobCardNumber,
     })
 }
 
@@ -119,9 +119,10 @@ export function useLinkIssuesToJobCard() {
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['issues'] })
             queryClient.invalidateQueries({ queryKey: ['tickets'] })
-            // Invalidate audit logs for affected tickets
+            // Invalidate individual ticket detail + audit logs for affected tickets
             if (data?.ticketIds) {
                 data.ticketIds.forEach(ticketId => {
+                    queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] })
                     queryClient.invalidateQueries({ queryKey: ['audit_logs', ticketId] })
                 })
             }
@@ -190,9 +191,10 @@ export function useCreateJobCard() {
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['issues'] })
             queryClient.invalidateQueries({ queryKey: ['tickets'] })
-            // Invalidate audit logs for affected tickets
+            // Invalidate individual ticket detail + audit logs for affected tickets
             if (data?.ticketIds) {
                 data.ticketIds.forEach(ticketId => {
+                    queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] })
                     queryClient.invalidateQueries({ queryKey: ['audit_logs', ticketId] })
                 })
             }
@@ -218,8 +220,8 @@ export function useUpdateJobCard() {
             if (error) throw error
             return data
         },
-        onSuccess: (data) => {
-            queryClient.invalidateQueries({ queryKey: ['job_card', data.id] })
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['job_card'] })
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
         },
     })

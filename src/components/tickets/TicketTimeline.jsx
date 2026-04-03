@@ -6,7 +6,7 @@ export default function TicketTimeline({ ticketId }) {
     const { data: slaEvents, isLoading: loadingSLA } = useSLAEvents(ticketId)
     const { data: auditLogs, isLoading: loadingAudit } = useAuditLogs(ticketId)
 
-    if (loadingSLA || loadingAudit) return <div className="text-sm text-gray-500">Loading history...</div>
+    if (loadingSLA || loadingAudit) return <div className="text-sm text-gray-600">Loading history...</div>
 
     // Merge and sort events
     const combinedEvents = [
@@ -18,7 +18,7 @@ export default function TicketTimeline({ ticketId }) {
         return dateB - dateA // Descending
     })
 
-    if (combinedEvents.length === 0) return <div className="text-sm text-gray-500 italic">No history recorded</div>
+    if (combinedEvents.length === 0) return <div className="text-sm text-gray-600 italic">No history recorded</div>
 
     return (
         <div className="flow-root">
@@ -42,17 +42,17 @@ export default function TicketTimeline({ ticketId }) {
                                     </div>
                                     <div className="flex min-w-0 flex-1 justify-between space-x-4 pt-1.5">
                                         <div>
-                                            <p className="text-sm text-gray-500">
+                                            <p className="text-sm text-gray-600">
                                                 {getEventLabel(event)}{' '}
                                                 <span className="font-medium text-gray-900">
                                                     {user?.name || 'Unknown User'}
                                                 </span>
                                             </p>
-                                            <p className="text-xs text-gray-400 mt-0.5 whitespace-pre-wrap">
+                                            <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">
                                                 {formatMetadata(event)}
                                             </p>
                                         </div>
-                                        <div className="whitespace-nowrap text-right text-sm text-gray-500">
+                                        <div className="whitespace-nowrap text-right text-sm text-gray-600">
                                             <time dateTime={date} title={new Date(date).toLocaleString()}>
                                                 {formatDistanceToNow(new Date(date), { addSuffix: true })}
                                             </time>

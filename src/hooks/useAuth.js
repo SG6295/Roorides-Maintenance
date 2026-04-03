@@ -79,12 +79,17 @@ export function AuthProvider({ children }) {
     return { error }
   }
 
+  const refreshProfile = async () => {
+    if (user) await fetchUserProfile(user.id)
+  }
+
   const value = {
     user,
     userProfile,
     loading,
     signIn,
     signOut,
+    refreshProfile,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

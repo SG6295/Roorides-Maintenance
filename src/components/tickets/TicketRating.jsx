@@ -55,7 +55,7 @@ export default function TicketRating({ rating, onRate, disabled, isUpdating }) {
 
     if (disabled && !rating) {
         return (
-            <div className="flex items-center text-gray-400 text-sm italic">
+            <div className="flex items-center text-gray-500 text-sm italic">
                 <span>Rating pending</span>
             </div>
         )
@@ -81,7 +81,7 @@ export default function TicketRating({ rating, onRate, disabled, isUpdating }) {
                 onClick={() => !disabled && onRate('bad')}
                 disabled={disabled}
             />
-            {isUpdating && <span className="text-xs text-gray-500 animate-pulse">Saving...</span>}
+            {isUpdating && <span className="text-xs text-gray-600 animate-pulse">Saving...</span>}
         </div>
     )
 }

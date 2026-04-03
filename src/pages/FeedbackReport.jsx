@@ -326,7 +326,7 @@ export default function FeedbackReport() {
                                         <th
                                             key={col.key}
                                             onClick={() => col.sortable && handleSort(col.key)}
-                                            className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap ${col.sortable ? 'cursor-pointer hover:bg-gray-100 select-none' : ''
+                                            className={`px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider whitespace-nowrap ${col.sortable ? 'cursor-pointer hover:bg-gray-100 select-none' : ''
                                                 }`}
                                         >
                                             {col.label}
@@ -338,13 +338,13 @@ export default function FeedbackReport() {
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {isLoading ? (
                                     <tr>
-                                        <td colSpan={columns.length} className="px-4 py-12 text-center text-gray-500">
+                                        <td colSpan={columns.length} className="px-4 py-12 text-center text-gray-600">
                                             Loading...
                                         </td>
                                     </tr>
                                 ) : filteredAndSortedData.length === 0 ? (
                                     <tr>
-                                        <td colSpan={columns.length} className="px-4 py-12 text-center text-gray-500">
+                                        <td colSpan={columns.length} className="px-4 py-12 text-center text-gray-600">
                                             No feedback records found
                                         </td>
                                     </tr>

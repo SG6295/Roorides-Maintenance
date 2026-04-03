@@ -60,13 +60,13 @@ export default function Issues() {
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Issue ID</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vehicle / Ticket</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Severity</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">SLA Due</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Job Card</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Issue ID</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Vehicle / Ticket</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Category</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Severity</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Status</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">SLA Due</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase">Job Card</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -75,13 +75,13 @@ export default function Issues() {
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                         {issue.issue_number}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                         <div className="font-medium text-gray-900">{issue.ticket?.vehicle_number}</div>
                                         <Link to={`/tickets/${issue.ticket_id}`} className="text-blue-600 hover:underline">
                                             Ticket #{issue.ticket?.ticket_number}
                                         </Link>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{issue.category}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{issue.category}</td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={`px-2 py-1 rounded text-xs ${issue.severity === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}`}>
                                             {issue.severity}
@@ -92,12 +92,12 @@ export default function Issues() {
                                             {issue.status}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                         {issue.sla_end_date ? format(new Date(issue.sla_end_date), 'MMM d') : '-'}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                         {issue.job_card?.job_card_number ? (
-                                            <Link to={`/job-cards/${issue.job_card.id}`} className="text-blue-600 hover:underline">
+                                            <Link to={`/job-cards/${issue.job_card.job_card_number}`} className="text-blue-600 hover:underline">
                                                 #{issue.job_card.job_card_number}
                                             </Link>
                                         ) : '-'}

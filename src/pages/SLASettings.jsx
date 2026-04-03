@@ -128,7 +128,7 @@ export default function SLASettings({ embedded = false }) {
     if (userProfile?.role !== 'maintenance_exec') {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                <p className="text-gray-500">Access Restricted</p>
+                <p className="text-gray-600">Access Restricted</p>
             </div>
         )
     }
@@ -157,7 +157,7 @@ export default function SLASettings({ embedded = false }) {
                     <div className="flex items-center justify-between max-w-lg">
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Assignment SLA Threshold</label>
-                            <p className="text-xs text-gray-500">Max days to assign a ticket before violation</p>
+                            <p className="text-xs text-gray-600">Max days to assign a ticket before violation</p>
                         </div>
                         <div className="flex items-center">
                             <input
@@ -167,14 +167,14 @@ export default function SLASettings({ embedded = false }) {
                                 onChange={(e) => handleSettingChange(e.target.value)}
                                 className="w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                             />
-                            <span className="ml-2 text-sm text-gray-500">days</span>
+                            <span className="ml-2 text-sm text-gray-600">days</span>
                         </div>
                     </div>
 
                     {/* Weekly Offs */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Weekly Offs</label>
-                        <p className="text-xs text-gray-500 mb-3">SLA calculations will skip these days.</p>
+                        <p className="text-xs text-gray-600 mb-3">SLA calculations will skip these days.</p>
                         <div className="flex gap-4 flex-wrap">
                             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
                                 <label key={day} className="inline-flex items-center">
@@ -193,7 +193,7 @@ export default function SLASettings({ embedded = false }) {
                     {/* Holidays */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Holidays</label>
-                        <p className="text-xs text-gray-500 mb-3">Add specific dates to exclude from SLA.</p>
+                        <p className="text-xs text-gray-600 mb-3">Add specific dates to exclude from SLA.</p>
 
                         <form onSubmit={addHoliday} className="flex gap-2 mb-4 max-w-lg">
                             <input
@@ -218,16 +218,16 @@ export default function SLASettings({ embedded = false }) {
                             </button>
                         </form>
 
-                        <div className="bg-gray-50 rounded border border-gray-200 max-h-48 overflow-y-auto max-w-lg">
+                        <div className="bg-gray-50 rounded border border-gray-300 max-h-48 overflow-y-auto max-w-lg">
                             {holidays.length === 0 ? (
-                                <p className="text-sm text-gray-500 p-4 text-center">No holidays added.</p>
+                                <p className="text-sm text-gray-600 p-4 text-center">No holidays added.</p>
                             ) : (
                                 <table className="min-w-full divide-y divide-gray-200">
                                     <tbody className="bg-white divide-y divide-gray-200">
                                         {holidays.map(h => (
                                             <tr key={h.id}>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{h.date}</td>
-                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{h.description}</td>
+                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-600">{h.description}</td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium">
                                                     <button onClick={() => deleteHoliday(h.id)} className="text-red-600 hover:text-red-900">Delete</button>
                                                 </td>
@@ -244,13 +244,13 @@ export default function SLASettings({ embedded = false }) {
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Impact
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Category
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     SLA Days
                                 </th>
                             </tr>

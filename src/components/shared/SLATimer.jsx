@@ -52,7 +52,7 @@ function TimeUnit({ value, label, color }) {
             `}>
                 {value}
             </div>
-            <span className="text-[10px] text-gray-400 font-medium leading-none mt-0.5 uppercase tracking-wider">{label}</span>
+            <span className="text-[10px] text-gray-500 font-medium leading-none mt-0.5 uppercase tracking-wider">{label}</span>
         </div>
     )
 }

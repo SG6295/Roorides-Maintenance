@@ -48,11 +48,11 @@ export default function CustomSelect({
                             error ? "border-red-300 focus:ring-red-500" : "border-gray-300 focus:ring-blue-500",
                             disabled ? "bg-gray-100 cursor-not-allowed opacity-75" : "bg-white"
                         )}>
-                            <span className={classNames("block truncate", !selectedOption && "text-gray-500")}>
+                            <span className={classNames("block truncate", !selectedOption && "text-gray-600")}>
                                 {selectedOption ? getDisplayLabel(selectedOption) : placeholder}
                             </span>
                             <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
-                                <ChevronUpDownIcon className="h-5 w-5 text-gray-400" aria-hidden="true" />
+                                <ChevronUpDownIcon className="h-5 w-5 text-gray-500" aria-hidden="true" />
                             </span>
                         </ListboxButton>
 
