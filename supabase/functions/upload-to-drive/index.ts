@@ -102,10 +102,10 @@ serve(async (req) => {
       )
     }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg']
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg', 'application/pdf']
     if (!allowedTypes.includes(file.type)) {
       return new Response(
-        JSON.stringify({ error: `Invalid file type: ${file.type}. Only images allowed.` }),
+        JSON.stringify({ error: `Invalid file type: ${file.type}. Only images and PDFs allowed.` }),
         {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }

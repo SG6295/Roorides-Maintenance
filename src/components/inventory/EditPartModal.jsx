@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { useUpdatePart } from '../../hooks/useInventory'
+import { useUpdatePart, usePartUnits } from '../../hooks/useInventory'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+import CustomSelect from '../shared/CustomSelect'
 
 export default function EditPartModal({ part, onClose }) {
     const updatePart = useUpdatePart()
+    const { data: partUnits = [] } = usePartUnits()
 
     const [form, setForm] = useState({
         name: part.name,
@@ -69,12 +71,10 @@ export default function EditPartModal({ part, onClose }) {
 
                     <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">Unit</label>
-                        <input
-                            type="text"
-                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                        <CustomSelect
                             value={form.unit}
-                            onChange={e => setForm(p => ({ ...p, unit: e.target.value }))}
-                            placeholder="e.g. pcs, L, kg"
+                            onChange={val => setForm(p => ({ ...p, unit: val }))}
+                            options={partUnits.map(u => u.name)}
                         />
                         <p className="text-xs text-gray-400 mt-1">
                             Changing the unit does not convert existing stock quantities.

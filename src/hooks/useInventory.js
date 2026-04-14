@@ -47,6 +47,7 @@ export function usePurchaseInvoices(filters = {}) {
                     invoice_date,
                     total_amount,
                     notes,
+                    invoice_file_url,
                     created_at,
                     created_by_user:users!created_by(name),
                     purchase_invoice_items(id)
@@ -346,5 +347,51 @@ export function useCreatePart() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
         },
+    })
+}
+
+// ─── Part Units ───────────────────────────────────────────────────────────────
+
+export function usePartUnits() {
+    return useQuery({
+        queryKey: ['part_units'],
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('part_units')
+                .select('id, name')
+                .order('sort_order')
+            if (error) throw error
+            return data || []
+        },
+    })
+}
+
+export function useAddPartUnit() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async (name) => {
+            const { data, error } = await supabase
+                .from('part_units')
+                .insert([{ name: name.trim() }])
+                .select()
+                .single()
+            if (error) throw error
+            return data
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['part_units'] }),
+    })
+}
+
+export function useDeletePartUnit() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async (id) => {
+            const { error } = await supabase
+                .from('part_units')
+                .delete()
+                .eq('id', id)
+            if (error) throw error
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['part_units'] }),
     })
 }

@@ -1,13 +1,14 @@
 
 import { useState } from 'react'
 import { Link, useLocation, Outlet } from 'react-router-dom'
-import { BellIcon, UsersIcon, ClockIcon } from '@heroicons/react/24/outline'
+import { BellIcon, UsersIcon, ClockIcon, CubeIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../../hooks/useAuth'
 
 const tabs = [
-    { name: 'Notifications', href: '/settings/notifications', icon: BellIcon, roles: [] }, // All roles
+    { name: 'Notifications', href: '/settings/notifications', icon: BellIcon, roles: [] },
     { name: 'User Management', href: '/settings/users', icon: UsersIcon, roles: ['maintenance_exec'] },
     { name: 'SLA Automation', href: '/settings/sla', icon: ClockIcon, roles: ['maintenance_exec'] },
+    { name: 'Part Units', href: '/settings/units', icon: CubeIcon, roles: ['maintenance_exec'] },
 ]
 
 function classNames(...classes) {

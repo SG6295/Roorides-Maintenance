@@ -13,7 +13,8 @@ export default function CustomSelect({
     options = [],
     disabled = false,
     error,
-    placeholder = 'Select option'
+    placeholder = 'Select option',
+    compact = false,
 }) {
     const selectedOption = options.find(opt =>
         (typeof opt === 'object' ? opt.value || opt.name || opt.id : opt) === value
@@ -44,7 +45,8 @@ export default function CustomSelect({
                     )}
                     <div className="relative mt-1">
                         <ListboxButton className={classNames(
-                            "relative w-full cursor-default rounded-lg bg-white py-3 pl-4 pr-10 text-left border shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:text-sm",
+                            "relative w-full cursor-default rounded-lg bg-white text-left border shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:text-sm",
+                            compact ? "py-1.5 pl-2 pr-8 text-xs" : "py-2.5 pl-4 pr-10",
                             error ? "border-red-300 focus:ring-red-500" : "border-gray-300 focus:ring-blue-500",
                             disabled ? "bg-gray-100 cursor-not-allowed opacity-75" : "bg-white"
                         )}>

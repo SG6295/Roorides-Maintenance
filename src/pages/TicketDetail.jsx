@@ -567,7 +567,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
     }
   }
 
-  const openJobCards = jobCards?.filter(jc => jc.status !== 'Closed' && jc.status !== 'Deleted') || []
+  const openJobCards = jobCards?.filter(jc => jc.status === 'Open') || []
 
   const unassignedIssues = issues?.filter(i => !i.job_card_id) || []
   const assignedIssues = issues?.filter(i => i.job_card_id) || []
@@ -677,7 +677,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                 leaveFrom="transform opacity-100 scale-100"
                 leaveTo="transform opacity-0 scale-95"
               >
-                <MenuItems anchor="bottom end" className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                <MenuItems anchor="bottom end" className="absolute right-0 z-10 mt-2 w-52 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
                   <div className="py-1">
                     {openJobCards.map((jc) => (
                       <MenuItem key={jc.id}>
@@ -687,7 +687,10 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                             className={`${active ? 'bg-gray-100 text-gray-900' : 'text-gray-700'
                               } block w-full px-4 py-2 text-left text-sm`}
                           >
-                            #{jc.job_card_number} <span className="text-gray-500 text-xs">({jc.status})</span>
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-medium">#{jc.job_card_number}</span>
+                              <span className="text-gray-400 text-xs shrink-0">{jc.mechanic?.name ?? 'Unassigned'}</span>
+                            </div>
                           </button>
                         )}
                       </MenuItem>

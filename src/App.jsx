@@ -24,6 +24,7 @@ import UpdatePassword from './pages/auth/UpdatePassword'
 
 import SettingsLayout from './pages/settings/SettingsLayout'
 import NotificationSettings from './pages/settings/NotificationSettings'
+import PartUnitsSettings from './pages/settings/PartUnitsSettings'
 
 import { sendEmail } from './lib/email'
 
@@ -219,6 +220,7 @@ function App() {
               <Route path="notifications" element={<NotificationSettings />} />
               <Route path="users" element={<Users embedded={true} />} />
               <Route path="sla" element={<SLASettings embedded={true} />} />
+              <Route path="units" element={<PartUnitsSettings />} />
               <Route index element={<Navigate to="notifications" replace />} />
             </Route>
 
