@@ -1,0 +1,574 @@
+import { useState, useRef, useEffect, Fragment } from 'react'
+import { usePurchaseInvoiceItems, useUpdatePurchaseInvoice, useParts, useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import {
+    PlusIcon, TrashIcon, XMarkIcon, CheckIcon,
+    ChevronUpDownIcon, PaperClipIcon, ArrowUpTrayIcon,
+} from '@heroicons/react/24/outline'
+import { Listbox, ListboxButton, ListboxOptions, ListboxOption, Transition } from '@headlessui/react'
+import CustomSelect from '../shared/CustomSelect'
+import { supabase } from '../../lib/supabase'
+
+const NEW_PART_SENTINEL = '__NEW__'
+const GST_RATES = [
+    { label: 'None', value: 0 },
+    { label: '5%', value: 5 },
+    { label: '12%', value: 12 },
+    { label: '18%', value: 18 },
+    { label: '28%', value: 28 },
+]
+const emptyNewLine = () => ({ id: null, part_id: '', quantity: '', unit_price: '', gst_rate: 0 })
+const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
+
+export default function EditPurchaseModal({ invoice, onClose }) {
+    const { data: existingItems, isLoading: itemsLoading } = usePurchaseInvoiceItems(invoice.id)
+    const { data: parts = [] } = useParts()
+    const { data: partUnits = [] } = usePartUnits()
+    const updateInvoice = useUpdatePurchaseInvoice()
+    const createPart = useCreatePart()
+    const fileInputRef = useRef(null)
+
+    const [invoiceData, setInvoiceData] = useState({
+        invoice_number: invoice.invoice_number,
+        supplier_name: invoice.supplier_name,
+        invoice_date: invoice.invoice_date,
+        notes: invoice.notes || '',
+    })
+
+    // lines = mix of existing items (have id) and new items (id: null)
+    const [lines, setLines] = useState(null)
+    const [originalItems, setOriginalItems] = useState([])
+
+    // keyed by line index — only for new (id: null) lines
+    const [newPartForms, setNewPartForms] = useState({})
+
+    const [error, setError] = useState(null)
+    const [invoiceFile, setInvoiceFile] = useState(
+        invoice.invoice_file_url
+            ? { name: 'Existing document', url: invoice.invoice_file_url, uploading: false }
+            : null
+    )
+
+    // Populate lines from loaded items (runs once)
+    useEffect(() => {
+        if (existingItems && lines === null) {
+            const mapped = existingItems.map(item => ({
+                id: item.id,
+                part_id: item.part_id,
+                part_name: item.part?.name || '',
+                part_number: item.part?.part_number || '',
+                part_unit: item.part?.unit || '',
+                quantity: String(item.quantity),
+                unit_price: String(item.unit_price),
+                gst_rate: item.gst_rate ?? 0,
+            }))
+            setLines(mapped)
+            setOriginalItems(mapped.map(m => ({ id: m.id })))
+        }
+    }, [existingItems, lines])
+
+    // ── File upload ────────────────────────────────────────────────────────────
+    async function handleFileSelect(e) {
+        const file = e.target.files?.[0]
+        if (!file) return
+
+        const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg', 'application/pdf']
+        if (!allowed.includes(file.type)) {
+            alert('Only images (JPG, PNG) and PDFs are allowed.')
+            return
+        }
+        if (file.size > 20 * 1024 * 1024) {
+            alert('File must be under 20MB.')
+            return
+        }
+
+        setInvoiceFile({ name: file.name, url: null, uploading: true })
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            const { data: { session } } = await supabase.auth.getSession()
+            const response = await fetch(
+                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-to-drive`,
+                { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` }, body: formData }
+            )
+            if (!response.ok) throw new Error('Upload failed')
+            const result = await response.json()
+            setInvoiceFile({ name: file.name, url: result.url, uploading: false })
+        } catch (err) {
+            console.error(err)
+            alert('Failed to upload file. Please try again.')
+            setInvoiceFile(null)
+        }
+        e.target.value = ''
+    }
+
+    // ── Line helpers ───────────────────────────────────────────────────────────
+    const invoiceTotal = (lines || []).reduce((sum, l) => {
+        const qty = parseFloat(l.quantity) || 0
+        const price = parseFloat(l.unit_price) || 0
+        const gst = parseFloat(l.gst_rate) || 0
+        return sum + qty * price * (1 + gst / 100)
+    }, 0)
+
+    function updateLine(index, field, value) {
+        setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
+    }
+
+    function removeLine(index) {
+        // Also clear any pending new-part form for this line
+        setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
+        setLines(prev => prev.filter((_, i) => i !== index))
+    }
+
+    function addLine() {
+        setLines(prev => [...prev, emptyNewLine()])
+    }
+
+    // New-part form helpers (only for new lines, i.e. id === null)
+    function handlePartSelect(index, value) {
+        if (value === NEW_PART_SENTINEL) {
+            setNewPartForms(prev => ({ ...prev, [index]: emptyNewPartForm() }))
+            updateLine(index, 'part_id', '')
+        } else {
+            setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
+            updateLine(index, 'part_id', value)
+        }
+    }
+
+    function updateNewPartForm(index, field, value) {
+        setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], [field]: value } }))
+    }
+
+    async function confirmNewPart(index) {
+        const form = newPartForms[index]
+        if (!form.name.trim()) {
+            setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], error: 'Part name is required.' } }))
+            return
+        }
+        setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], saving: true, error: null } }))
+        try {
+            const newPart = await createPart.mutateAsync({
+                name: form.name.trim(),
+                part_number: form.part_number.trim() || null,
+                unit: form.unit.trim() || 'pcs',
+                quantity_in_stock: 0,
+            })
+            updateLine(index, 'part_id', newPart.id)
+            setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
+        } catch (err) {
+            setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], saving: false, error: err.message } }))
+        }
+    }
+
+    function cancelNewPart(index) {
+        setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
+    }
+
+    // ── Submit ─────────────────────────────────────────────────────────────────
+    async function handleSubmit(e) {
+        e.preventDefault()
+        setError(null)
+
+        const activeLines = lines || []
+        if (activeLines.length === 0) {
+            setError('At least one line item is required.')
+            return
+        }
+
+        // Existing lines always have a part; new lines need part_id selected
+        const newLines = activeLines.filter(l => !l.id)
+        if (newLines.some(l => !l.part_id)) {
+            setError('Select a part for all new line items.')
+            return
+        }
+        if (activeLines.some(l => !l.quantity || !l.unit_price)) {
+            setError('All line items must have a quantity and unit price.')
+            return
+        }
+
+        try {
+            await updateInvoice.mutateAsync({
+                invoiceId: invoice.id,
+                invoiceData: {
+                    ...invoiceData,
+                    invoice_file_url: invoiceFile?.url || null,
+                },
+                lineItems: activeLines,
+                originalItems,
+            })
+            onClose()
+        } catch (err) {
+            setError(err.message)
+        }
+    }
+
+    // ── Render ─────────────────────────────────────────────────────────────────
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b">
+                    <h2 className="text-lg font-semibold text-gray-900">Edit Purchase</h2>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                        <XMarkIcon className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {itemsLoading || lines === null ? (
+                    <div className="flex-1 flex items-center justify-center py-16 text-sm text-gray-400">
+                        Loading invoice details…
+                    </div>
+                ) : (
+                    <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+                        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-6">
+
+                            {/* Invoice Details */}
+                            <div>
+                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Supplier Name <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            value={invoiceData.supplier_name}
+                                            onChange={e => setInvoiceData(p => ({ ...p, supplier_name: e.target.value }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Invoice Number <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            value={invoiceData.invoice_number}
+                                            onChange={e => setInvoiceData(p => ({ ...p, invoice_number: e.target.value }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Invoice Date <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            required
+                                            type="date"
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            value={invoiceData.invoice_date}
+                                            onChange={e => setInvoiceData(p => ({ ...p, invoice_date: e.target.value }))}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                                        <input
+                                            type="text"
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            value={invoiceData.notes}
+                                            onChange={e => setInvoiceData(p => ({ ...p, notes: e.target.value }))}
+                                            placeholder="Optional"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Invoice Document */}
+                            <div>
+                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*,application/pdf"
+                                    onChange={handleFileSelect}
+                                    className="hidden"
+                                />
+                                {!invoiceFile ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors w-full justify-center"
+                                    >
+                                        <ArrowUpTrayIcon className="w-4 h-4" />
+                                        Attach invoice image or PDF
+                                    </button>
+                                ) : invoiceFile.uploading ? (
+                                    <div className="flex items-center gap-2 px-4 py-2.5 border rounded-lg text-sm text-gray-500 bg-gray-50">
+                                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                                        Uploading {invoiceFile.name}…
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 px-4 py-2.5 border border-green-200 rounded-lg bg-green-50">
+                                        <PaperClipIcon className="w-4 h-4 text-green-600 shrink-0" />
+                                        <a
+                                            href={invoiceFile.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-sm text-green-700 hover:underline truncate flex-1"
+                                        >
+                                            {invoiceFile.name}
+                                        </a>
+                                        <button
+                                            type="button"
+                                            onClick={() => setInvoiceFile(null)}
+                                            className="text-gray-400 hover:text-red-500 shrink-0"
+                                            title="Remove document"
+                                        >
+                                            <XMarkIcon className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Line Items */}
+                            <div>
+                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
+                                <div className="space-y-2">
+                                    <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-gray-500">
+                                        <div className="col-span-4">Part</div>
+                                        <div className="col-span-2">Qty</div>
+                                        <div className="col-span-2">Unit Price</div>
+                                        <div className="col-span-2">GST</div>
+                                        <div className="col-span-1">Line Total</div>
+                                        <div className="col-span-1"></div>
+                                    </div>
+
+                                    {lines.map((line, i) => {
+                                        const qty = parseFloat(line.quantity) || 0
+                                        const price = parseFloat(line.unit_price) || 0
+                                        const gst = parseFloat(line.gst_rate) || 0
+                                        const lineTotal = qty * price * (1 + gst / 100)
+                                        const isExisting = !!line.id
+                                        const npf = !isExisting ? newPartForms[i] : null
+                                        const selectedPart = !isExisting ? parts.find(p => p.id === line.part_id) : null
+
+                                        return (
+                                            <div key={line.id || `new-${i}`} className="grid grid-cols-12 gap-2 items-start">
+                                                {/* Part cell */}
+                                                <div className="col-span-4">
+                                                    {isExisting ? (
+                                                        /* Existing item — part is locked, shown as read-only */
+                                                        <div className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700 truncate">
+                                                            {line.part_name}
+                                                            {line.part_number && (
+                                                                <span className="text-gray-400 font-mono text-xs ml-1">({line.part_number})</span>
+                                                            )}
+                                                            {line.part_unit && (
+                                                                <span className="text-gray-400 text-xs ml-1">· {line.part_unit}</span>
+                                                            )}
+                                                        </div>
+                                                    ) : npf ? (
+                                                        /* Inline new-part form */
+                                                        <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
+                                                            <p className="text-xs font-medium text-blue-700">New part</p>
+                                                            <input
+                                                                autoFocus
+                                                                type="text"
+                                                                placeholder="Part name *"
+                                                                className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
+                                                                value={npf.name}
+                                                                onChange={e => updateNewPartForm(i, 'name', e.target.value)}
+                                                            />
+                                                            <div className="flex gap-1">
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Part # (optional)"
+                                                                    className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
+                                                                    value={npf.part_number}
+                                                                    onChange={e => updateNewPartForm(i, 'part_number', e.target.value)}
+                                                                />
+                                                                <div className="w-24">
+                                                                    <CustomSelect
+                                                                        compact
+                                                                        value={npf.unit}
+                                                                        onChange={val => updateNewPartForm(i, 'unit', val)}
+                                                                        options={partUnits.map(u => u.name)}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            {npf.error && (
+                                                                <p className="text-xs text-red-600">{npf.error}</p>
+                                                            )}
+                                                            <div className="flex gap-2 pt-0.5">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => confirmNewPart(i)}
+                                                                    disabled={npf.saving}
+                                                                    className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                                                >
+                                                                    <CheckIcon className="w-3 h-3" />
+                                                                    {npf.saving ? 'Adding…' : 'Add part'}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => cancelNewPart(i)}
+                                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        /* Part dropdown for new lines */
+                                                        <Listbox value={line.part_id} onChange={val => handlePartSelect(i, val)}>
+                                                            <div className="relative">
+                                                                <ListboxButton className="relative w-full cursor-default rounded-lg bg-white border border-gray-300 py-2.5 pl-3 pr-10 text-left text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                                    <span className={line.part_id ? 'text-gray-900' : 'text-gray-400'}>
+                                                                        {line.part_id
+                                                                            ? (() => {
+                                                                                const p = parts.find(p => p.id === line.part_id)
+                                                                                return p ? `${p.name}${p.part_number ? ` (${p.part_number})` : ''} · ${p.unit}` : 'Select part…'
+                                                                            })()
+                                                                            : 'Select part…'}
+                                                                    </span>
+                                                                    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                                                                        <ChevronUpDownIcon className="h-4 w-4 text-gray-400" />
+                                                                    </span>
+                                                                </ListboxButton>
+                                                                <Transition as={Fragment} leave="transition ease-in duration-100" leaveFrom="opacity-100" leaveTo="opacity-0">
+                                                                    <ListboxOptions anchor="bottom start" className="z-[100] mt-1 max-h-60 w-[var(--button-width)] overflow-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                                                                        <ListboxOption
+                                                                            value={NEW_PART_SENTINEL}
+                                                                            className={({ active }) => `cursor-default select-none py-2 pl-3 pr-9 text-blue-600 font-medium ${active ? 'bg-blue-50' : ''}`}
+                                                                        >
+                                                                            + Create new part…
+                                                                        </ListboxOption>
+                                                                        <div className="my-1 border-t border-gray-100" />
+                                                                        {parts.map(p => (
+                                                                            <ListboxOption
+                                                                                key={p.id}
+                                                                                value={p.id}
+                                                                                className={({ active }) => `cursor-default select-none py-2 pl-3 pr-9 ${active ? 'bg-blue-600 text-white' : 'text-gray-900'}`}
+                                                                            >
+                                                                                {({ selected, active }) => (
+                                                                                    <>
+                                                                                        <span className={selected ? 'font-semibold' : 'font-normal'}>
+                                                                                            {p.name}{p.part_number ? ` (${p.part_number})` : ''} · {p.unit}
+                                                                                        </span>
+                                                                                        {selected && (
+                                                                                            <span className={`absolute inset-y-0 right-0 flex items-center pr-3 ${active ? 'text-white' : 'text-blue-600'}`}>
+                                                                                                <CheckIcon className="h-4 w-4" />
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </>
+                                                                                )}
+                                                                            </ListboxOption>
+                                                                        ))}
+                                                                    </ListboxOptions>
+                                                                </Transition>
+                                                            </div>
+                                                        </Listbox>
+                                                    )}
+                                                </div>
+
+                                                {/* Qty */}
+                                                <div className="col-span-2 pt-1">
+                                                    <div className="relative">
+                                                        <input
+                                                            type="number"
+                                                            min="0.01"
+                                                            step="0.01"
+                                                            className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${(isExisting ? line.part_unit : selectedPart?.unit) ? 'pr-10' : ''}`}
+                                                            placeholder="0"
+                                                            value={line.quantity}
+                                                            onChange={e => updateLine(i, 'quantity', e.target.value)}
+                                                        />
+                                                        {(isExisting ? line.part_unit : selectedPart?.unit) && (
+                                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                                                                {isExisting ? line.part_unit : selectedPart?.unit}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {/* Unit Price */}
+                                                <div className="col-span-2 pt-1">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                                        placeholder="0.00"
+                                                        value={line.unit_price}
+                                                        onChange={e => updateLine(i, 'unit_price', e.target.value)}
+                                                    />
+                                                </div>
+
+                                                {/* GST */}
+                                                <div className="col-span-2 pt-1">
+                                                    <select
+                                                        className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                                        value={line.gst_rate}
+                                                        onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
+                                                    >
+                                                        {GST_RATES.map(r => (
+                                                            <option key={r.value} value={r.value}>{r.label}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+
+                                                {/* Line Total */}
+                                                <div className="col-span-1 text-sm text-gray-700 text-right pr-1 pt-3">
+                                                    {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}
+                                                </div>
+
+                                                {/* Remove */}
+                                                <div className="col-span-1 flex justify-center pt-3">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeLine(i)}
+                                                        className="text-gray-400 hover:text-red-500"
+                                                        title="Remove line"
+                                                    >
+                                                        <TrashIcon className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={addLine}
+                                    className="mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                                >
+                                    <PlusIcon className="w-4 h-4" />
+                                    Add line item
+                                </button>
+                            </div>
+
+                            {error && (
+                                <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50 rounded-b-xl">
+                            <div className="text-sm font-semibold text-gray-700">
+                                Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    type="button"
+                                    onClick={onClose}
+                                    className="px-4 py-2 text-sm text-gray-700 border rounded-lg hover:bg-gray-100"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={updateInvoice.isPending}
+                                    className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                    {updateInvoice.isPending ? 'Saving…' : 'Save Changes'}
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                )}
+            </div>
+        </div>
+    )
+}

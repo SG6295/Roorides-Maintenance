@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Working directory**: All commands below should be run from `nvs-maintenance/`.
+
 ## Commands
 
 ```bash
@@ -55,12 +57,40 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 ### Key Data Model Relationships
 - **Ticket** → has many **Issues** (category, severity, SLA tracking)
 - **Issue** → optionally linked to a **Job Card** (`job_card_id` nullable)
+- **Issue** → has many **issue_parts** (parts consumed during the repair)
 - **Job Card** → assigned to a mechanic (InHouse) or vendor (Outsource)
 - **Ticket** → has many **audit_logs** (grouped by `record_id = ticket_id`, covers ticket + issue + job card changes)
 - **SLA** is calculated by database triggers on issue creation using `sla_rules_config(category, severity, sla_days)`
+- **Part** → restocked via `purchase_invoice_items`; a DB trigger updates `parts.quantity_in_stock` on insert
+- **purchase_invoices** → has many **purchase_invoice_items** → each references a `parts` row
 
 ### SLA System
 SLA windows are configured in the `sla_rules_config` table (editable via the SLA Settings page, `maintenance_exec` only). Database triggers auto-calculate `sla_end_date` and `sla_status` (Pending/Adhered/Violated) per issue. Holiday calendar in `holidays` table is used for business-day SLA calculations.
+
+### Inventory Module
+`src/pages/Inventory.jsx` (accessible to `maintenance_exec` and `finance`) has three tabs managed via local state:
+1. **Parts Catalog** — stock levels, low-stock filter; `useUpdatePart` for inline edits, `useBulkUpload` for CSV import via `BulkUploadModal`
+2. **Purchase History** — invoice list (`usePurchaseInvoices`), record new purchase via `PurchaseModal`; DB trigger auto-restocks parts when invoice items are inserted
+3. **Consumption History** — `usePartConsumption`, shows parts used per job card/mechanic
+
+All inventory data hooks live in `src/hooks/useInventory.js` (formerly `useParts.js`) and are named exports: `useParts`, `usePurchaseInvoices`, `usePurchaseInvoiceItems`, `useRecordPurchase`, `useUpdatePart`, `usePartConsumption`, `useVehicleHistory`, `useJobCardParts`, `useMechanicProfile`, `useMechanicActivity`, `useCreatePart`, `usePartUnits`, `useAddPartUnit`, `useDeletePartUnit`.
+
+### Vehicle & Mechanic Detail Pages
+- `src/pages/VehicleHistory.jsx` — full job-card history for a specific vehicle; uses `useVehicleHistory(vehicleNumber)` and `useJobCardParts(jobCardId)` for lazy-loaded parts per card
+- `src/pages/MechanicDetail.jsx` — profile + job card activity + labour hours for a mechanic; uses `useMechanicProfile` + `useMechanicActivity`
+
+### Settings (Nested Routes under `/settings`)
+`src/pages/settings/SettingsLayout.jsx` wraps a sidebar + `<Outlet>`. Sub-routes:
+- `/settings/notifications` — `NotificationSettings.jsx`, reads/writes `user_settings.notify_daily_digest`
+- `/settings/users` — embeds `Users` page with `embedded={true}` prop
+- `/settings/sla` — embeds `SLASettings` with `embedded={true}` prop
+- `/settings/units` — `PartUnitsSettings.jsx`, CRUD for `part_units` table (unit labels for parts)
+
+### Analytics & Export
+`src/pages/Analytics.jsx` uses **recharts** for charts. `xlsx` is available for spreadsheet export (used in inventory/analytics exports).
+
+### Debug Utilities
+`window.testResend(email)` is exposed in App.jsx for testing email via the `send-email` edge function from the browser console.
 
 ### Migrations
 `supabase/migrations/` contains ~26 migration files. The schema was built incrementally — `supabase-schema.sql` in the root is the canonical full schema reference. When making schema changes, write a new migration file rather than modifying existing ones.

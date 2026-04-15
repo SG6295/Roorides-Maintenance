@@ -1,16 +1,20 @@
 import { useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { Link } from 'react-router-dom'
+import * as XLSX from 'xlsx'
 import Navigation from '../components/shared/Navigation'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import PurchaseModal from '../components/inventory/PurchaseModal'
 import BulkUploadModal from '../components/inventory/BulkUploadModal'
 import EditPartModal from '../components/inventory/EditPartModal'
+import EditPurchaseModal from '../components/inventory/EditPurchaseModal'
 import { useParts, usePurchaseInvoices, usePurchaseInvoiceItems, usePartConsumption } from '../hooks/useInventory'
+import { supabase } from '../lib/supabase'
 import {
     MagnifyingGlassIcon,
     PlusIcon,
     ArrowUpTrayIcon,
+    ArrowDownTrayIcon,
     ChevronDownIcon,
     ChevronUpIcon,
     PencilSquareIcon,
@@ -110,7 +114,7 @@ function PartsTable() {
 }
 
 // ── Invoice row (expandable) ───────────────────────────────────────────────────
-function InvoiceRow({ invoice }) {
+function InvoiceRow({ invoice, onEdit }) {
     const [expanded, setExpanded] = useState(false)
     const { data: items, isLoading } = usePurchaseInvoiceItems(expanded ? invoice.id : null)
 
@@ -121,7 +125,7 @@ function InvoiceRow({ invoice }) {
     return (
         <>
             <tr
-                className="hover:bg-gray-50 cursor-pointer"
+                className="hover:bg-gray-50 cursor-pointer group"
                 onClick={() => setExpanded(p => !p)}
             >
                 <td className="px-4 py-3 font-mono text-xs text-gray-700">{invoice.invoice_number}</td>
@@ -136,10 +140,21 @@ function InvoiceRow({ invoice }) {
                 <td className="px-4 py-3 text-gray-400 text-xs">
                     {invoice.created_by_user?.name || '—'}
                 </td>
-                <td className="px-4 py-3 text-center text-gray-400">
-                    {expanded
-                        ? <ChevronUpIcon className="w-4 h-4 mx-auto" />
-                        : <ChevronDownIcon className="w-4 h-4 mx-auto" />}
+                <td className="px-4 py-3 text-center">
+                    <div className="flex items-center justify-center gap-2">
+                        <button
+                            onClick={e => { e.stopPropagation(); onEdit(invoice) }}
+                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition-opacity"
+                            title="Edit invoice"
+                        >
+                            <PencilSquareIcon className="w-4 h-4" />
+                        </button>
+                        <span className="text-gray-400">
+                            {expanded
+                                ? <ChevronUpIcon className="w-4 h-4" />
+                                : <ChevronDownIcon className="w-4 h-4" />}
+                        </span>
+                    </div>
                 </td>
             </tr>
             {expanded && (
@@ -156,6 +171,7 @@ function InvoiceRow({ invoice }) {
                                         <th className="text-right pb-1 font-medium">Qty</th>
                                         <th className="text-right pb-1 font-medium">Unit</th>
                                         <th className="text-right pb-1 font-medium">Unit Price</th>
+                                        <th className="text-right pb-1 font-medium">GST</th>
                                         <th className="text-right pb-1 font-medium">Line Total</th>
                                     </tr>
                                 </thead>
@@ -167,6 +183,9 @@ function InvoiceRow({ invoice }) {
                                             <td className="py-1.5 text-right text-gray-700">{item.quantity}</td>
                                             <td className="py-1.5 text-right text-gray-500">{item.part?.unit}</td>
                                             <td className="py-1.5 text-right text-gray-700">{Number(item.unit_price).toFixed(2)}</td>
+                                            <td className="py-1.5 text-right text-gray-500">
+                                                {item.gst_rate > 0 ? `${item.gst_rate}%` : '—'}
+                                            </td>
                                             <td className="py-1.5 text-right font-medium text-gray-900">{Number(item.line_total).toFixed(2)}</td>
                                         </tr>
                                     ))}
@@ -198,6 +217,53 @@ function InvoiceRow({ invoice }) {
 function PurchaseHistory() {
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
     const { data: invoices = [], isLoading } = usePurchaseInvoices(filters)
+    const [editingInvoice, setEditingInvoice] = useState(null)
+    const [exporting, setExporting] = useState(false)
+
+    async function handleExport() {
+        if (invoices.length === 0) return
+        setExporting(true)
+        try {
+            const invoiceIds = invoices.map(inv => inv.id)
+            const { data: items, error } = await supabase
+                .from('purchase_invoice_items')
+                .select('invoice_id, quantity, unit_price, line_total, part:parts(name, part_number, unit)')
+                .in('invoice_id', invoiceIds)
+            if (error) throw error
+
+            const invoiceMap = Object.fromEntries(invoices.map(inv => [inv.id, inv]))
+            const exportRows = (items || []).map(item => {
+                const inv = invoiceMap[item.invoice_id]
+                const baseAmount = Number(item.quantity) * Number(item.unit_price)
+                const gstAmount = baseAmount * (Number(item.gst_rate) / 100)
+                return {
+                    'Invoice #': inv?.invoice_number ?? '',
+                    'Date': inv?.invoice_date ? format(parseISO(inv.invoice_date), 'dd MMM yyyy') : '',
+                    'Supplier': inv?.supplier_name ?? '',
+                    'Part Name': item.part?.name ?? '',
+                    'Part Number': item.part?.part_number ?? '',
+                    'Unit': item.part?.unit ?? '',
+                    'Quantity': item.quantity,
+                    'Unit Price': item.unit_price,
+                    'GST Rate (%)': item.gst_rate ?? 0,
+                    'GST Amount': Number(gstAmount.toFixed(2)),
+                    'Line Total (incl. GST)': item.line_total,
+                    'Notes': inv?.notes ?? '',
+                    'Recorded By': inv?.created_by_user?.name ?? '',
+                }
+            })
+
+            const ws = XLSX.utils.json_to_sheet(exportRows)
+            const wb = XLSX.utils.book_new()
+            XLSX.utils.book_append_sheet(wb, ws, 'Purchase History')
+            const dateSuffix = new Date().toISOString().slice(0, 10)
+            XLSX.writeFile(wb, `purchase_history_${dateSuffix}.xlsx`)
+        } catch (err) {
+            alert('Export failed: ' + err.message)
+        } finally {
+            setExporting(false)
+        }
+    }
 
     return (
         <div className="space-y-4">
@@ -226,6 +292,16 @@ function PurchaseHistory() {
                         onChange={e => setFilters(p => ({ ...p, dateTo: e.target.value }))}
                     />
                 </div>
+                <div className="flex justify-end mt-3">
+                    <button
+                        onClick={handleExport}
+                        disabled={exporting || invoices.length === 0}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 shadow-sm"
+                    >
+                        <ArrowDownTrayIcon className="w-4 h-4" />
+                        {exporting ? 'Exporting…' : 'Export to Excel'}
+                    </button>
+                </div>
             </div>
 
             {isLoading ? (
@@ -245,12 +321,12 @@ function PurchaseHistory() {
                                 <th className="px-4 py-3 text-right">Total</th>
                                 <th className="px-4 py-3 text-center">Items</th>
                                 <th className="px-4 py-3 text-left">Recorded by</th>
-                                <th className="px-4 py-3 w-8"></th>
+                                <th className="px-4 py-3 w-16"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
                             {invoices.map(inv => (
-                                <InvoiceRow key={inv.id} invoice={inv} />
+                                <InvoiceRow key={inv.id} invoice={inv} onEdit={setEditingInvoice} />
                             ))}
                         </tbody>
                     </table>
@@ -258,6 +334,13 @@ function PurchaseHistory() {
                         {invoices.length} invoice{invoices.length !== 1 ? 's' : ''}
                     </div>
                 </div>
+            )}
+
+            {editingInvoice && (
+                <EditPurchaseModal
+                    invoice={editingInvoice}
+                    onClose={() => setEditingInvoice(null)}
+                />
             )}
         </div>
     )
@@ -273,6 +356,26 @@ const JC_STATUS_BADGE = {
 function ConsumptionHistory() {
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
     const { data: rows = [], isLoading } = usePartConsumption(filters)
+
+    function handleExport() {
+        if (rows.length === 0) return
+        const exportRows = rows.map(row => ({
+            'Date Used': row.added_at ? format(parseISO(row.added_at), 'dd MMM yyyy HH:mm') : '',
+            'Part Name': row.part_name ?? '',
+            'Part Number': row.part_number ?? '',
+            'Unit': row.unit ?? '',
+            'Qty Used': row.quantity_used,
+            'Job Card #': row.job_card_number ? `JC-${row.job_card_number}` : '',
+            'Vehicle': row.vehicle_number ?? '',
+            'Mechanic': row.mechanic_name ?? '',
+            'JC Status': row.job_card_status ?? '',
+        }))
+        const ws = XLSX.utils.json_to_sheet(exportRows)
+        const wb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(wb, ws, 'Consumption History')
+        const dateSuffix = new Date().toISOString().slice(0, 10)
+        XLSX.writeFile(wb, `consumption_history_${dateSuffix}.xlsx`)
+    }
 
     return (
         <div className="space-y-4">
@@ -300,6 +403,16 @@ function ConsumptionHistory() {
                         value={filters.dateTo}
                         onChange={e => setFilters(p => ({ ...p, dateTo: e.target.value }))}
                     />
+                </div>
+                <div className="flex justify-end mt-3">
+                    <button
+                        onClick={handleExport}
+                        disabled={rows.length === 0}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 shadow-sm"
+                    >
+                        <ArrowDownTrayIcon className="w-4 h-4" />
+                        Export to Excel
+                    </button>
                 </div>
             </div>
 

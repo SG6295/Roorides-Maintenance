@@ -78,7 +78,7 @@ export function usePurchaseInvoices(filters = {}) {
 }
 
 /**
- * Line items for a single invoice (used in the history detail expand).
+ * Line items for a single invoice (used in the history detail expand and edit modal).
  */
 export function usePurchaseInvoiceItems(invoiceId) {
     return useQuery({
@@ -87,10 +87,96 @@ export function usePurchaseInvoiceItems(invoiceId) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('purchase_invoice_items')
-                .select('id, quantity, unit_price, line_total, part:parts(name, part_number, unit)')
+                .select('id, part_id, quantity, unit_price, gst_rate, line_total, part:parts(id, name, part_number, unit)')
                 .eq('invoice_id', invoiceId)
             if (error) throw error
             return data || []
+        },
+    })
+}
+
+/**
+ * Update a purchase invoice header and its line items, adjusting inventory accordingly.
+ * - Existing items that were removed are deleted (trigger reverses stock).
+ * - Existing items that were kept are updated (trigger adjusts stock delta).
+ * - New items are inserted (trigger adds stock).
+ */
+export function useUpdatePurchaseInvoice() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: async ({ invoiceId, invoiceData, lineItems, originalItems }) => {
+            // 1. Update invoice header fields
+            const { error: invErr } = await supabase
+                .from('purchase_invoices')
+                .update({
+                    invoice_number: invoiceData.invoice_number,
+                    supplier_name: invoiceData.supplier_name,
+                    invoice_date: invoiceData.invoice_date,
+                    notes: invoiceData.notes || null,
+                    invoice_file_url: invoiceData.invoice_file_url || null,
+                })
+                .eq('id', invoiceId)
+            if (invErr) throw invErr
+
+            // Categorise line items
+            const originalIds = new Set(originalItems.map(i => i.id))
+            const keptIds = new Set(lineItems.filter(l => l.id).map(l => l.id))
+            const toDelete = [...originalIds].filter(id => !keptIds.has(id))
+            const toUpdate = lineItems.filter(l => l.id)
+            const toInsert = lineItems.filter(l => !l.id)
+
+            // 2. Delete removed items — trigger reverses stock
+            if (toDelete.length > 0) {
+                const { error } = await supabase
+                    .from('purchase_invoice_items')
+                    .delete()
+                    .in('id', toDelete)
+                if (error) throw error
+            }
+
+            // 3. Update existing items — trigger adjusts stock delta
+            for (const item of toUpdate) {
+                const { error } = await supabase
+                    .from('purchase_invoice_items')
+                    .update({
+                        quantity: parseFloat(item.quantity),
+                        unit_price: parseFloat(item.unit_price),
+                        gst_rate: parseFloat(item.gst_rate) || 0,
+                    })
+                    .eq('id', item.id)
+                if (error) throw error
+            }
+
+            // 4. Insert new items — trigger adds stock
+            if (toInsert.length > 0) {
+                const { error } = await supabase
+                    .from('purchase_invoice_items')
+                    .insert(toInsert.map(item => ({
+                        invoice_id: invoiceId,
+                        part_id: item.part_id,
+                        quantity: parseFloat(item.quantity),
+                        unit_price: parseFloat(item.unit_price),
+                        gst_rate: parseFloat(item.gst_rate) || 0,
+                    })))
+                if (error) throw error
+            }
+
+            // 5. Recalculate and persist total_amount
+            const newTotal = [...toUpdate, ...toInsert].reduce(
+                (sum, i) => sum + parseFloat(i.quantity) * parseFloat(i.unit_price),
+                0
+            )
+            const { error: totalErr } = await supabase
+                .from('purchase_invoices')
+                .update({ total_amount: newTotal })
+                .eq('id', invoiceId)
+            if (totalErr) throw totalErr
+        },
+        onSuccess: (_data, { invoiceId }) => {
+            queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
+            queryClient.invalidateQueries({ queryKey: ['purchase_invoice_items', invoiceId] })
         },
     })
 }
@@ -118,6 +204,7 @@ export function useRecordPurchase() {
                 part_id: item.part_id,
                 quantity: item.quantity,
                 unit_price: item.unit_price,
+                gst_rate: item.gst_rate ?? 0,
             }))
 
             const { error: itemsErr } = await supabase

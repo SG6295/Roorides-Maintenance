@@ -7,7 +7,14 @@ import CustomSelect from '../shared/CustomSelect'
 import { supabase } from '../../lib/supabase'
 
 const NEW_PART_SENTINEL = '__NEW__'
-const emptyLine = () => ({ part_id: '', quantity: '', unit_price: '' })
+const GST_RATES = [
+    { label: 'None', value: 0 },
+    { label: '5%', value: 5 },
+    { label: '12%', value: 12 },
+    { label: '18%', value: 18 },
+    { label: '28%', value: 28 },
+]
+const emptyLine = () => ({ part_id: '', quantity: '', unit_price: '', gst_rate: 0 })
 const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
 export default function PurchaseModal({ onClose }) {
@@ -72,7 +79,8 @@ export default function PurchaseModal({ onClose }) {
     const invoiceTotal = lines.reduce((sum, l) => {
         const qty = parseFloat(l.quantity) || 0
         const price = parseFloat(l.unit_price) || 0
-        return sum + qty * price
+        const gst = parseFloat(l.gst_rate) || 0
+        return sum + qty * price * (1 + gst / 100)
     }, 0)
 
     function updateLine(index, field, value) {
@@ -153,6 +161,7 @@ export default function PurchaseModal({ onClose }) {
                     part_id: l.part_id,
                     quantity: parseFloat(l.quantity),
                     unit_price: parseFloat(l.unit_price),
+                    gst_rate: parseFloat(l.gst_rate) || 0,
                 })),
             })
             onClose()
@@ -272,20 +281,24 @@ export default function PurchaseModal({ onClose }) {
                             <div className="space-y-2">
                                 {/* Column headers */}
                                 <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-gray-500">
-                                    <div className="col-span-5">Part</div>
+                                    <div className="col-span-4">Part</div>
                                     <div className="col-span-2">Qty</div>
                                     <div className="col-span-2">Unit Price</div>
-                                    <div className="col-span-2">Line Total</div>
+                                    <div className="col-span-2">GST</div>
+                                    <div className="col-span-1">Line Total</div>
                                     <div className="col-span-1"></div>
                                 </div>
 
                                 {lines.map((line, i) => {
-                                    const lineTotal = (parseFloat(line.quantity) || 0) * (parseFloat(line.unit_price) || 0)
+                                    const qty = parseFloat(line.quantity) || 0
+                                    const price = parseFloat(line.unit_price) || 0
+                                    const gst = parseFloat(line.gst_rate) || 0
+                                    const lineTotal = qty * price * (1 + gst / 100)
                                     const npf = newPartForms[i]
                                     const selectedPart = parts.find(p => p.id === line.part_id)
                                     return (
                                         <div key={i} className="grid grid-cols-12 gap-2 items-start">
-                                            <div className="col-span-5">
+                                            <div className="col-span-4">
                                                 {npf ? (
                                                     /* ── Inline new-part form ── */
                                                     <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
@@ -414,7 +427,18 @@ export default function PurchaseModal({ onClose }) {
                                                     onChange={e => updateLine(i, 'unit_price', e.target.value)}
                                                 />
                                             </div>
-                                            <div className="col-span-2 text-sm text-gray-700 text-right pr-2 pt-3">
+                                            <div className="col-span-2 pt-1">
+                                                <select
+                                                    className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                                    value={line.gst_rate}
+                                                    onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
+                                                >
+                                                    {GST_RATES.map(r => (
+                                                        <option key={r.value} value={r.value}>{r.label}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="col-span-1 text-sm text-gray-700 text-right pr-1 pt-3">
                                                 {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}
                                             </div>
                                             <div className="col-span-1 flex justify-center pt-3">

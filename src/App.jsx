@@ -17,6 +17,9 @@ import VehicleHistory from './pages/VehicleHistory'
 import MechanicDetail from './pages/MechanicDetail'
 import Vehicles from './pages/Vehicles'
 
+import Suppliers from './pages/Suppliers'
+import SupplierDetail from './pages/SupplierDetail'
+import SupplierRegistration from './pages/SupplierRegistration'
 import Users from './pages/Users'
 import Profile from './pages/Profile'
 import ForgotPassword from './pages/auth/ForgotPassword'
@@ -199,6 +202,26 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* Public supplier registration — no auth required */}
+            <Route path="/supplier-registration" element={<SupplierRegistration />} />
+
+            <Route
+              path="/suppliers"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                  <Suppliers />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/suppliers/:id"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                  <SupplierDetail />
+                </ProtectedRoute>
+              }
+            />
+
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route
               path="/update-password"
