@@ -135,24 +135,28 @@ export function useSites() {
 }
 
 /**
- * Hook to fetch vehicles by site
+ * Hook to fetch vehicles, optionally filtered by site via the vehicle_sites junction table.
  */
 export function useVehicles(site = null) {
   return useQuery({
     queryKey: ['vehicles', site],
     queryFn: async () => {
-      let query = supabase
-        .from('vehicles')
-        .select('*')
-        .eq('is_active', true)
-        .order('registration_number')
-
       if (site) {
-        query = query.eq('site', site)
+        const { data, error } = await supabase
+          .from('vehicles')
+          .select('registration_number, make, model, vehicle_sites!inner(site_name)')
+          .eq('is_active', true)
+          .eq('vehicle_sites.site_name', site)
+          .order('registration_number')
+        if (error) throw error
+        return data || []
       }
 
-      const { data, error } = await query
-
+      const { data, error } = await supabase
+        .from('vehicles')
+        .select('registration_number, make, model')
+        .eq('is_active', true)
+        .order('registration_number')
       if (error) throw error
       return data || []
     },

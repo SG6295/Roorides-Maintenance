@@ -6,9 +6,10 @@ export function useVehicles(filters = {}) {
     return useQuery({
         queryKey: ['vehicles', filters],
         queryFn: async () => {
+            const joinType = filters.site ? '!inner' : ''
             let query = supabase
                 .from('vehicles')
-                .select('id, registration_number, make, model, year, site, notes, is_active, created_at')
+                .select(`id, registration_number, make, model, year, notes, is_active, created_at, vehicle_sites${joinType}(site_name)`)
                 .order('registration_number')
 
             if (filters.search) {
@@ -17,7 +18,7 @@ export function useVehicles(filters = {}) {
                 )
             }
             if (filters.site) {
-                query = query.eq('site', filters.site)
+                query = query.eq('vehicle_sites.site_name', filters.site)
             }
             if (filters.active === 'active') {
                 query = query.eq('is_active', true)

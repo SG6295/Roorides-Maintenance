@@ -13,8 +13,6 @@ import {
     XMarkIcon,
 } from '@heroicons/react/24/outline'
 
-const SITES = ['All Sites', 'Site A', 'Site B', 'Site C']
-
 // ── Add / Edit Modal ──────────────────────────────────────────────────────────
 function VehicleModal({ vehicle, onClose }) {
     const createVehicle = useCreateVehicle()
@@ -26,7 +24,6 @@ function VehicleModal({ vehicle, onClose }) {
         make: vehicle?.make || '',
         model: vehicle?.model || '',
         year: vehicle?.year || '',
-        site: vehicle?.site || '',
         notes: vehicle?.notes || '',
         is_active: vehicle?.is_active ?? true,
     })
@@ -120,16 +117,6 @@ function VehicleModal({ vehicle, onClose }) {
                                 value={form.year}
                                 onChange={e => set('year', e.target.value)}
                                 placeholder="e.g. 2022"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Site</label>
-                            <input
-                                type="text"
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                value={form.site}
-                                onChange={e => set('site', e.target.value)}
-                                placeholder="e.g. Site A"
                             />
                         </div>
                     </div>
@@ -290,7 +277,9 @@ export default function Vehicles() {
                                             {[v.make, v.model].filter(Boolean).join(' ') || '—'}
                                         </td>
                                         <td className="px-4 py-3 text-gray-500">{v.year || '—'}</td>
-                                        <td className="px-4 py-3 text-gray-500">{v.site || '—'}</td>
+                                        <td className="px-4 py-3 text-gray-500">
+                                            {v.vehicle_sites?.map(vs => vs.site_name).join(', ') || '—'}
+                                        </td>
                                         <td className="px-4 py-3">
                                             {v.is_active
                                                 ? <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">Active</span>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
@@ -6,20 +6,45 @@ import { useCreateTicket, useSites, useVehicles } from '../../hooks/useTickets'
 import { useQueryClient } from '@tanstack/react-query'
 import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
-import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import { logSLAEvent, SLA_EVENTS } from '../../utils/slaLogger'
 
 export default function TicketForm() {
   const { userProfile } = useAuth()
   const navigate = useNavigate()
-  const [selectedSite, setSelectedSite] = useState(userProfile?.site || '')
 
   const queryClient = useQueryClient()
   const [syncing, setSyncing] = useState(false)
 
+  const {
+    register,
+    handleSubmit,
+    control,
+    setValue,
+    formState: { errors },
+    watch,
+  } = useForm({
+    defaultValues: {
+      site: userProfile?.site || '',
+      supervisor_name: userProfile?.name || '',
+      supervisor_id: userProfile?.employee_id || '',
+      supervisor_contact: userProfile?.contact || '',
+    },
+  })
+
+  const watchSite = watch('site')
+
+  // Clear vehicle selection when site changes
+  const prevSiteRef = useRef(null)
+  useEffect(() => {
+    if (prevSiteRef.current !== null && prevSiteRef.current !== watchSite) {
+      setValue('vehicle_number', '')
+    }
+    prevSiteRef.current = watchSite
+  }, [watchSite, setValue])
+
   const { data: sites = [] } = useSites()
-  const { data: vehicles = [] } = useVehicles()
+  const { data: vehicles = [] } = useVehicles(watchSite || null)
   const createTicket = useCreateTicket()
 
   const handleRefreshVehicles = async () => {
@@ -46,30 +71,6 @@ export default function TicketForm() {
       setSyncing(false)
     }
   }
-
-  const {
-    register,
-    handleSubmit,
-    control,
-    formState: { errors },
-    watch,
-  } = useForm({
-    defaultValues: {
-      site: userProfile?.site || '',
-      supervisor_name: userProfile?.name || '',
-      supervisor_id: userProfile?.employee_id || '',
-      supervisor_contact: userProfile?.contact || '',
-    },
-  })
-
-  const watchSite = watch('site')
-
-  // Update selected site when form changes
-  useState(() => {
-    if (watchSite) {
-      setSelectedSite(watchSite)
-    }
-  }, [watchSite])
 
   const onSubmit = async (data) => {
     try {
@@ -100,9 +101,6 @@ export default function TicketForm() {
       alert(error.message || 'Failed to submit ticket. Please try again.')
     }
   }
-
-  const categories = ['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS/Camera', 'Other']
-
 
   const [photoUrls, setPhotoUrls] = useState([])
 
@@ -140,14 +138,14 @@ export default function TicketForm() {
               control={control}
               rules={{ required: 'Site is required' }}
               render={({ field: { value, onChange }, fieldState: { error } }) => (
-                <CustomSelect
+                <SearchableSelect
                   label={<span>Site <span className="text-red-500">*</span></span>}
                   value={value}
                   onChange={onChange}
-                  options={sites}
+                  options={sites.map(s => ({ value: s.name, label: s.name }))}
                   disabled={userProfile?.role === 'supervisor'}
                   error={error}
-                  placeholder="Select site"
+                  placeholder="Type to search site..."
                 />
               )}
             />

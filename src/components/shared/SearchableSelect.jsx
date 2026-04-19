@@ -25,6 +25,7 @@ export default function SearchableSelect({
   options = [],
   error,
   placeholder = 'Type to search...',
+  disabled = false,
 }) {
   const [query, setQuery] = useState('')
 
@@ -47,7 +48,7 @@ export default function SearchableSelect({
   }
 
   return (
-    <Combobox value={value} onChange={handleChange}>
+    <Combobox value={value} onChange={handleChange} disabled={disabled}>
       {label && (
         <Combobox.Label className="block text-sm font-medium text-gray-700 mb-2">
           {label}
@@ -56,7 +57,10 @@ export default function SearchableSelect({
       <div className="relative mt-1">
         <ComboboxInput
           className={classNames(
-            'relative w-full cursor-default rounded-lg bg-white text-left border shadow-sm focus:outline-none focus:ring-2 sm:text-sm py-2.5 pl-4 pr-10',
+            'relative w-full cursor-default rounded-lg text-left border shadow-sm focus:outline-none focus:ring-2 sm:text-sm py-2.5 pl-4 pr-10',
+            disabled
+              ? 'bg-gray-50 text-gray-500 cursor-not-allowed'
+              : 'bg-white',
             error
               ? 'border-red-300 focus:ring-red-500'
               : 'border-gray-300 focus:ring-blue-500'
