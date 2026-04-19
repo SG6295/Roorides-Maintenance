@@ -11,12 +11,16 @@ npm run dev        # Start Vite dev server (http://localhost:5173)
 npm run build      # Production build → dist/
 npm run lint       # ESLint
 npm run preview    # Preview production build locally
+npm run gen:types  # Regenerate src/types/database.types.ts from live Supabase schema
 ```
+
+### Schema change rule
+**After every schema change (new migration, renamed column, added table), always run `npm run gen:types` before touching any app code.** This keeps `src/types/database.types.ts` in sync with the DB and makes stale column references visible immediately.
 
 ### Edge Functions
 ```bash
 supabase functions deploy <function-name> --no-verify-jwt   # Deploy an edge function
-# Functions: create-user, send-email, daily-digest, upload-to-drive
+# Functions: create-user, send-email, daily-digest, upload-to-drive, get-roorides-vehicles
 ```
 
 > All edge functions must be deployed with `--no-verify-jwt` — this project uses caller-identity checks inside the function code instead of gateway-level JWT verification.
@@ -53,6 +57,8 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 | `send-email` | Thin wrapper around Resend API for transactional emails |
 | `daily-digest` | Reads `user_settings.notify_daily_digest` and sends personalised summaries via Resend |
 | `upload-to-drive` | Uploads images to a specific Google Drive folder via service account JWT |
+| `get-roorides-vehicles` | (Superseded) Early prototype — fetches vehicles from Roorides and returns them without persisting. No longer used by the app. |
+| `sync-roorides-vehicles` | Authenticates with Roorides, fetches all vehicles for org 137, and upserts them into the local `vehicles` table. Never overwrites the `site` column. Called by pg_cron at midnight UTC daily and also manually via the "Refresh vehicle list" button on the ticket form. Credentials: `ROORIDES_USERNAME`, `ROORIDES_PASSWORD`, `ROORIDES_ORG_ID` secrets. |
 
 ### Key Data Model Relationships
 - **Ticket** → has many **Issues** (category, severity, SLA tracking)
@@ -93,7 +99,7 @@ All inventory data hooks live in `src/hooks/useInventory.js` (formerly `useParts
 `window.testResend(email)` is exposed in App.jsx for testing email via the `send-email` edge function from the browser console.
 
 ### Migrations
-`supabase/migrations/` contains ~26 migration files. The schema was built incrementally — `supabase-schema.sql` in the root is the canonical full schema reference. When making schema changes, write a new migration file rather than modifying existing ones.
+`supabase/migrations/` contains 37 migration files. The schema was built incrementally — `supabase-schema.sql` in the root is the canonical full schema reference. When making schema changes, write a new migration file rather than modifying existing ones.
 
 ### Environment Variables
 ```

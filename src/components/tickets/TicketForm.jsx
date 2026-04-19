@@ -3,9 +3,11 @@ import { useForm, Controller } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useCreateTicket, useSites, useVehicles } from '../../hooks/useTickets'
+import { useQueryClient } from '@tanstack/react-query'
 import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
 import CustomSelect from '../shared/CustomSelect'
+import SearchableSelect from '../shared/SearchableSelect'
 import { logSLAEvent, SLA_EVENTS } from '../../utils/slaLogger'
 
 export default function TicketForm() {
@@ -13,9 +15,37 @@ export default function TicketForm() {
   const navigate = useNavigate()
   const [selectedSite, setSelectedSite] = useState(userProfile?.site || '')
 
+  const queryClient = useQueryClient()
+  const [syncing, setSyncing] = useState(false)
+
   const { data: sites = [] } = useSites()
-  const { data: vehicles = [] } = useVehicles(selectedSite)
+  const { data: vehicles = [] } = useVehicles()
   const createTicket = useCreateTicket()
+
+  const handleRefreshVehicles = async () => {
+    setSyncing(true)
+    try {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-roorides-vehicles`
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({}),
+      })
+      const body = await resp.json()
+      if (!resp.ok) throw new Error(body?.error || `HTTP ${resp.status}`)
+      await queryClient.invalidateQueries({ queryKey: ['vehicles'] })
+      alert('Vehicle list refreshed successfully!')
+    } catch (err) {
+      console.error('Vehicle refresh failed:', err)
+      alert(`Could not refresh vehicle list: ${err.message}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   const {
     register,
@@ -130,19 +160,27 @@ export default function TicketForm() {
               control={control}
               rules={{ required: 'Vehicle number is required' }}
               render={({ field: { value, onChange }, fieldState: { error } }) => (
-                <CustomSelect
+                <SearchableSelect
                   label={<span>Vehicle Number <span className="text-red-500">*</span></span>}
                   value={value}
                   onChange={onChange}
                   options={vehicles.map(v => ({
-                    value: v.number,
-                    label: `${v.number} ${v.type ? `(${v.type})` : ''}`
+                    value: v.registration_number,
+                    label: `${v.registration_number}${v.make ? ` — ${v.make}` : ''}${v.model ? ` ${v.model}` : ''}`
                   }))}
                   error={error}
-                  placeholder="Select vehicle"
+                  placeholder="Type to search vehicle..."
                 />
               )}
             />
+            <button
+              type="button"
+              onClick={handleRefreshVehicles}
+              disabled={syncing}
+              className="mt-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {syncing ? 'Refreshing vehicle list...' : "Can't find your vehicle? Refresh list"}
+            </button>
           </div>
 
 

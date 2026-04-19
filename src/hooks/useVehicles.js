@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 
+
 export function useVehicles(filters = {}) {
     return useQuery({
         queryKey: ['vehicles', filters],

@@ -145,7 +145,7 @@ export function useVehicles(site = null) {
         .from('vehicles')
         .select('*')
         .eq('is_active', true)
-        .order('number')
+        .order('registration_number')
 
       if (site) {
         query = query.eq('site', site)
