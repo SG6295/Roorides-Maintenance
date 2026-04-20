@@ -58,7 +58,7 @@ export default function TicketDetail() {
   }
 
   const isSupervisor = userProfile?.role === 'supervisor'
-  const isExec = userProfile?.role === 'maintenance_exec'
+  const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
   // Handle ticket rejection
   const handleRejectTicket = async ({ rejection_reason, rejection_comment }) => {

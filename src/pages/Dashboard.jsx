@@ -77,7 +77,7 @@ export default function Dashboard() {
             </Link>
 
             {/* Analysis */}
-            {userProfile?.role === 'maintenance_exec' ? (
+            {['maintenance_exec', 'super_admin'].includes(userProfile?.role) ? (
               <Link
                 to="/analytics"
                 className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"
@@ -92,7 +92,7 @@ export default function Dashboard() {
             ) : null}
 
             {/* Vehicles */}
-            {(userProfile?.role === 'maintenance_exec' || userProfile?.role === 'finance') && (
+            {(['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)) && (
               <Link
                 to="/vehicles"
                 className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"
@@ -107,7 +107,7 @@ export default function Dashboard() {
             )}
 
             {/* Inventory */}
-            {(userProfile?.role === 'maintenance_exec' || userProfile?.role === 'finance') && (
+            {(['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)) && (
               <Link
                 to="/inventory"
                 className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"
@@ -122,7 +122,7 @@ export default function Dashboard() {
             )}
 
             {/* Suppliers */}
-            {(userProfile?.role === 'maintenance_exec' || userProfile?.role === 'finance') && (
+            {(['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)) && (
               <Link
                 to="/suppliers"
                 className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"

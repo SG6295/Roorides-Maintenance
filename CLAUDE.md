@@ -20,7 +20,7 @@ npm run gen:types  # Regenerate src/types/database.types.ts from live Supabase s
 ### Edge Functions
 ```bash
 supabase functions deploy <function-name> --no-verify-jwt   # Deploy an edge function
-# Functions: create-user, send-email, daily-digest, upload-to-drive, get-roorides-vehicles
+# Functions: create-user, send-email, daily-digest, upload-to-drive, sync-roorides-vehicles
 ```
 
 > All edge functions must be deployed with `--no-verify-jwt` — this project uses caller-identity checks inside the function code instead of gateway-level JWT verification.
@@ -28,7 +28,7 @@ supabase functions deploy <function-name> --no-verify-jwt   # Deploy an edge fun
 ## Architecture
 
 ### Stack
-- **Frontend**: React 19, Vite 7, React Router 7, TanStack Query 5, Tailwind CSS 3
+- **Frontend**: React 19, Vite 7, React Router 7, TanStack Query 5, Tailwind CSS 3 — app source is `.jsx`, not TypeScript (only `src/types/database.types.ts` is auto-generated)
 - **Backend**: Supabase (Postgres + Auth + Edge Functions)
 - **Email**: Resend API (via `send-email` edge function)
 - **File Storage**: Google Drive (via `upload-to-drive` edge function + service account)
@@ -99,7 +99,7 @@ All inventory data hooks live in `src/hooks/useInventory.js` (formerly `useParts
 `window.testResend(email)` is exposed in App.jsx for testing email via the `send-email` edge function from the browser console.
 
 ### Migrations
-`supabase/migrations/` contains 37 migration files. The schema was built incrementally — `supabase-schema.sql` in the root is the canonical full schema reference. When making schema changes, write a new migration file rather than modifying existing ones.
+`supabase/migrations/` contains 37 migration files built incrementally. **`supabase-schema.sql` in the repo root is the canonical full schema reference** — read it for the complete table/column/trigger picture rather than piecing together individual migrations. When making schema changes, write a new migration file rather than modifying existing ones.
 
 ### Environment Variables
 ```

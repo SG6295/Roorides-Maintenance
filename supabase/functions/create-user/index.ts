@@ -7,14 +7,18 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// Roles a given creator role is allowed to create
+const CREATABLE_ROLES: Record<string, string[]> = {
+    super_admin: ['super_admin', 'maintenance_exec', 'finance', 'supervisor', 'mechanic', 'electrician'],
+    maintenance_exec: ['supervisor', 'mechanic', 'electrician'],
+}
+
 serve(async (req) => {
-    // Handle CORS preflight requests
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
     }
 
     try {
-        // Verify the caller is a maintenance_exec
         const authHeader = req.headers.get('Authorization')
         if (!authHeader) {
             return new Response(
@@ -23,6 +27,7 @@ serve(async (req) => {
             )
         }
 
+        // Identify caller
         const callerClient = createClient(
             Deno.env.get('SUPABASE_URL') ?? '',
             Deno.env.get('SUPABASE_ANON_KEY') ?? '',
@@ -43,24 +48,25 @@ serve(async (req) => {
             .eq('id', callerUser.id)
             .single()
 
-        if (callerProfileError || callerProfile?.role !== 'maintenance_exec') {
+        if (callerProfileError || !callerProfile) {
             return new Response(
-                JSON.stringify({ error: 'Forbidden: only maintenance_exec can create users' }),
+                JSON.stringify({ error: 'Unauthorized' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
+        const callerRole = callerProfile.role as string
+        const allowedToCreate = CREATABLE_ROLES[callerRole]
+
+        if (!allowedToCreate) {
+            return new Response(
+                JSON.stringify({ error: 'Forbidden: your role cannot create users' }),
                 { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             )
         }
 
-        const supabaseClient = createClient(
-            // Supabase API URL - env var automatically populated by Supabase
-            Deno.env.get('SUPABASE_URL') ?? '',
-            // Supabase Service Role Key - env var automatically populated by Supabase
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-        )
+        const { email, password, name, role, sites, employee_id, contact } = await req.json()
 
-        // Get the request body
-        const { email, password, name, role, site, employee_id, contact } = await req.json()
-
-        // Validate inputs
         if (!email || !password || !name || !role) {
             return new Response(
                 JSON.stringify({ error: 'Missing required fields' }),
@@ -68,36 +74,52 @@ serve(async (req) => {
             )
         }
 
-        // 1. Create the user in Supabase Auth
-        const { data: user, error: createError } = await supabaseClient.auth.admin.createUser({
+        if (!allowedToCreate.includes(role)) {
+            return new Response(
+                JSON.stringify({ error: `Forbidden: ${callerRole} cannot create a ${role}` }),
+                { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
+        if (role === 'supervisor' && (!sites || sites.length === 0)) {
+            return new Response(
+                JSON.stringify({ error: 'Supervisor must have at least one site assigned' }),
+                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
+        const adminClient = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+        )
+
+        // 1. Create auth user
+        const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
             email,
             password,
-            email_confirm: true, // Auto-confirm email
-            user_metadata: { name, role, site }
+            email_confirm: true,
+            user_metadata: { name, role }
         })
 
         if (createError) throw createError
 
-        // 2. Create the user profile in public.users table (if not handled by triggers)
-        // We do this explicitly to ensure all fields are set correctly immediately
-        const { error: profileError } = await supabaseClient
+        const userId = newUser.user.id
+
+        // 2. Create public.users profile (site column left null — user_sites is authoritative)
+        const { error: profileError } = await adminClient
             .from('users')
-            .insert([
-                {
-                    id: user.user.id,
-                    email,
-                    name,
-                    role,
-                    site: site || null, // specific site for supervisors, null for mechanic/exec/finance
-                    employee_id,
-                    contact,
-                    is_active: true
-                }
-            ])
+            .insert([{
+                id: userId,
+                email,
+                name,
+                role,
+                site: null,
+                employee_id: employee_id || null,
+                contact: contact || null,
+                is_active: true
+            }])
 
         if (profileError) {
-            // Rollback: delete the auth user if profile creation fails? 
-            // ideally yes, but for now just report error
             console.error('Profile creation failed:', profileError)
             return new Response(
                 JSON.stringify({ error: 'User created but profile sync failed', details: profileError }),
@@ -105,8 +127,23 @@ serve(async (req) => {
             )
         }
 
+        // 3. Insert site assignments for supervisors
+        if (role === 'supervisor' && sites?.length > 0) {
+            const { error: sitesError } = await adminClient
+                .from('user_sites')
+                .insert(sites.map((siteId: string) => ({ user_id: userId, site_id: siteId })))
+
+            if (sitesError) {
+                console.error('Site assignment failed:', sitesError)
+                return new Response(
+                    JSON.stringify({ error: 'User created but site assignment failed', details: sitesError }),
+                    { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                )
+            }
+        }
+
         return new Response(
-            JSON.stringify({ user: user.user, message: 'User created successfully' }),
+            JSON.stringify({ user: newUser.user, message: 'User created successfully' }),
             { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
 

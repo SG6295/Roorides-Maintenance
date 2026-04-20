@@ -125,7 +125,10 @@ export default function SLASettings({ embedded = false }) {
         }
     }
 
-    if (userProfile?.role !== 'maintenance_exec') {
+    const canEdit = userProfile?.role === 'super_admin'
+    const canView = canEdit || userProfile?.role === 'maintenance_exec'
+
+    if (!canView) {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
                 <p className="text-gray-600">Access Restricted</p>
@@ -140,7 +143,14 @@ export default function SLASettings({ embedded = false }) {
             )}
 
             <div className={embedded ? "" : "max-w-4xl mx-auto px-4 py-8"}>
-                <h1 className="text-2xl font-bold text-gray-900 mb-6">SLA Configuration</h1>
+                <div className="flex items-center justify-between mb-6">
+                    <h1 className="text-2xl font-bold text-gray-900">SLA Configuration</h1>
+                    {!canEdit && (
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                            View only — contact Super Admin to make changes
+                        </span>
+                    )}
+                </div>
 
                 {message && (
                     <div className={`fixed bottom-4 right-4 px-6 py-3 rounded shadow-lg z-50 transition-opacity duration-300 ${message.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-100 text-red-800 border border-red-200'
@@ -164,8 +174,9 @@ export default function SLASettings({ embedded = false }) {
                                 type="number"
                                 min="1"
                                 value={assignmentSLA}
-                                onChange={(e) => handleSettingChange(e.target.value)}
-                                className="w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                onChange={(e) => canEdit && handleSettingChange(e.target.value)}
+                                readOnly={!canEdit}
+                                className={`w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm sm:text-sm ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}
                             />
                             <span className="ml-2 text-sm text-gray-600">days</span>
                         </div>
@@ -177,12 +188,13 @@ export default function SLASettings({ embedded = false }) {
                         <p className="text-xs text-gray-600 mb-3">SLA calculations will skip these days.</p>
                         <div className="flex gap-4 flex-wrap">
                             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
-                                <label key={day} className="inline-flex items-center">
+                                <label key={day} className={`inline-flex items-center ${!canEdit ? 'cursor-default' : ''}`}>
                                     <input
                                         type="checkbox"
                                         checked={weeklyOffs.includes(index)}
-                                        onChange={() => toggleWeeklyOff(index)}
-                                        className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+                                        onChange={() => canEdit && toggleWeeklyOff(index)}
+                                        disabled={!canEdit}
+                                        className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 disabled:opacity-60"
                                     />
                                     <span className="ml-2 text-sm text-gray-700">{day}</span>
                                 </label>
@@ -195,27 +207,31 @@ export default function SLASettings({ embedded = false }) {
                         <label className="block text-sm font-medium text-gray-700 mb-2">Holidays</label>
                         <p className="text-xs text-gray-600 mb-3">Add specific dates to exclude from SLA.</p>
 
-                        <form onSubmit={addHoliday} className="flex gap-2 mb-4 max-w-lg">
+                        <form onSubmit={canEdit ? addHoliday : (e) => e.preventDefault()} className="flex gap-2 mb-4 max-w-lg">
                             <input
                                 type="date"
                                 required
+                                disabled={!canEdit}
                                 value={newHolidayDate}
                                 onChange={e => setNewHolidayDate(e.target.value)}
-                                className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-50 disabled:opacity-60"
                             />
                             <input
                                 type="text"
                                 placeholder="Description (e.g. Republic Day)"
+                                disabled={!canEdit}
                                 value={newHolidayDesc}
                                 onChange={e => setNewHolidayDesc(e.target.value)}
-                                className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-50 disabled:opacity-60"
                             />
-                            <button
-                                type="submit"
-                                className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 text-sm"
-                            >
-                                Add
-                            </button>
+                            {canEdit && (
+                                <button
+                                    type="submit"
+                                    className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 text-sm"
+                                >
+                                    Add
+                                </button>
+                            )}
                         </form>
 
                         <div className="bg-gray-50 rounded border border-gray-300 max-h-48 overflow-y-auto max-w-lg">
@@ -229,7 +245,9 @@ export default function SLASettings({ embedded = false }) {
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{h.date}</td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-600">{h.description}</td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium">
-                                                    <button onClick={() => deleteHoliday(h.id)} className="text-red-600 hover:text-red-900">Delete</button>
+                                                    {canEdit && (
+                                                        <button onClick={() => deleteHoliday(h.id)} className="text-red-600 hover:text-red-900">Delete</button>
+                                                    )}
                                                 </td>
                                             </tr>
                                         ))}
@@ -273,9 +291,10 @@ export default function SLASettings({ embedded = false }) {
                                         <input
                                             type="number"
                                             min="1"
-                                            className="w-20 px-2 py-1 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                            readOnly={!canEdit}
+                                            className={`w-20 px-2 py-1 border border-gray-300 rounded ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}
                                             value={rule.days}
-                                            onChange={(e) => handleDayChange(rule.id, e.target.value)}
+                                            onChange={(e) => canEdit && handleDayChange(rule.id, e.target.value)}
                                         />
                                     </td>
                                 </tr>

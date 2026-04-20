@@ -28,8 +28,8 @@ export default function JobCardDetail() {
     const updateJobCard = useUpdateJobCard()
     const { data: parts = [] } = useParts()
 
-    const isExec = userProfile?.role === 'maintenance_exec'
-    const isMechanic = userProfile?.role === 'mechanic' || userProfile?.role === 'maintenance_exec'
+    const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    const isMechanic = ['mechanic', 'electrician', 'maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
     const [remarks, setRemarks] = useState('')
     const [assigningMechanic, setAssigningMechanic] = useState(false)

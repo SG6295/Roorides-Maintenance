@@ -173,7 +173,7 @@ function VehicleModal({ vehicle, onClose }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Vehicles() {
     const { userProfile } = useAuth()
-    const canEdit = userProfile?.role === 'maintenance_exec' || userProfile?.role === 'finance'
+    const canEdit = ['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)
 
     const [filters, setFilters] = useState({ search: '', site: '', active: 'active' })
     const { data: vehicles = [], isLoading } = useVehicles(filters)

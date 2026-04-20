@@ -37,15 +37,13 @@ export function AuthProvider({ children }) {
 
   const fetchUserProfile = async (userId) => {
     try {
-      console.log('Fetching profile for user:', userId)
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single()
+      const [profileRes, sitesRes] = await Promise.all([
+        supabase.from('users').select('*').eq('id', userId).single(),
+        supabase.from('user_sites').select('site_id, sites(id, name)').eq('user_id', userId)
+      ])
 
-      console.log('Profile fetch result:', { data, error })
-      if (error) throw error
+      if (profileRes.error) throw profileRes.error
+      const data = profileRes.data
 
       if (!data.is_active) {
         await supabase.auth.signOut()
@@ -54,7 +52,8 @@ export function AuthProvider({ children }) {
         throw new Error('Account is deactivated. Please contact administrator.')
       }
 
-      setUserProfile(data)
+      const sites = (sitesRes.data || []).map(r => r.sites).filter(Boolean)
+      setUserProfile({ ...data, sites })
     } catch (error) {
       console.error('Error fetching user profile:', error)
     } finally {

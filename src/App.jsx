@@ -117,7 +117,7 @@ function App() {
             <Route
               path="/job-cards"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'mechanic']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'mechanic', 'electrician']}>
                   <JobCards />
                 </ProtectedRoute>
               }
@@ -125,7 +125,7 @@ function App() {
             <Route
               path="/job-cards/:id"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'mechanic']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'mechanic', 'electrician']}>
                   <JobCardDetail />
                 </ProtectedRoute>
               }
@@ -133,7 +133,7 @@ function App() {
             <Route
               path="/users"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin']}>
                   <Users />
                 </ProtectedRoute>
               }
@@ -149,7 +149,7 @@ function App() {
             <Route
               path="/analytics"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin']}>
                   <Analytics />
                 </ProtectedRoute>
               }
@@ -165,7 +165,7 @@ function App() {
             <Route
               path="/inventory"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <Inventory />
                 </ProtectedRoute>
               }
@@ -173,7 +173,7 @@ function App() {
             <Route
               path="/vehicles"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <Vehicles />
                 </ProtectedRoute>
               }
@@ -181,7 +181,7 @@ function App() {
             <Route
               path="/vehicles/:vehicleNumber"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <VehicleHistory />
                 </ProtectedRoute>
               }
@@ -189,7 +189,7 @@ function App() {
             <Route
               path="/mechanics/:mechanicId"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <MechanicDetail />
                 </ProtectedRoute>
               }
@@ -208,7 +208,7 @@ function App() {
             <Route
               path="/suppliers"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <Suppliers />
                 </ProtectedRoute>
               }
@@ -216,7 +216,7 @@ function App() {
             <Route
               path="/suppliers/:id"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'finance']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <SupplierDetail />
                 </ProtectedRoute>
               }

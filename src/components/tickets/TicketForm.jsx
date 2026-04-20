@@ -25,7 +25,9 @@ export default function TicketForm() {
     watch,
   } = useForm({
     defaultValues: {
-      site: userProfile?.site || '',
+      site: userProfile?.role === 'supervisor'
+        ? (userProfile?.sites?.length === 1 ? userProfile.sites[0].name : '')
+        : (userProfile?.site || ''),
       supervisor_name: userProfile?.name || '',
       supervisor_id: userProfile?.employee_id || '',
       supervisor_contact: userProfile?.contact || '',
@@ -43,7 +45,15 @@ export default function TicketForm() {
     prevSiteRef.current = watchSite
   }, [watchSite, setValue])
 
-  const { data: sites = [] } = useSites()
+  const { data: allSites = [] } = useSites()
+
+  // Supervisors only see their assigned sites; others see all
+  const isSupervisor = userProfile?.role === 'supervisor'
+  const supervisorSites = userProfile?.sites || []
+  const availableSites = isSupervisor
+    ? allSites.filter(s => supervisorSites.some(us => us.name === s.name))
+    : allSites
+
   const { data: vehicles = [] } = useVehicles(watchSite || null)
   const createTicket = useCreateTicket()
 
@@ -142,8 +152,8 @@ export default function TicketForm() {
                   label={<span>Site <span className="text-red-500">*</span></span>}
                   value={value}
                   onChange={onChange}
-                  options={sites.map(s => ({ value: s.name, label: s.name }))}
-                  disabled={userProfile?.role === 'supervisor'}
+                  options={availableSites.map(s => ({ value: s.name, label: s.name }))}
+                  disabled={isSupervisor && supervisorSites.length <= 1}
                   error={error}
                   placeholder="Type to search site..."
                 />

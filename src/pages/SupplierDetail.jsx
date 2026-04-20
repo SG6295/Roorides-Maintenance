@@ -42,7 +42,7 @@ export default function SupplierDetail() {
   const { data: supplier, isLoading, error } = useSupplierById(id)
   const { mutateAsync: updateStatus, isPending: updating } = useUpdateSupplierStatus()
 
-  const isExec = userProfile?.role === 'maintenance_exec'
+  const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
   const handleStatus = async (status) => {
     try {

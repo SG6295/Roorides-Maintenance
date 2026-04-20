@@ -6,9 +6,9 @@ import { useAuth } from '../../hooks/useAuth'
 
 const tabs = [
     { name: 'Notifications', href: '/settings/notifications', icon: BellIcon, roles: [] },
-    { name: 'User Management', href: '/settings/users', icon: UsersIcon, roles: ['maintenance_exec'] },
-    { name: 'SLA Automation', href: '/settings/sla', icon: ClockIcon, roles: ['maintenance_exec'] },
-    { name: 'Part Units', href: '/settings/units', icon: CubeIcon, roles: ['maintenance_exec'] },
+    { name: 'User Management', href: '/settings/users', icon: UsersIcon, roles: ['maintenance_exec', 'super_admin'] },
+    { name: 'SLA Automation', href: '/settings/sla', icon: ClockIcon, roles: ['maintenance_exec', 'super_admin'] },
+    { name: 'Part Units', href: '/settings/units', icon: CubeIcon, roles: ['maintenance_exec', 'super_admin'] },
 ]
 
 function classNames(...classes) {
