@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { format, differenceInDays, addDays, isWeekend, isSameDay } from 'date-fns'
+import { format, addDays } from 'date-fns'
 import SLATimer from '../shared/SLATimer'
 import TicketRating from './TicketRating'
 import { logAuditEvent } from '../../utils/auditLogger'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
+
+// Supabase returns timestamptz without 'Z', causing JS to parse as local time instead of UTC.
+// Appending 'Z' forces correct UTC interpretation.
+const parseUTC = (ts) => ts ? new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z') : null
 
 export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1, onUpdate }) {
     const { user } = useAuth()
@@ -14,7 +18,7 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
     // Compute assignment deadline for New/Pending tickets
     let assignmentDeadline = null
     if (ticket.status === 'Pending' || ticket.status === 'New') {
-        assignmentDeadline = addDays(new Date(ticket.created_at), assignmentSLADays)
+        assignmentDeadline = addDays(parseUTC(ticket.created_at), assignmentSLADays)
     }
 
     const handleRate = async (rating) => {
@@ -112,7 +116,7 @@ export default function TicketCard({ ticket, currentDate, assignmentSLADays = 1,
                         {ticket.supervisor_name}
                     </div>
                     <div className="text-gray-500">
-                        {format(new Date(ticket.created_at), 'MMM d, yyyy h:mm a')}
+                        {format(parseUTC(ticket.created_at), 'MMM d, yyyy h:mm a')}
                     </div>
                 </div>
             </div>
@@ -147,8 +151,8 @@ function SLABadge({ ticket, currentDate, assignmentDeadline, interactions }) {
         return <SLATimer targetDate={assignmentDeadline} currentDate={currentDate} />
     }
 
-    // 2. Check Rating (Completed Tickets)
-    if (ticket.status === 'Completed' || ticket.status === 'Closed') {
+    // 2. Check Rating (Completed/Resolved Tickets)
+    if (ticket.status === 'Completed' || ticket.status === 'Closed' || ticket.status === 'Resolved') {
         const { isCreator, onRate, isRating } = interactions
 
         return (
@@ -161,9 +165,9 @@ function SLABadge({ ticket, currentDate, assignmentDeadline, interactions }) {
         )
     }
 
-    // 3. Active Ticket Logic (Assigned/WIP) - Show SLA Timer
-    if (ticket.sla_end_date) {
-        return <SLATimer targetDate={ticket.sla_end_date} currentDate={currentDate} />
+    // 3. Active Ticket Logic (Accepted/WIP) - Show SLA Timer
+    if (ticket.final_sla_end_date) {
+        return <SLATimer targetDate={ticket.final_sla_end_date} currentDate={currentDate} />
     }
 
     return null

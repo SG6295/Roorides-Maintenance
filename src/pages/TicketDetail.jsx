@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
@@ -8,6 +8,9 @@ import { useIssues, useCreateIssue, useUpdateIssue, useDeleteIssue } from '../ho
 import { useJobCards, useCreateJobCard, useLinkIssuesToJobCard } from '../hooks/useJobCards'
 import { getDriveThumbnailUrl } from '../lib/googleDrive'
 import Navigation from '../components/shared/Navigation'
+import SLATimer from '../components/shared/SLATimer'
+
+const parseUTC = (ts) => ts ? new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z') : null
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import PhotoUpload from '../components/tickets/PhotoUpload'
 import TicketTimeline from '../components/tickets/TicketTimeline'
@@ -100,7 +103,7 @@ export default function TicketDetail() {
                   <StatusBadge status={ticket.status} />
                 </div>
                 <p className="text-sm text-gray-600 mt-1">
-                  Created {format(new Date(ticket.created_at), 'MMM d, yyyy')} by {ticket.supervisor_name}
+                  Created {format(parseUTC(ticket.created_at), 'MMM d, yyyy')} by {ticket.supervisor_name}
                 </p>
               </div>
             </div>
@@ -338,43 +341,57 @@ function FeedbackSmileys({ issue, ticket, userProfile, onUpdateFeedback, isUpdat
 }
 
 function SLAWarning({ ticket }) {
-  if (!ticket.final_sla_end_date) return null
+  const [now, setNow] = useState(new Date())
 
-  const today = new Date()
-  const end = new Date(ticket.final_sla_end_date)
-  const diffDays = Math.ceil((end - today) / (1000 * 60 * 60 * 24))
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60000)
+    return () => clearInterval(t)
+  }, [])
 
-  if (ticket.status === 'Resolved' || ticket.status === 'Closed') return null
+  const deadline = ticket.final_sla_end_date
+  if (!deadline) return null
 
-  if (diffDays < 0) {
+  const isTerminal = ticket.status === 'Resolved' || ticket.status === 'Closed'
+
+  if (isTerminal) {
+    const status = ticket.overall_sla_status
+    if (!status || status === 'Pending') return null
+    const adhered = status === 'Adhered'
     return (
-      <div className="mt-4 bg-red-50 border-l-4 border-red-500 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <p className="text-sm text-red-700">
-              <span className="font-bold">SLA Violation:</span> This ticket is overdue by {Math.abs(diffDays)} days.
-            </p>
-          </div>
+      <div className={`mt-4 flex items-center gap-3 px-4 py-3 rounded-lg border ${adhered ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+        <span className="text-base">{adhered ? '✅' : '⚠️'}</span>
+        <div>
+          <p className={`text-sm font-semibold ${adhered ? 'text-green-700' : 'text-red-700'}`}>SLA {adhered ? 'Adhered' : 'Violated'}</p>
+          <p className="text-xs text-gray-500">Deadline was {format(new Date(deadline), 'MMM d, yyyy')}</p>
         </div>
       </div>
     )
   }
 
-  if (diffDays <= 2) {
-    return (
-      <div className="mt-4 bg-yellow-50 border-l-4 border-yellow-400 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <p className="text-sm text-yellow-700">
-              <span className="font-bold">SLA Warning:</span> Due in {diffDays} days ({format(end, 'MMM d')}).
-            </p>
-          </div>
+  const diffDays = Math.ceil((new Date(deadline) - now) / (1000 * 60 * 60 * 24))
+  const isOverdue = diffDays < 0
+  const isWarning = !isOverdue && diffDays <= 2
+
+  const styles = isOverdue
+    ? { wrap: 'bg-red-50 border-red-200', label: 'text-red-700', sub: 'Was due' }
+    : isWarning
+      ? { wrap: 'bg-orange-50 border-orange-200', label: 'text-orange-700', sub: 'Due' }
+      : { wrap: 'bg-blue-50 border-blue-200', label: 'text-blue-700', sub: 'Due' }
+
+  return (
+    <div className={`mt-4 flex items-center justify-between px-4 py-3 rounded-lg border ${styles.wrap}`}>
+      <div className="flex items-center gap-3">
+        {isOverdue && <span className="text-base">⚠️</span>}
+        <div>
+          <p className={`text-sm font-semibold ${styles.label}`}>
+            {isOverdue ? 'SLA Violated' : isWarning ? 'SLA Due Soon' : 'SLA On Track'}
+          </p>
+          <p className="text-xs text-gray-500">{styles.sub} {format(new Date(deadline), 'MMM d, yyyy')}</p>
         </div>
       </div>
-    )
-  }
-
-  return null
+      <SLATimer targetDate={deadline} currentDate={now} />
+    </div>
+  )
 }
 
 function OverviewTab({ ticket }) {
@@ -994,7 +1011,7 @@ function JobCardsTab({ ticket, issues }) {
                       Job Card #{jc.job_card_number}
                     </Link>
                   </h3>
-                  <p className="text-sm text-gray-600">{jc.type} • {format(new Date(jc.created_at), 'MMM d, yyyy')}</p>
+                  <p className="text-sm text-gray-600">{jc.type} • {format(parseUTC(jc.created_at), 'MMM d, yyyy')}</p>
                 </div>
                 <StatusBadge status={jc.status} />
               </div>

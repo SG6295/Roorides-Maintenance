@@ -43,10 +43,23 @@ A fleet maintenance ticketing system for NVS Travel Solutions. Supervisors submi
 - No Redux or Zustand
 
 ### Auth & Role Enforcement (two-tier)
-1. **Database level**: Every table has RLS policies enforced by Postgres. Supervisors are scoped to their `site`; `maintenance_exec` has global access.
+1. **Database level**: Every table has RLS policies enforced by Postgres. Supervisors are scoped via `user_sites` junction table; `maintenance_exec` and `super_admin` have global access (the `is_maintenance_exec()` DB function covers both).
 2. **React level**: `ProtectedRoute` in `src/App.jsx` checks `userProfile.role` against `allowedRoles`. Deactivated users (`is_active = false`) are forcibly signed out on profile fetch.
 
-Roles: `supervisor` (site-specific), `maintenance_exec` (global admin), `mechanic` (job cards only), `finance` (finance entries only).
+Roles:
+| Role | Access |
+|---|---|
+| `supervisor` | Site-specific tickets/issues (multi-site via `user_sites`) |
+| `maintenance_exec` | Global admin — job cards, issues, most settings |
+| `super_admin` | Everything `maintenance_exec` can do + SLA rules, system_settings, holidays |
+| `mechanic` | Assigned job cards only |
+| `electrician` | Same scope as `mechanic` (job cards only) |
+| `finance` | Finance entries, inventory, purchase invoices, vehicles |
+
+**When adding a new role**, update: (1) `users_role_check` constraint in a migration, (2) relevant RLS policies / DB helper functions, (3) `ProtectedRoute allowedRoles` arrays in `src/App.jsx`, (4) role dropdown in `src/pages/Users.jsx`, (5) any role-conditional UI in pages/components.
+
+### user_sites Junction Table
+Supervisors may be assigned to multiple sites. Assignments live in `public.user_sites (user_id, site_id)`. The old `users.site` text column still exists for backwards compatibility but is no longer the authoritative source for supervisors — RLS policies join through `user_sites`.
 
 ### Edge Functions (`supabase/functions/`)
 All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` for admin operations (auto-provided by Supabase runtime). `create-user` additionally verifies the caller is a `maintenance_exec` by checking their profile via the anon key + caller JWT before proceeding.
@@ -71,7 +84,7 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 - **purchase_invoices** → has many **purchase_invoice_items** → each references a `parts` row
 
 ### SLA System
-SLA windows are configured in the `sla_rules_config` table (editable via the SLA Settings page, `maintenance_exec` only). Database triggers auto-calculate `sla_end_date` and `sla_status` (Pending/Adhered/Violated) per issue. Holiday calendar in `holidays` table is used for business-day SLA calculations.
+SLA windows are configured in the `sla_rules` table (editable via the SLA Settings page — `super_admin` can write, `maintenance_exec` can view). Database triggers auto-calculate `sla_end_date` and `sla_status` (Pending/Adhered/Violated) per issue. Holiday calendar in `holidays` table and weekly-offs in `system_settings` key `sla_weekly_offs` are used for business-day calculations. Timeline events are stored in `sla_events` and surfaced via `useSLAEvents(ticketId)` in `src/hooks/useSLA.js`.
 
 ### Inventory Module
 `src/pages/Inventory.jsx` (accessible to `maintenance_exec` and `finance`) has three tabs managed via local state:
