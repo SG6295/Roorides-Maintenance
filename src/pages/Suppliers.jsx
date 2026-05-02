@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSuppliers } from '../hooks/useSuppliers'
 import Navigation from '../components/shared/Navigation'
+import FilterSelect from '../components/shared/FilterSelect'
 
 const STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -107,16 +108,16 @@ export default function Suppliers() {
             placeholder="Search by name, PAN or email..."
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500"
           />
-          <select
+          <FilterSelect
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 bg-white"
-          >
-            <option value="">All Statuses</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
+            onChange={setStatusFilter}
+            placeholder="All Statuses"
+            options={[
+                { value: 'pending', label: 'Pending' },
+                { value: 'approved', label: 'Approved' },
+                { value: 'rejected', label: 'Rejected' },
+            ]}
+          />
         </div>
 
         {/* Table */}

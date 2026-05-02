@@ -3,6 +3,7 @@ import { format, parseISO } from 'date-fns'
 import { Link } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import Navigation from '../components/shared/Navigation'
+import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import PurchaseModal from '../components/inventory/PurchaseModal'
 import BulkUploadModal from '../components/inventory/BulkUploadModal'
@@ -47,15 +48,15 @@ function PartsTable() {
                         />
                         <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
                     </div>
-                    <select
-                        className="border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                    <FilterSelect
                         value={filters.stockStatus}
-                        onChange={e => setFilters(p => ({ ...p, stockStatus: e.target.value }))}
-                    >
-                        <option value="">All Stock Levels</option>
-                        <option value="low">Low / Out (≤ 5)</option>
-                        <option value="out">Out of Stock (0)</option>
-                    </select>
+                        onChange={v => setFilters(p => ({ ...p, stockStatus: v }))}
+                        placeholder="All Stock Levels"
+                        options={[
+                            { value: 'low', label: 'Low / Out (≤ 5)' },
+                            { value: 'out', label: 'Out of Stock (0)' },
+                        ]}
+                    />
                 </div>
             </div>
 

@@ -7,14 +7,14 @@ import { useTickets, useSites } from '../hooks/useTickets'
 import Navigation from '../components/shared/Navigation'
 import StatusAccordion from '../components/tickets/StatusAccordion'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
-import SiteFilter from '../components/tickets/SiteFilter'
+import FilterSelect from '../components/shared/FilterSelect'
 
 export default function Tickets() {
-  const { userProfile } = useAuth()
+  useAuth()
   const { data: sites = [] } = useSites()
 
   // SLA & Timer State
-  const [assignmentSLADays, setAssignmentSLADays] = useState(1)
+  const [acceptanceSLADays, setAssignmentSLADays] = useState(1)
   const [now, setNow] = useState(new Date())
 
   // Initialize with current month as default
@@ -32,16 +32,16 @@ export default function Tickets() {
 
 
   // Fetch all tickets (we'll filter by date on client side)
-  const { data: allTickets, isLoading, refetch } = useTickets({})
+  const { data: allTickets, isLoading } = useTickets({})
 
   // Fetch System Settings & Start Timer
   useEffect(() => {
-    // 1. Fetch Assignment SLA Threshold
+    // 1. Fetch Acceptance SLA Threshold
     const fetchSettings = async () => {
       const { data } = await supabase
         .from('system_settings')
         .select('value')
-        .eq('key', 'assignment_sla_days')
+        .eq('key', 'acceptance_sla_days')
         .single()
 
       if (data) {
@@ -163,10 +163,11 @@ export default function Tickets() {
             <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
 
             {/* Site Filter */}
-            <SiteFilter
-              sites={sites}
-              selectedSite={filters.site}
-              onSiteChange={(site) => setFilters({ ...filters, site })}
+            <FilterSelect
+              value={filters.site}
+              onChange={(site) => setFilters({ ...filters, site })}
+              placeholder="All Sites"
+              options={sites.map(s => ({ value: s.name, label: s.name }))}
             />
 
             {/* Vehicle Search */}
@@ -216,8 +217,7 @@ export default function Tickets() {
             tickets={filteredTickets}
             statusCounts={statusCounts}
             currentDate={now}
-            assignmentSLADays={assignmentSLADays}
-            onUpdate={refetch}
+            acceptanceSLADays={acceptanceSLADays}
           />
         )}
       </div>

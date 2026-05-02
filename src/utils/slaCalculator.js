@@ -1,12 +1,12 @@
 import { supabase } from '../lib/supabase'
 
 /* 
- * NOTE: Assignment SLA is dynamic based on system_settings.
+ * NOTE: Acceptance SLA is dynamic based on system_settings.
  * Completion SLA is dynamic based on database rules.
  */
 
 // Default fallback if DB fetch fails
-const DEFAULT_ASSIGNMENT_SLA_DAYS = 1
+const DEFAULT_ACCEPTANCE_SLA_DAYS = 1
 
 /**
  * Fetch a system setting by key
@@ -103,7 +103,7 @@ export async function calculateSLAEndDate(createdAt, slaDays) {
  * Check if assignment SLA is violated
  * Must be assigned within limit days of creation
  */
-export function checkAssignmentSLA(createdAt, assignedDate, limitDays = DEFAULT_ASSIGNMENT_SLA_DAYS) {
+export function checkAcceptanceSLA(createdAt, assignedDate, limitDays = DEFAULT_ACCEPTANCE_SLA_DAYS) {
   if (!createdAt) return 'Pending'
   if (!assignedDate) {
     // Check if more than limit has passed since creation

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import Navigation from '../components/shared/Navigation'
+import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useVehicles, useCreateVehicle, useUpdateVehicle } from '../hooks/useVehicles'
 import { useAuth } from '../hooks/useAuth'
@@ -220,15 +221,15 @@ export default function Vehicles() {
                             value={filters.site}
                             onChange={e => setFilters(p => ({ ...p, site: e.target.value }))}
                         />
-                        <select
-                            className="border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                        <FilterSelect
                             value={filters.active}
-                            onChange={e => setFilters(p => ({ ...p, active: e.target.value }))}
-                        >
-                            <option value="">All Vehicles</option>
-                            <option value="active">Active Only</option>
-                            <option value="inactive">Inactive Only</option>
-                        </select>
+                            onChange={v => setFilters(p => ({ ...p, active: v }))}
+                            placeholder="All Vehicles"
+                            options={[
+                                { value: 'active', label: 'Active Only' },
+                                { value: 'inactive', label: 'Inactive Only' },
+                            ]}
+                        />
                     </div>
                 </div>
 

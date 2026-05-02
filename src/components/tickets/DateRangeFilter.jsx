@@ -112,7 +112,7 @@ export default function DateRangeFilter({ dateRange, onDateRangeChange }) {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 sm:right-0 sm:left-auto mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-300 z-20">
+        <div className="absolute left-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-300 z-20">
           <div className="p-2">
             {/* Presets */}
             <div className="space-y-1 mb-3">

@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import Navigation from '../components/shared/Navigation'
+import FilterSelect from '../components/shared/FilterSelect'
 import AddUserModal from '../components/users/AddUserModal'
 import { PlusIcon, UserIcon, WrenchIcon, BriefcaseIcon, CurrencyDollarIcon, MagnifyingGlassIcon, ShieldCheckIcon, BoltIcon } from '@heroicons/react/24/outline'
 
@@ -150,21 +151,20 @@ export default function Users({ embedded = false }) {
                             onChange={(e) => setSearchQuery(e.target.value)}
                         />
                     </div>
-                    <div className="sm:w-48">
-                        <select
-                            value={filterRole}
-                            onChange={(e) => setFilterRole(e.target.value)}
-                            className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-lg"
-                        >
-                            <option value="all">All Roles</option>
-                            <option value="super_admin">Super Admin</option>
-                            <option value="maintenance_exec">Maintenance Exec</option>
-                            <option value="supervisor">Supervisor</option>
-                            <option value="mechanic">Mechanic</option>
-                            <option value="electrician">Electrician</option>
-                            <option value="finance">Finance</option>
-                        </select>
-                    </div>
+                    <FilterSelect
+                        value={filterRole}
+                        onChange={setFilterRole}
+                        placeholder="All Roles"
+                        options={[
+                            { value: 'all', label: 'All Roles' },
+                            { value: 'super_admin', label: 'Super Admin' },
+                            { value: 'maintenance_exec', label: 'Maintenance Exec' },
+                            { value: 'supervisor', label: 'Supervisor' },
+                            { value: 'mechanic', label: 'Mechanic' },
+                            { value: 'electrician', label: 'Electrician' },
+                            { value: 'finance', label: 'Finance' },
+                        ]}
+                    />
                 </div>
 
                 {/* Users List */}

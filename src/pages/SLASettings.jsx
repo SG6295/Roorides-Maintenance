@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 export default function SLASettings({ embedded = false }) {
     const { userProfile } = useAuth()
     const [rules, setRules] = useState([])
-    const [assignmentSLA, setAssignmentSLA] = useState(1)
+    const [acceptanceSLA, setAssignmentSLA] = useState(1)
     const [weeklyOffs, setWeeklyOffs] = useState([])
     const [holidays, setHolidays] = useState([])
     const [newHolidayDate, setNewHolidayDate] = useState('')
@@ -23,7 +23,7 @@ export default function SLASettings({ embedded = false }) {
         try {
             const [rulesRes, settingsRes, offsRes, holidaysRes] = await Promise.all([
                 supabase.from('sla_rules').select('*').order('impact').order('category'),
-                supabase.from('system_settings').select('value').eq('key', 'assignment_sla_days').single(),
+                supabase.from('system_settings').select('value').eq('key', 'acceptance_sla_days').single(),
                 supabase.from('system_settings').select('value').eq('key', 'sla_weekly_offs').single(),
                 supabase.from('holidays').select('*').order('date')
             ])
@@ -48,7 +48,7 @@ export default function SLASettings({ embedded = false }) {
             const { error } = await supabase
                 .from('system_settings')
                 .update({ value: newVal.toString() })
-                .eq('key', 'assignment_sla_days')
+                .eq('key', 'acceptance_sla_days')
 
             if (error) throw error
             setMessage({ type: 'success', text: 'Setting saved!' })
@@ -163,17 +163,17 @@ export default function SLASettings({ embedded = false }) {
                 <div className="bg-white rounded-lg shadow p-6 mb-8 space-y-8">
                     <h2 className="text-lg font-medium text-gray-900 border-b pb-2">Global Settings</h2>
 
-                    {/* Assignment SLA */}
+                    {/* Acceptance SLA */}
                     <div className="flex items-center justify-between max-w-lg">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">Assignment SLA Threshold</label>
+                            <label className="block text-sm font-medium text-gray-700">Acceptance SLA Threshold</label>
                             <p className="text-xs text-gray-600">Max days to assign a ticket before violation</p>
                         </div>
                         <div className="flex items-center">
                             <input
                                 type="number"
                                 min="1"
-                                value={assignmentSLA}
+                                value={acceptanceSLA}
                                 onChange={(e) => canEdit && handleSettingChange(e.target.value)}
                                 readOnly={!canEdit}
                                 className={`w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm sm:text-sm ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}

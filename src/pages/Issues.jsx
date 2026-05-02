@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useIssues } from '../hooks/useIssues'
 import Navigation from '../components/shared/Navigation'
+import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 
 export default function Issues() {
@@ -32,27 +33,22 @@ export default function Issues() {
                 <h1 className="text-2xl font-bold text-gray-900 mb-6">Issues Registry</h1>
 
                 {/* Filters */}
-                <div className="bg-white p-4 rounded-lg shadow-sm mb-6 flex gap-4">
-                    <select
+                <div className="bg-white p-4 rounded-lg shadow-sm mb-6 flex flex-wrap gap-3">
+                    <FilterSelect
                         value={filters.status}
-                        onChange={e => setFilters({ ...filters, status: e.target.value })}
-                        className="border rounded-md px-3 py-2"
-                    >
-                        <option value="">All Statuses</option>
-                        <option value="Open">Open</option>
-                        <option value="Done">Done</option>
-                    </select>
-
-                    <select
+                        onChange={v => setFilters({ ...filters, status: v })}
+                        placeholder="All Statuses"
+                        options={[
+                            { value: 'Open', label: 'Open' },
+                            { value: 'Done', label: 'Done' },
+                        ]}
+                    />
+                    <FilterSelect
                         value={filters.category}
-                        onChange={e => setFilters({ ...filters, category: e.target.value })}
-                        className="border rounded-md px-3 py-2"
-                    >
-                        <option value="">All Categories</option>
-                        {['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other'].map(c => (
-                            <option key={c} value={c}>{c}</option>
-                        ))}
-                    </select>
+                        onChange={v => setFilters({ ...filters, category: v })}
+                        placeholder="All Categories"
+                        options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other'].map(c => ({ value: c, label: c }))}
+                    />
                 </div>
 
                 {/* Table */}

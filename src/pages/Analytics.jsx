@@ -4,8 +4,9 @@ import { supabase } from '../lib/supabase'
 import { format, subMonths, endOfMonth } from 'date-fns'
 import Navigation from '../components/shared/Navigation'
 import { useSites } from '../hooks/useTickets'
+import FilterSelect from '../components/shared/FilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
-import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
+import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 export default function Analytics() {
     const { data: sites = [] } = useSites()
@@ -16,7 +17,7 @@ export default function Analytics() {
     })
 
     // Fetch Stats using RPC
-    const { data: stats = [], isLoading } = useQuery({
+    const { data: stats = [] } = useQuery({
         queryKey: ['analytics', dateRange, selectedSite],
         queryFn: async () => {
             const { data, error } = await supabase
@@ -31,16 +32,34 @@ export default function Analytics() {
         }
     })
 
+    // Live overdue count — ignores date range, always reflects right now
+    const { data: overdueCount = 0 } = useQuery({
+        queryKey: ['overdue_tickets_live'],
+        queryFn: async () => {
+            const { count, error } = await supabase
+                .from('tickets')
+                .select('*', { count: 'exact', head: true })
+                .not('status', 'in', '("Resolved","Closed","Rejected")')
+                .lt('final_sla_end_date', format(new Date(), 'yyyy-MM-dd'))
+            if (error) throw error
+            return count || 0
+        },
+        refetchInterval: 5 * 60 * 1000
+    })
+
     // Aggregates for KPI Cards & Tables
     const aggregates = useMemo(() => {
         if (!stats.length) return null
 
         const sums = stats.reduce((acc, curr) => ({
             total_tickets: acc.total_tickets + curr.total_tickets,
-            status_pending: acc.status_pending + curr.status_pending,
-            status_assigned: acc.status_assigned + curr.status_assigned,
-            status_completed: acc.status_completed + curr.status_completed,
+            status_new: acc.status_new + curr.status_new,
+            status_accepted: acc.status_accepted + curr.status_accepted,
+            status_wip: acc.status_wip + curr.status_wip,
+            status_resolved: acc.status_resolved + curr.status_resolved,
+            status_closed: acc.status_closed + curr.status_closed,
             status_rejected: acc.status_rejected + curr.status_rejected,
+            status_completed: acc.status_completed + curr.status_completed,
 
             major_total: acc.major_total + curr.major_total,
             major_electrical: acc.major_electrical + curr.major_electrical,
@@ -57,9 +76,9 @@ export default function Analytics() {
             type_in_house: acc.type_in_house + curr.type_in_house,
             type_outsource: acc.type_outsource + curr.type_outsource,
 
-            assign_unassigned_within: acc.assign_unassigned_within + curr.assign_unassigned_within,
-            assign_adhered: acc.assign_adhered + curr.assign_adhered,
-            assign_violated: acc.assign_violated + curr.assign_violated,
+            accept_pending: acc.accept_pending + curr.accept_pending,
+            accept_adhered: acc.accept_adhered + curr.accept_adhered,
+            accept_violated: acc.accept_violated + curr.accept_violated,
 
             comp_in_wip_within: acc.comp_in_wip_within + curr.comp_in_wip_within,
             comp_in_adhered: acc.comp_in_adhered + curr.comp_in_adhered,
@@ -78,11 +97,12 @@ export default function Analytics() {
             csat_score_sum: acc.csat_score_sum + curr.csat_score_sum,
             total_completed_tickets: acc.total_completed_tickets + curr.total_completed_tickets
         }), {
-            total_tickets: 0, status_pending: 0, status_assigned: 0, status_completed: 0, status_rejected: 0,
+            total_tickets: 0, status_new: 0, status_accepted: 0, status_wip: 0,
+            status_resolved: 0, status_closed: 0, status_rejected: 0, status_completed: 0,
             major_total: 0, major_electrical: 0, major_mechanical: 0, major_body: 0, major_tyre: 0,
             minor_total: 0, minor_electrical: 0, minor_mechanical: 0, minor_body: 0, minor_tyre: 0,
             type_in_house: 0, type_outsource: 0,
-            assign_unassigned_within: 0, assign_adhered: 0, assign_violated: 0,
+            accept_pending: 0, accept_adhered: 0, accept_violated: 0,
             comp_in_wip_within: 0, comp_in_adhered: 0, comp_in_violated: 0,
             comp_out_wip_within: 0, comp_out_adhered: 0, comp_out_violated: 0,
             rating_pending: 0, rating_collected: 0, rating_good: 0, rating_ok: 0, rating_bad: 0,
@@ -94,13 +114,27 @@ export default function Analytics() {
 
         return {
             ...sums,
-            assign_sla_perc: calcPerc(sums.assign_adhered, sums.assign_adhered + sums.assign_violated),
+            accept_sla_perc: calcPerc(sums.accept_adhered, sums.accept_adhered + sums.accept_violated),
             comp_in_sla_perc: calcPerc(sums.comp_in_adhered, sums.comp_in_adhered + sums.comp_in_violated),
             comp_out_sla_perc: calcPerc(sums.comp_out_adhered, sums.comp_out_adhered + sums.comp_out_violated),
             collection_perc: calcPerc(sums.rating_collected, sums.rating_pending + sums.rating_collected),
             csat_perc: calcPerc(sums.csat_score_sum, sums.rating_collected * 2)
         }
     }, [stats])
+
+    const slaMetrics = useMemo(() => {
+        if (!aggregates) return null
+
+        const totalAdhered = aggregates.comp_in_adhered + aggregates.comp_out_adhered
+        const totalViolated = aggregates.comp_in_violated + aggregates.comp_out_violated
+        const totalResolved = totalAdhered + totalViolated
+        const adherenceRate = totalResolved > 0 ? Math.round((totalAdhered / totalResolved) * 100) : null
+
+        const acceptTotal = aggregates.accept_adhered + aggregates.accept_violated
+        const acceptRate = acceptTotal > 0 ? Math.round((aggregates.accept_adhered / acceptTotal) * 100) : null
+
+        return { adherenceRate, totalAdhered, totalResolved, acceptRate, acceptTotal, acceptAdhered: aggregates.accept_adhered }
+    }, [aggregates])
 
     const downloadCSV = () => {
         if (!stats.length) return
@@ -116,8 +150,8 @@ export default function Analytics() {
             'Minor (Total)', 'Minor (Elec)', 'Minor (Mech)', 'Minor (Body)', 'Minor (Tyre)',
             // 4. In House / Outsource
             'In House', 'Outsource',
-            // 5. Assignment SLA
-            'Assign (Unassigned/Within)', 'Assign (Adhered)', 'Assign (Violated)', 'Assignment SLA % (Sharan KPI)',
+            // 5. Acceptance SLA
+            'Accept (Pending)', 'Accept (Adhered)', 'Accept (Violated)', 'Acceptance SLA % (Sharan KPI)',
             // 6. Completion SLA (In House)
             'Comp In (WIP Within)', 'Comp In (Adhered)', 'Comp In (Violated)', 'Comp In SLA % (Sharan KPI)',
             // 7. Completion SLA (Outsourced)
@@ -133,9 +167,9 @@ export default function Analytics() {
             // Helper for % calc
             const calcPerc = (num, den) => den > 0 ? ((num / den) * 100).toFixed(1) + '%' : '-'
 
-            // Assignment SLA %
-            const assignTotal = row.assign_adhered + row.assign_violated
-            const assignSLA = calcPerc(row.assign_adhered, assignTotal)
+            // Acceptance SLA %
+            const acceptTotal = row.accept_adhered + row.accept_violated
+            const acceptSLA = calcPerc(row.accept_adhered, acceptTotal)
 
             // Completion In-House SLA %
             const compInTotal = row.comp_in_adhered + row.comp_in_violated
@@ -163,7 +197,7 @@ export default function Analytics() {
                 // Type
                 row.type_in_house, row.type_outsource,
                 // Assign SLA
-                row.assign_unassigned_within, row.assign_adhered, row.assign_violated, assignSLA,
+                row.accept_pending, row.accept_adhered, row.accept_violated, acceptSLA,
                 // Comp In SLA
                 row.comp_in_wip_within, row.comp_in_adhered, row.comp_in_violated, compInSLA,
                 // Comp Out SLA
@@ -197,16 +231,12 @@ export default function Analytics() {
                             <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
 
                             {/* Site Filter */}
-                            <select
+                            <FilterSelect
                                 value={selectedSite}
-                                onChange={(e) => setSelectedSite(e.target.value)}
-                                className="block w-full sm:w-40 pl-3 pr-10 py-2.5 text-sm border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-lg"
-                            >
-                                <option value="">All Sites</option>
-                                {sites.map(site => (
-                                    <option key={site.id} value={site.name}>{site.name}</option>
-                                ))}
-                            </select>
+                                onChange={setSelectedSite}
+                                placeholder="All Sites"
+                                options={sites.map(s => ({ value: s.name, label: s.name }))}
+                            />
 
                             <button
                                 onClick={downloadCSV}
@@ -221,19 +251,33 @@ export default function Analytics() {
             </div>
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-10">
-                {/* KPI Cards (Aggregated) */}
-                {aggregates && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                        <KPICard title="Total Tickets" value={aggregates.total_tickets} color="bg-blue-600" />
-                        <KPICard title="Completed" value={aggregates.status_completed} color="bg-green-600" />
-                        <KPICard title="Pending" value={aggregates.status_pending} color="bg-yellow-500" />
-                        <KPICard
-                            title="Feedback Collected"
-                            value={aggregates.rating_collected}
-                            color="bg-purple-600"
+
+                {/* SLA Performance */}
+                <div>
+                    <h2 className="text-base font-semibold text-gray-700 mb-4">SLA Performance</h2>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                        <SLAKPICard
+                            title="Overall SLA Adherence"
+                            subtitle={`${dateRange.start} – ${dateRange.end}`}
+                            rate={slaMetrics?.adherenceRate}
+                            detail={slaMetrics ? `${slaMetrics.totalAdhered} adhered · ${slaMetrics.totalResolved - slaMetrics.totalAdhered} violated (of ${aggregates?.total_tickets} total tickets)` : null}
+                            icon={<CheckCircleIcon className="w-5 h-5" />}
+                        />
+                        <SLAKPICard
+                            title="Acceptance SLA Compliance"
+                            subtitle={`${dateRange.start} – ${dateRange.end}`}
+                            rate={slaMetrics?.acceptRate}
+                            detail={slaMetrics ? `${slaMetrics.acceptAdhered} on time · ${slaMetrics.acceptTotal - slaMetrics.acceptAdhered} late · ${aggregates?.total_tickets - slaMetrics.acceptTotal} awaiting issue` : null}
+                            icon={<ClockIcon className="w-5 h-5" />}
+                        />
+                        <SLAKPICard
+                            title="Currently Overdue"
+                            subtitle="Live — all open tickets past deadline"
+                            count={overdueCount}
+                            icon={<ExclamationTriangleIcon className="w-5 h-5" />}
                         />
                     </div>
-                )}
+                </div>
 
                 {/* --- TRANSPOSED VERTICAL TABLES SECTION --- */}
                 {aggregates && (
@@ -242,20 +286,22 @@ export default function Analytics() {
                         {/* 1. Status */}
                         <VerticalTable title="Tickets by Status">
                             <Row label="Total" value={aggregates.total_tickets} bold />
-                            <Row label="Pending" value={aggregates.status_pending} color="text-yellow-600" />
-                            <Row label="Team Assigned" value={aggregates.status_assigned} color="text-blue-600" />
-                            <Row label="Completed" value={aggregates.status_completed} color="text-green-600" />
+                            <Row label="New" value={aggregates.status_new} color="text-yellow-600" />
+                            <Row label="Accepted" value={aggregates.status_accepted} color="text-blue-600" />
+                            <Row label="Work In Progress" value={aggregates.status_wip} color="text-purple-600" />
+                            <Row label="Resolved" value={aggregates.status_resolved} color="text-green-600" />
+                            <Row label="Closed" value={aggregates.status_closed} color="text-gray-600" />
                             <Row label="Rejected" value={aggregates.status_rejected} color="text-red-600" />
                         </VerticalTable>
 
                         {/* 4. In House / Outsource */}
-                        <VerticalTable title="Tickets by Source">
+                        <VerticalTable title="Issues by Work Type">
                             <Row label="In House" value={aggregates.type_in_house} />
                             <Row label="Outsource" value={aggregates.type_outsource} />
                         </VerticalTable>
 
                         {/* 2. Major */}
-                        <VerticalTable title="Tickets by Work Type (Major)">
+                        <VerticalTable title="Issues by Severity (Major)">
                             <Row label="Major Total" value={aggregates.major_total} bold />
                             <Row label="Electrical" value={aggregates.major_electrical} />
                             <Row label="Mechanical" value={aggregates.major_mechanical} />
@@ -264,7 +310,7 @@ export default function Analytics() {
                         </VerticalTable>
 
                         {/* 3. Minor */}
-                        <VerticalTable title="Tickets by Work Type (Minor)">
+                        <VerticalTable title="Issues by Severity (Minor)">
                             <Row label="Minor Total" value={aggregates.minor_total} bold />
                             <Row label="Electrical" value={aggregates.minor_electrical} />
                             <Row label="Mechanical" value={aggregates.minor_mechanical} />
@@ -272,31 +318,14 @@ export default function Analytics() {
                             <Row label="Tyre" value={aggregates.minor_tyre} />
                         </VerticalTable>
 
-                        {/* 5. Assignment SLA */}
-                        <VerticalTable title="Assignment SLA">
-                            <Row label="Unassigned / Within SLA" value={aggregates.assign_unassigned_within} />
-                            <Row label="Adhered" value={aggregates.assign_adhered} color="text-green-600" />
-                            <Row label="Violated" value={aggregates.assign_violated} color="text-red-600" />
-                            <Row label="SLA % (Sharan KPI)" value={aggregates.assign_sla_perc} bold />
-                        </VerticalTable>
-
-                        {/* 6. Completion SLA (In House) */}
-                        <VerticalTable title="Completion SLA (In House)">
-                            <Row label="Work In Progress (Within)" value={aggregates.comp_in_wip_within} />
+                        {/* 5. Completion SLA */}
+                        <VerticalTable title="Completion SLA">
                             <Row label="Adhered" value={aggregates.comp_in_adhered} color="text-green-600" />
                             <Row label="Violated" value={aggregates.comp_in_violated} color="text-red-600" />
-                            <Row label="SLA % (Sharan KPI)" value={aggregates.comp_in_sla_perc} bold />
+                            <Row label="SLA %" value={aggregates.comp_in_sla_perc} bold />
                         </VerticalTable>
 
-                        {/* 7. Completion SLA (Outsourced) */}
-                        <VerticalTable title="Completion SLA (Outsourced)">
-                            <Row label="Work In Progress (Within)" value={aggregates.comp_out_wip_within} />
-                            <Row label="Adhered" value={aggregates.comp_out_adhered} color="text-green-600" />
-                            <Row label="Violated" value={aggregates.comp_out_violated} color="text-red-600" />
-                            <Row label="SLA % (Manjunath KPI)" value={aggregates.comp_out_sla_perc} bold />
-                        </VerticalTable>
-
-                        {/* 8. Ratings */}
+                        {/* 7. Ratings */}
                         <VerticalTable title="Ratings & Feedback">
                             <Row label="Rating Pending" value={aggregates.rating_pending} color="text-gray-500" />
                             <Row label="Ratings Collected" value={aggregates.rating_collected} />
@@ -336,25 +365,47 @@ function Row({ label, value, color = "text-gray-900", bold = false }) {
     )
 }
 
-function KPICard({ title, value, color }) {
+function SLAKPICard({ title, subtitle, rate, detail, count, icon }) {
+    const isCountCard = count !== undefined
+
+    const rateColor = rate === null || rate === undefined
+        ? 'text-gray-400'
+        : rate >= 80 ? 'text-green-600'
+        : rate >= 60 ? 'text-yellow-500'
+        : 'text-red-600'
+
+    const barColor = rate >= 80 ? 'bg-green-500' : rate >= 60 ? 'bg-yellow-400' : 'bg-red-500'
+
+    const countColor = count === 0 ? 'text-green-600' : count <= 3 ? 'text-yellow-500' : 'text-red-600'
+
     return (
-        <div className="bg-white overflow-hidden rounded-lg shadow">
-            <div className="p-5">
-                <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                        <div className={`rounded-md p-3 ${color} bg-opacity-10`}>
-                            {/* Icon placeholder */}
-                            <div className={`h-6 w-6 ${color.replace('bg-', 'text-')}`} />
-                        </div>
+        <div className="bg-white rounded-lg shadow p-5 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700">{title}</p>
+                <span className="text-gray-400">{icon}</span>
+            </div>
+
+            {isCountCard ? (
+                <div className={`text-4xl font-bold ${countColor}`}>{count}</div>
+            ) : (
+                <>
+                    <div className={`text-4xl font-bold ${rateColor}`}>
+                        {rate !== null && rate !== undefined ? `${rate}%` : '—'}
                     </div>
-                    <div className="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt className="text-sm font-medium text-gray-600 truncate">{title}</dt>
-                            <dd className="text-lg font-medium text-gray-900">{value}</dd>
-                        </dl>
+                    <div className="w-full bg-gray-100 rounded-full h-1.5">
+                        <div
+                            className={`h-1.5 rounded-full transition-all ${barColor}`}
+                            style={{ width: `${rate ?? 0}%` }}
+                        />
                     </div>
-                </div>
+                </>
+            )}
+
+            <div className="space-y-0.5">
+                {detail && <p className="text-xs text-gray-500">{detail}</p>}
+                <p className="text-xs text-gray-400">{subtitle}</p>
             </div>
         </div>
     )
 }
+

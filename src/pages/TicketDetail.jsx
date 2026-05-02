@@ -71,7 +71,8 @@ export default function TicketDetail() {
         updates: {
           status: 'Rejected',
           rejection_reason,
-          rejection_comment
+          rejection_comment,
+          rejected_at: new Date().toISOString()
         }
       })
       setIsRejectModalOpen(false)

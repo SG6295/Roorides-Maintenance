@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
 import TicketCard from './TicketCard'
 
-export default function TicketList({ tickets, loading, assignmentSLADays = 1 }) {
+export default function TicketList({ tickets, loading, acceptanceSLADays = 1 }) {
   // Single timer logic is now optionally passed in or managed locally if needed.
   // Since TicketList might be used in places without the global timer from Tickets.jsx,
   // we can keep the local timer as a fallback or expect it from props.
@@ -54,7 +54,7 @@ export default function TicketList({ tickets, loading, assignmentSLADays = 1 }) 
           key={ticket.id}
           ticket={ticket}
           currentDate={now}
-          assignmentSLADays={assignmentSLADays}
+          acceptanceSLADays={acceptanceSLADays}
         />
       ))}
     </div>
