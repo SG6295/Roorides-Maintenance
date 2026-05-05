@@ -1,0 +1,2 @@
+npm run schema:dump
+git add docs/schema.sql src/types/database.types.ts

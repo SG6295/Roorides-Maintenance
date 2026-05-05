@@ -11,13 +11,11 @@ npm run dev        # Start Vite dev server (http://localhost:5173)
 npm run build      # Production build → dist/
 npm run lint       # ESLint
 npm run preview    # Preview production build locally
-npm run gen:types  # Regenerate src/types/database.types.ts from live Supabase schema
+npm run schema:dump  # Regenerate docs/schema.sql and src/types/database.types.ts
 ```
 
 ### Schema change rule
-**After every migration**, do both of these before touching app code:
-1. Run `npm run gen:types` — keeps `src/types/database.types.ts` in sync with the DB.
-2. Update `supabase-schema.sql` — query the affected objects from the live DB via Supabase MCP and patch the relevant sections. This file is the canonical restore reference.
+After every migration, run `npm run schema:dump` to regenerate `docs/schema.sql` and `src/types/database.types.ts`.
 
 ### Migration safety rule
 **Every migration file must be wrapped in a transaction with ROLLBACK by default.** The user pastes into the Supabase SQL editor, verifies the output, then swaps `ROLLBACK` to `COMMIT` and re-runs. Template:
@@ -145,11 +143,20 @@ All supplier hooks in `src/hooks/useSuppliers.js`: `useSuppliers`, `useSupplierB
 ### Analytics & Export
 `src/pages/Analytics.jsx` uses **recharts** for charts. `xlsx` is available for spreadsheet export (used in inventory/analytics exports).
 
+### Component Directory Structure
+`src/components/` is organized by domain:
+- `shared/` — reusable UI primitives: `Navigation`, `SLATimer`, `SearchableSelect`, `CustomInput`, `CustomSelect`, `FilterSelect`, `LoadingSkeleton`
+- `tickets/` — `TicketCard`, `TicketForm`, `TicketList`, `TicketTimeline`, `StatusAccordion`, `DateRangeFilter`, `PhotoUpload`, `FeedbackModal`, `RejectTicketModal`
+- `job-cards/` — `IssueWorkCard` (inline issue editing within a job card)
+- `inventory/` — `PurchaseModal`, `EditPartModal`, `EditPurchaseModal`, `BulkUploadModal`
+- `users/` — `AddUserModal`, `DocumentUpload`
+- `suppliers/` — supplier-related modals
+
 ### Debug Utilities
 `window.testResend(email)` is exposed in App.jsx for testing email via the `send-email` edge function from the browser console.
 
 ### Migrations
-`supabase/migrations/` contains 37 migration files built incrementally. **`supabase-schema.sql` in the repo root is the canonical full schema reference** — read it for the complete table/column/trigger picture rather than piecing together individual migrations. When making schema changes, write a new migration file rather than modifying existing ones.
+`supabase/migrations/` contains migration files built incrementally. Schema source of truth: `docs/schema.sql` (full schema) and `src/types/database.types.ts` (TypeScript types) are auto-generated via `npm run schema:dump`. Read these for the complete table/column/trigger picture. Do not trust any other schema reference. When making schema changes, write a new migration file rather than modifying existing ones.
 
 ### Environment Variables
 ```

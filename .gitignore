@@ -37,3 +37,6 @@ service-account.json
 
 # Supabase CLI temp files
 supabase/.temp/
+
+# Claude Code project settings
+.claude/

@@ -783,6 +783,9 @@ export type Database = {
       }
       tickets: {
         Row: {
+          acceptance_sla_status:
+            | Database["public"]["Enums"]["sla_status_enum"]
+            | null
           closed_at: string | null
           created_at: string | null
           created_by_user_id: string
@@ -797,6 +800,7 @@ export type Database = {
           photos: string[] | null
           rated_at: string | null
           rating_comment: string | null
+          rejected_at: string | null
           rejected_reason: string | null
           rejection_comment: string | null
           rejection_reason: string | null
@@ -811,6 +815,9 @@ export type Database = {
           vehicle_number: string
         }
         Insert: {
+          acceptance_sla_status?:
+            | Database["public"]["Enums"]["sla_status_enum"]
+            | null
           closed_at?: string | null
           created_at?: string | null
           created_by_user_id: string
@@ -825,6 +832,7 @@ export type Database = {
           photos?: string[] | null
           rated_at?: string | null
           rating_comment?: string | null
+          rejected_at?: string | null
           rejected_reason?: string | null
           rejection_comment?: string | null
           rejection_reason?: string | null
@@ -839,6 +847,9 @@ export type Database = {
           vehicle_number: string
         }
         Update: {
+          acceptance_sla_status?:
+            | Database["public"]["Enums"]["sla_status_enum"]
+            | null
           closed_at?: string | null
           created_at?: string | null
           created_by_user_id?: string
@@ -853,6 +864,7 @@ export type Database = {
           photos?: string[] | null
           rated_at?: string | null
           rating_comment?: string | null
+          rejected_at?: string | null
           rejected_reason?: string | null
           rejection_comment?: string | null
           rejection_reason?: string | null
@@ -914,6 +926,42 @@ export type Database = {
         }
         Relationships: []
       }
+      user_sites: {
+        Row: {
+          created_at: string | null
+          id: string
+          site_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          site_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          site_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_sites_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_sites_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           contact: string | null
@@ -958,6 +1006,36 @@ export type Database = {
           },
         ]
       }
+      vehicle_sites: {
+        Row: {
+          site_name: string
+          vehicle_id: string
+        }
+        Insert: {
+          site_name: string
+          vehicle_id: string
+        }
+        Update: {
+          site_name?: string
+          vehicle_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vehicle_sites_site_name_fkey"
+            columns: ["site_name"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["name"]
+          },
+          {
+            foreignKeyName: "vehicle_sites_vehicle_id_fkey"
+            columns: ["vehicle_id"]
+            isOneToOne: false
+            referencedRelation: "vehicles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vehicles: {
         Row: {
           created_at: string | null
@@ -966,8 +1044,8 @@ export type Database = {
           make: string | null
           model: string | null
           notes: string | null
+          raw_data: Json | null
           registration_number: string
-          site: string | null
           type: string | null
           year: number | null
         }
@@ -978,8 +1056,8 @@ export type Database = {
           make?: string | null
           model?: string | null
           notes?: string | null
+          raw_data?: Json | null
           registration_number: string
-          site?: string | null
           type?: string | null
           year?: number | null
         }
@@ -990,20 +1068,12 @@ export type Database = {
           make?: string | null
           model?: string | null
           notes?: string | null
+          raw_data?: Json | null
           registration_number?: string
-          site?: string | null
           type?: string | null
           year?: number | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "vehicles_site_fkey"
-            columns: ["site"]
-            isOneToOne: false
-            referencedRelation: "sites"
-            referencedColumns: ["name"]
-          },
-        ]
+        Relationships: []
       }
     }
     Views: {
@@ -1040,20 +1110,67 @@ export type Database = {
       }
     }
     Functions: {
+      add_working_days: {
+        Args: { n_days: number; start_date: string }
+        Returns: string
+      }
       calculate_sla_days: {
         Args: { p_category: string; p_impact: string }
         Returns: number
       }
       check_pan_exists: { Args: { p_pan: string }; Returns: boolean }
+      evaluate_acceptance_sla: {
+        Args: { p_first_issue_created: string; p_ticket_id: string }
+        Returns: Database["public"]["Enums"]["sla_status_enum"]
+      }
       get_maintenance_stats: {
         Args: {
-          end_date_input: string
+          end_date_input?: string
           site_filter?: string
-          start_date_input: string
+          start_date_input?: string
         }
-        Returns: Json
+        Returns: {
+          accept_adhered: number
+          accept_pending: number
+          accept_violated: number
+          comp_in_adhered: number
+          comp_in_violated: number
+          comp_in_wip_within: number
+          comp_out_adhered: number
+          comp_out_violated: number
+          comp_out_wip_within: number
+          csat_score_sum: number
+          major_body: number
+          major_electrical: number
+          major_mechanical: number
+          major_total: number
+          major_tyre: number
+          minor_body: number
+          minor_electrical: number
+          minor_mechanical: number
+          minor_total: number
+          minor_tyre: number
+          rating_bad: number
+          rating_collected: number
+          rating_good: number
+          rating_ok: number
+          rating_pending: number
+          status_accepted: number
+          status_closed: number
+          status_completed: number
+          status_new: number
+          status_pending: number
+          status_rejected: number
+          status_resolved: number
+          status_wip: number
+          total_completed_tickets: number
+          total_tickets: number
+          type_in_house: number
+          type_outsource: number
+        }[]
       }
       is_maintenance_exec: { Args: never; Returns: boolean }
+      is_super_admin: { Args: never; Returns: boolean }
     }
     Enums: {
       issue_category:
@@ -1070,14 +1187,12 @@ export type Database = {
       rating_enum: "Good" | "Ok" | "Bad"
       sla_status_enum: "Pending" | "Adhered" | "Violated"
       ticket_status_new:
-        | "Pending"
+        | "New"
         | "Accepted"
-        | "Rejected"
-        | "Work in Progress"
+        | "Work In Progress"
         | "Resolved"
         | "Closed"
-        | "New"
-        | "Work In Progress"
+        | "Rejected"
       work_type_enum: "InHouse" | "Outsource"
     }
     CompositeTypes: {
@@ -1221,14 +1336,12 @@ export const Constants = {
       rating_enum: ["Good", "Ok", "Bad"],
       sla_status_enum: ["Pending", "Adhered", "Violated"],
       ticket_status_new: [
-        "Pending",
+        "New",
         "Accepted",
-        "Rejected",
-        "Work in Progress",
+        "Work In Progress",
         "Resolved",
         "Closed",
-        "New",
-        "Work In Progress",
+        "Rejected",
       ],
       work_type_enum: ["InHouse", "Outsource"],
     },

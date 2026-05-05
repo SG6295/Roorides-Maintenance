@@ -14,7 +14,7 @@
 ### Run Database Schema
 1. In Supabase Dashboard, go to **SQL Editor**
 2. Click **New Query**
-3. Copy entire contents of `supabase-schema.sql`
+3. Copy entire contents of `docs/schema.sql`
 4. Paste and click **Run**
 5. Verify tables created: Go to **Table Editor** - you should see:
    - sites
