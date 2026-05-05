@@ -15,12 +15,28 @@ npm run gen:types  # Regenerate src/types/database.types.ts from live Supabase s
 ```
 
 ### Schema change rule
-**After every schema change (new migration, renamed column, added table), always run `npm run gen:types` before touching any app code.** This keeps `src/types/database.types.ts` in sync with the DB and makes stale column references visible immediately.
+**After every migration**, do both of these before touching app code:
+1. Run `npm run gen:types` — keeps `src/types/database.types.ts` in sync with the DB.
+2. Update `supabase-schema.sql` — query the affected objects from the live DB via Supabase MCP and patch the relevant sections. This file is the canonical restore reference.
+
+### Migration safety rule
+**Every migration file must be wrapped in a transaction with ROLLBACK by default.** The user pastes into the Supabase SQL editor, verifies the output, then swaps `ROLLBACK` to `COMMIT` and re-runs. Template:
+
+```sql
+BEGIN;
+
+  -- migration SQL here
+
+  -- verification query (runs inside transaction so you see the effect before committing)
+  SELECT ...;
+
+ROLLBACK; -- change to COMMIT once output looks correct
+```
 
 ### Edge Functions
 ```bash
 supabase functions deploy <function-name> --no-verify-jwt   # Deploy an edge function
-# Functions: create-user, send-email, daily-digest, upload-to-drive, sync-roorides-vehicles
+# Functions: create-user, send-email, daily-digest, upload-to-drive, sync-roorides-vehicles, backup-to-drive
 ```
 
 > All edge functions must be deployed with `--no-verify-jwt` — this project uses caller-identity checks inside the function code instead of gateway-level JWT verification.
@@ -28,7 +44,7 @@ supabase functions deploy <function-name> --no-verify-jwt   # Deploy an edge fun
 ## Architecture
 
 ### Stack
-- **Frontend**: React 19, Vite 7, React Router 7, TanStack Query 5, Tailwind CSS 3 — app source is `.jsx`, not TypeScript (only `src/types/database.types.ts` is auto-generated)
+- **Frontend**: React 19, Vite 7, React Router 7, TanStack Query 5, Tailwind CSS 3, React Hook Form 7 — app source is `.jsx`, not TypeScript (only `src/types/database.types.ts` is auto-generated)
 - **Backend**: Supabase (Postgres + Auth + Edge Functions)
 - **Email**: Resend API (via `send-email` edge function)
 - **File Storage**: Google Drive (via `upload-to-drive` edge function + service account)
@@ -58,8 +74,9 @@ Roles:
 
 **When adding a new role**, update: (1) `users_role_check` constraint in a migration, (2) relevant RLS policies / DB helper functions, (3) `ProtectedRoute allowedRoles` arrays in `src/App.jsx`, (4) role dropdown in `src/pages/Users.jsx`, (5) any role-conditional UI in pages/components.
 
-### user_sites Junction Table
-Supervisors may be assigned to multiple sites. Assignments live in `public.user_sites (user_id, site_id)`. The old `users.site` text column still exists for backwards compatibility but is no longer the authoritative source for supervisors — RLS policies join through `user_sites`.
+### user_sites & vehicle_sites Junction Tables
+- `public.user_sites (user_id, site_id)` — supervisors may be assigned to multiple sites. The old `users.site` text column still exists for backwards compatibility but is no longer authoritative — RLS policies join through `user_sites`.
+- `public.vehicle_sites (vehicle_id, site_name)` — vehicles may be assigned to multiple sites, surfaced on the Vehicles page.
 
 ### Edge Functions (`supabase/functions/`)
 All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` for admin operations (auto-provided by Supabase runtime). `create-user` additionally verifies the caller is a `maintenance_exec` by checking their profile via the anon key + caller JWT before proceeding.
@@ -71,7 +88,8 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 | `daily-digest` | Reads `user_settings.notify_daily_digest` and sends personalised summaries via Resend |
 | `upload-to-drive` | Uploads images to a specific Google Drive folder via service account JWT |
 | `get-roorides-vehicles` | (Superseded) Early prototype — fetches vehicles from Roorides and returns them without persisting. No longer used by the app. |
-| `sync-roorides-vehicles` | Authenticates with Roorides, fetches all vehicles for org 137, and upserts them into the local `vehicles` table. Never overwrites the `site` column. Called by pg_cron at midnight UTC daily and also manually via the "Refresh vehicle list" button on the ticket form. Credentials: `ROORIDES_USERNAME`, `ROORIDES_PASSWORD`, `ROORIDES_ORG_ID` secrets. |
+| `sync-roorides-vehicles` | Authenticates with Roorides, fetches all vehicles for org 126 (via `ROORIDES_ORG_ID` secret), and upserts them into the local `vehicles` table. Never overwrites the `site` column. Called by pg_cron at midnight UTC daily and also manually via the "Refresh vehicle list" button on the ticket form. Credentials: `ROORIDES_USERNAME`, `ROORIDES_PASSWORD`, `ROORIDES_ORG_ID` secrets. |
+| `backup-to-drive` | Dumps all tables to JSON and uploads to Google Drive via service account JWT. Deletes backups older than 7 days from the Drive folder. Scheduled hourly 10 AM–7 PM IST (`30 4-13 * * *` UTC) via pg_cron (`nvs-hourly-backup` job). Secrets: `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `BACKUP_DRIVE_FOLDER_ID`. |
 
 ### Key Data Model Relationships
 - **Ticket** → has many **Issues** (category, severity, SLA tracking)
@@ -92,11 +110,30 @@ SLA windows are configured in the `sla_rules` table (editable via the SLA Settin
 2. **Purchase History** — invoice list (`usePurchaseInvoices`), record new purchase via `PurchaseModal`; DB trigger auto-restocks parts when invoice items are inserted
 3. **Consumption History** — `usePartConsumption`, shows parts used per job card/mechanic
 
-All inventory data hooks live in `src/hooks/useInventory.js` (formerly `useParts.js`) and are named exports: `useParts`, `usePurchaseInvoices`, `usePurchaseInvoiceItems`, `useRecordPurchase`, `useUpdatePart`, `usePartConsumption`, `useVehicleHistory`, `useJobCardParts`, `useMechanicProfile`, `useMechanicActivity`, `useCreatePart`, `usePartUnits`, `useAddPartUnit`, `useDeletePartUnit`.
+Hooks split across two files:
+- `src/hooks/useInventory.js` — inventory-focused exports: `useParts`, `usePurchaseInvoices`, `usePurchaseInvoiceItems`, `useRecordPurchase`, `useUpdatePart`, `usePartConsumption`, `useVehicleHistory`, `useJobCardParts`, `useMechanicProfile`, `useMechanicActivity`, `useCreatePart`, `usePartUnits`, `useAddPartUnit`, `useDeletePartUnit`
+- `src/hooks/useParts.js` — job-card parts: `useParts` (lightweight list), `useAddIssuePart`, `useDeleteIssuePart` — imported by `JobCardDetail` and `IssueWorkCard`
+
+### Suppliers Module
+Three pages under `/suppliers` (accessible to `maintenance_exec`, `super_admin`, `finance`):
+- `src/pages/Suppliers.jsx` — list with status filter (pending/approved/rejected) and a copyable public registration URL
+- `src/pages/SupplierDetail.jsx` — view/approve/reject a supplier; uses `useSupplierById` + `useUpdateSupplierStatus`
+- `src/pages/SupplierRegistration.jsx` — **public route** (`/supplier-registration`), no auth required; suppliers fill out and submit their own details
+
+All supplier hooks in `src/hooks/useSuppliers.js`: `useSuppliers`, `useSupplierById`, `useUpdateSupplierStatus`.
+
+### Vehicles Page
+`src/pages/Vehicles.jsx` — CRUD for the `vehicles` table (accessible to `maintenance_exec`, `super_admin`, `finance`). Inline add/edit modal, site-filter via `vehicle_sites` join. Uses `useVehicles`, `useCreateVehicle`, `useUpdateVehicle` from `src/hooks/useVehicles.js`. Vehicles are also synced nightly from the Roorides API via the `sync-roorides-vehicles` edge function.
+
+### Feedback / Report
+`src/pages/FeedbackReport.jsx` (`/feedback`) — supervisors rate resolved issues with a smiley scale (Good/Ok/Bad) stored in `issues.rating`. Accessible to all authenticated roles; only the ticket's creator supervisor can submit a rating. Uses `useUpdateIssue` from `src/hooks/useIssues.js`.
 
 ### Vehicle & Mechanic Detail Pages
 - `src/pages/VehicleHistory.jsx` — full job-card history for a specific vehicle; uses `useVehicleHistory(vehicleNumber)` and `useJobCardParts(jobCardId)` for lazy-loaded parts per card
 - `src/pages/MechanicDetail.jsx` — profile + job card activity + labour hours for a mechanic; uses `useMechanicProfile` + `useMechanicActivity`
+
+### Auth Pages
+`src/pages/auth/ForgotPassword.jsx` and `src/pages/auth/UpdatePassword.jsx` — unauthenticated reset flow; both are public routes (`/forgot-password`, `/update-password`). `Profile.jsx` (`/profile`) lets any authenticated user update their display name/avatar.
 
 ### Settings (Nested Routes under `/settings`)
 `src/pages/settings/SettingsLayout.jsx` wraps a sidebar + `<Outlet>`. Sub-routes:
