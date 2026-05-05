@@ -1,2 +1,11 @@
+# Fail fast if DATABASE_URL is missing
+if [[ -z "${DATABASE_URL:-}" ]] && [[ -f .env.local ]]; then
+  DATABASE_URL="$(grep -E '^DATABASE_URL=' .env.local | cut -d'=' -f2-)"
+fi
+if [[ -z "${DATABASE_URL:-}" ]]; then
+  echo "❌ Pre-commit hook needs DATABASE_URL. Copy .env.example to .env.local and add your Supabase connection string. See SETUP.md."
+  exit 1
+fi
+
 npm run schema:dump
 git add docs/schema.sql src/types/database.types.ts
