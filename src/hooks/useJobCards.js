@@ -16,6 +16,7 @@ export function useJobCards(filters = {}) {
                 .select(`
           *,
           mechanic:assigned_mechanic_id(name, email),
+          supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
           issues(*)
         `)
                 .order('created_at', { ascending: false })
@@ -49,6 +50,7 @@ export function useJobCard(jobCardNumber) {
                 .select(`
           *,
           mechanic:assigned_mechanic_id(name, email, contact),
+          supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
           issues(*, ticket:ticket_id(ticket_number), issue_parts(*, part:part_id(name, unit)))
         `)
                 .eq('job_card_number', jobCardNumber)

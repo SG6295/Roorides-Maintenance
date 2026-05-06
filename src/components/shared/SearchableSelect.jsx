@@ -17,6 +17,8 @@ function classNames(...classes) {
  * then filters as they type. Matches the visual style of CustomSelect.
  *
  * options: array of { value, label } objects
+ * showAllOnFocus: show full list on focus (empty input = all options visible)
+ * pinnedOption: { value, label } — always rendered first, never filtered out
  */
 export default function SearchableSelect({
   label,
@@ -26,12 +28,14 @@ export default function SearchableSelect({
   error,
   placeholder = 'Type to search...',
   disabled = false,
+  showAllOnFocus = false,
+  pinnedOption = null,
 }) {
   const [query, setQuery] = useState('')
 
   const filtered =
     query === ''
-      ? []
+      ? (showAllOnFocus ? options : [])
       : options.filter((opt) =>
           opt.label.toLowerCase().includes(query.toLowerCase())
         )
@@ -77,53 +81,65 @@ export default function SearchableSelect({
 
         <Transition
           as={Fragment}
-          show={query.length > 0}
+          {...(showAllOnFocus ? {} : { show: query.length > 0 })}
           leave="transition ease-in duration-100"
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
           <ComboboxOptions className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
-            {filtered.length === 0 ? (
+            {pinnedOption && (
+              <ComboboxOption
+                value={pinnedOption.value}
+                className={({ active }) =>
+                  classNames(
+                    'relative cursor-default select-none py-2 pl-3 pr-3 border-b border-gray-100',
+                    active ? 'bg-blue-50' : ''
+                  )
+                }
+              >
+                <span className="font-medium text-blue-600">{pinnedOption.label}</span>
+              </ComboboxOption>
+            )}
+            {filtered.length === 0 && !pinnedOption && (
               <div className="relative cursor-default select-none py-2 px-4 text-gray-500">
-                No vehicles found for "{query}"
+                {query ? `No results for "${query}"` : 'No options available'}
               </div>
-            ) : (
-              filtered.map((opt) => (
-                <ComboboxOption
-                  key={opt.value}
-                  value={opt.value}
-                  className={({ active }) =>
-                    classNames(
-                      active ? 'bg-blue-600 text-white' : 'text-gray-900',
-                      'relative cursor-default select-none py-2 pl-3 pr-9'
-                    )
-                  }
-                >
-                  {({ selected, active }) => (
-                    <>
+            )}
+            {filtered.map((opt) => (
+              <ComboboxOption
+                key={opt.value}
+                value={opt.value}
+                className={({ active }) =>
+                  classNames(
+                    active ? 'bg-blue-600 text-white' : 'text-gray-900',
+                    'relative cursor-default select-none py-2 pl-3 pr-9'
+                  )
+                }
+              >
+                {({ selected, active }) => (
+                  <>
+                    <span
+                      className={classNames(
+                        selected ? 'font-semibold' : 'font-normal',
+                        'block truncate'
+                      )}
+                    >
+                      {opt.label}
+                    </span>
+                    {selected && (
                       <span
                         className={classNames(
-                          selected ? 'font-semibold' : 'font-normal',
-                          'block truncate'
+                          active ? 'text-white' : 'text-blue-600',
+                          'absolute inset-y-0 right-0 flex items-center pr-4'
                         )}
                       >
-                        {opt.label}
+                        <CheckIcon className="h-5 w-5" aria-hidden="true" />
                       </span>
-                      {selected && (
-                        <span
-                          className={classNames(
-                            active ? 'text-white' : 'text-blue-600',
-                            'absolute inset-y-0 right-0 flex items-center pr-4'
-                          )}
-                        >
-                          <CheckIcon className="h-5 w-5" aria-hidden="true" />
-                        </span>
-                      )}
-                    </>
-                  )}
-                </ComboboxOption>
-              ))
-            )}
+                    )}
+                  </>
+                )}
+              </ComboboxOption>
+            ))}
           </ComboboxOptions>
         </Transition>
       </div>

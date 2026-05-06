@@ -324,39 +324,42 @@ export type Database = {
           completed_at: string | null
           created_at: string | null
           id: string
+          invoice_url: string | null
           job_card_number: number
           remarks: string | null
           site: string
           status: Database["public"]["Enums"]["job_card_status"] | null
+          supplier_id: string | null
           type: Database["public"]["Enums"]["work_type_enum"]
           vehicle_number: string
-          vendor_name: string | null
         }
         Insert: {
           assigned_mechanic_id?: string | null
           completed_at?: string | null
           created_at?: string | null
           id?: string
+          invoice_url?: string | null
           job_card_number?: never
           remarks?: string | null
           site: string
           status?: Database["public"]["Enums"]["job_card_status"] | null
+          supplier_id?: string | null
           type: Database["public"]["Enums"]["work_type_enum"]
           vehicle_number: string
-          vendor_name?: string | null
         }
         Update: {
           assigned_mechanic_id?: string | null
           completed_at?: string | null
           created_at?: string | null
           id?: string
+          invoice_url?: string | null
           job_card_number?: never
           remarks?: string | null
           site?: string
           status?: Database["public"]["Enums"]["job_card_status"] | null
+          supplier_id?: string | null
           type?: Database["public"]["Enums"]["work_type_enum"]
           vehicle_number?: string
-          vendor_name?: string | null
         }
         Relationships: [
           {
@@ -364,6 +367,13 @@ export type Database = {
             columns: ["assigned_mechanic_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_cards_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
             referencedColumns: ["id"]
           },
         ]
@@ -618,28 +628,30 @@ export type Database = {
       }
       suppliers: {
         Row: {
-          account_holder_name: string
-          account_number: string
+          account_holder_name: string | null
+          account_number: string | null
           account_type: string | null
           accounts_contact_name: string | null
-          accounts_contact_number: string
+          accounts_contact_number: string | null
           accounts_email: string | null
-          bank_branch: string
-          bank_name: string
+          bank_branch: string | null
+          bank_name: string | null
           brand_spares_usage: string | null
-          cancelled_cheque_url: string
+          cancelled_cheque_url: string | null
           created_at: string | null
-          email: string
+          created_by: string | null
+          created_via: string
+          email: string | null
           entity_name: string
-          entity_type: string
+          entity_type: string | null
           entity_type_other: string | null
           esi_certificate_url: string | null
           esi_registration_number: string | null
           gst_certificate_url: string | null
-          gst_registration_type: string
-          gstin: string
+          gst_registration_type: string | null
+          gstin: string | null
           id: string
-          ifsc_code: string
+          ifsc_code: string | null
           labour_license_number: string | null
           major_clients: string | null
           msme_udyam_number: string | null
@@ -647,9 +659,9 @@ export type Database = {
           owner_contact: string
           owner_email: string | null
           owner_name: string
-          pan_copy_url: string
-          pan_number: string
-          payment_terms_days: string
+          pan_copy_url: string | null
+          pan_number: string | null
+          payment_terms_days: string | null
           pf_certificate_url: string | null
           pf_registration_number: string | null
           po_communication_emails: string | null
@@ -659,34 +671,36 @@ export type Database = {
           sales_email: string | null
           skilled_manpower_available: boolean | null
           status: string | null
-          submitted_by: string
+          submitted_by: string | null
           udyam_certificate_url: string | null
           workshop_address: string | null
-          years_of_experience: string
+          years_of_experience: string | null
         }
         Insert: {
-          account_holder_name: string
-          account_number: string
+          account_holder_name?: string | null
+          account_number?: string | null
           account_type?: string | null
           accounts_contact_name?: string | null
-          accounts_contact_number: string
+          accounts_contact_number?: string | null
           accounts_email?: string | null
-          bank_branch: string
-          bank_name: string
+          bank_branch?: string | null
+          bank_name?: string | null
           brand_spares_usage?: string | null
-          cancelled_cheque_url: string
+          cancelled_cheque_url?: string | null
           created_at?: string | null
-          email: string
+          created_by?: string | null
+          created_via?: string
+          email?: string | null
           entity_name: string
-          entity_type: string
+          entity_type?: string | null
           entity_type_other?: string | null
           esi_certificate_url?: string | null
           esi_registration_number?: string | null
           gst_certificate_url?: string | null
-          gst_registration_type: string
-          gstin: string
+          gst_registration_type?: string | null
+          gstin?: string | null
           id?: string
-          ifsc_code: string
+          ifsc_code?: string | null
           labour_license_number?: string | null
           major_clients?: string | null
           msme_udyam_number?: string | null
@@ -694,9 +708,9 @@ export type Database = {
           owner_contact: string
           owner_email?: string | null
           owner_name: string
-          pan_copy_url: string
-          pan_number: string
-          payment_terms_days: string
+          pan_copy_url?: string | null
+          pan_number?: string | null
+          payment_terms_days?: string | null
           pf_certificate_url?: string | null
           pf_registration_number?: string | null
           po_communication_emails?: string | null
@@ -706,34 +720,36 @@ export type Database = {
           sales_email?: string | null
           skilled_manpower_available?: boolean | null
           status?: string | null
-          submitted_by: string
+          submitted_by?: string | null
           udyam_certificate_url?: string | null
           workshop_address?: string | null
-          years_of_experience: string
+          years_of_experience?: string | null
         }
         Update: {
-          account_holder_name?: string
-          account_number?: string
+          account_holder_name?: string | null
+          account_number?: string | null
           account_type?: string | null
           accounts_contact_name?: string | null
-          accounts_contact_number?: string
+          accounts_contact_number?: string | null
           accounts_email?: string | null
-          bank_branch?: string
-          bank_name?: string
+          bank_branch?: string | null
+          bank_name?: string | null
           brand_spares_usage?: string | null
-          cancelled_cheque_url?: string
+          cancelled_cheque_url?: string | null
           created_at?: string | null
-          email?: string
+          created_by?: string | null
+          created_via?: string
+          email?: string | null
           entity_name?: string
-          entity_type?: string
+          entity_type?: string | null
           entity_type_other?: string | null
           esi_certificate_url?: string | null
           esi_registration_number?: string | null
           gst_certificate_url?: string | null
-          gst_registration_type?: string
-          gstin?: string
+          gst_registration_type?: string | null
+          gstin?: string | null
           id?: string
-          ifsc_code?: string
+          ifsc_code?: string | null
           labour_license_number?: string | null
           major_clients?: string | null
           msme_udyam_number?: string | null
@@ -741,9 +757,9 @@ export type Database = {
           owner_contact?: string
           owner_email?: string | null
           owner_name?: string
-          pan_copy_url?: string
-          pan_number?: string
-          payment_terms_days?: string
+          pan_copy_url?: string | null
+          pan_number?: string | null
+          payment_terms_days?: string | null
           pf_certificate_url?: string | null
           pf_registration_number?: string | null
           po_communication_emails?: string | null
@@ -753,12 +769,20 @@ export type Database = {
           sales_email?: string | null
           skilled_manpower_available?: boolean | null
           status?: string | null
-          submitted_by?: string
+          submitted_by?: string | null
           udyam_certificate_url?: string | null
           workshop_address?: string | null
-          years_of_experience?: string
+          years_of_experience?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       system_settings: {
         Row: {

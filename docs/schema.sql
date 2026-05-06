@@ -4323,14 +4323,15 @@ CREATE TABLE public.job_cards (
     created_at timestamp without time zone DEFAULT now(),
     type public.work_type_enum NOT NULL,
     assigned_mechanic_id uuid,
-    vendor_name text,
     vehicle_number text NOT NULL,
     site text NOT NULL,
     status public.job_card_status DEFAULT 'Open'::public.job_card_status,
     completed_at timestamp without time zone,
     remarks text,
-    CONSTRAINT check_assignment_valid CHECK ((((type = 'InHouse'::public.work_type_enum) AND (vendor_name IS NULL)) OR ((type = 'Outsource'::public.work_type_enum) AND (assigned_mechanic_id IS NULL)))),
-    CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at)))
+    supplier_id uuid,
+    invoice_url text,
+    CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at))),
+    CONSTRAINT outsource_completion_requires_invoice CHECK (((status <> 'Completed'::public.job_card_status) OR (type <> 'Outsource'::public.work_type_enum) OR (invoice_url IS NOT NULL)))
 );
 
 
@@ -4574,9 +4575,9 @@ CREATE TABLE public.suppliers (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
     status text DEFAULT 'pending'::text,
-    email text NOT NULL,
+    email text,
     entity_name text NOT NULL,
-    entity_type text NOT NULL,
+    entity_type text,
     entity_type_other text,
     registered_office_address text NOT NULL,
     nature_of_work text NOT NULL,
@@ -4585,16 +4586,16 @@ CREATE TABLE public.suppliers (
     owner_contact text NOT NULL,
     owner_email text,
     accounts_contact_name text,
-    accounts_contact_number text NOT NULL,
+    accounts_contact_number text,
     accounts_email text,
     sales_contact_name text,
     sales_contact_number text,
     sales_email text,
     po_communication_emails text,
-    pan_number text NOT NULL,
-    pan_copy_url text NOT NULL,
-    gstin text NOT NULL,
-    gst_registration_type text NOT NULL,
+    pan_number text,
+    pan_copy_url text,
+    gstin text,
+    gst_registration_type text,
     gst_certificate_url text,
     msme_udyam_number text,
     udyam_certificate_url text,
@@ -4603,19 +4604,22 @@ CREATE TABLE public.suppliers (
     esi_registration_number text,
     esi_certificate_url text,
     labour_license_number text,
-    bank_name text NOT NULL,
-    bank_branch text NOT NULL,
-    account_holder_name text NOT NULL,
-    account_number text NOT NULL,
-    ifsc_code text NOT NULL,
+    bank_name text,
+    bank_branch text,
+    account_holder_name text,
+    account_number text,
+    ifsc_code text,
     account_type text,
-    cancelled_cheque_url text NOT NULL,
-    years_of_experience text NOT NULL,
+    cancelled_cheque_url text,
+    years_of_experience text,
     major_clients text,
     skilled_manpower_available boolean,
     brand_spares_usage text,
-    payment_terms_days text NOT NULL,
-    submitted_by text NOT NULL,
+    payment_terms_days text,
+    submitted_by text,
+    created_via text DEFAULT 'registration'::text NOT NULL,
+    created_by uuid,
+    CONSTRAINT suppliers_created_via_check CHECK ((created_via = ANY (ARRAY['registration'::text, 'quick_add'::text]))),
     CONSTRAINT suppliers_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))
 );
 
@@ -4963,7 +4967,10 @@ ALTER TABLE storage.vector_indexes OWNER TO supabase_storage_admin;
 CREATE TABLE supabase_migrations.schema_migrations (
     version text NOT NULL,
     statements text[],
-    name text
+    name text,
+    created_by text,
+    idempotency_key text,
+    rollback text[]
 );
 
 
@@ -5582,6 +5589,14 @@ ALTER TABLE ONLY storage.s3_multipart_uploads
 
 ALTER TABLE ONLY storage.vector_indexes
     ADD CONSTRAINT vector_indexes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_migrations schema_migrations_idempotency_key_key; Type: CONSTRAINT; Schema: supabase_migrations; Owner: postgres
+--
+
+ALTER TABLE ONLY supabase_migrations.schema_migrations
+    ADD CONSTRAINT schema_migrations_idempotency_key_key UNIQUE (idempotency_key);
 
 
 --
@@ -6517,6 +6532,14 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
+-- Name: job_cards job_cards_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.job_cards
+    ADD CONSTRAINT job_cards_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
+
+
+--
 -- Name: purchase_invoice_items purchase_invoice_items_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -6554,6 +6577,14 @@ ALTER TABLE ONLY public.sla_events
 
 ALTER TABLE ONLY public.sla_events
     ADD CONSTRAINT sla_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: suppliers suppliers_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
 
 
 --

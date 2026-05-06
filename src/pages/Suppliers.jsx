@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSuppliers } from '../hooks/useSuppliers'
+import { useAuth } from '../hooks/useAuth'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
+import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
 
 const STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -11,9 +13,13 @@ const STATUS_COLORS = {
 }
 
 export default function Suppliers() {
+  const { userProfile } = useAuth()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [copied, setCopied] = useState(false)
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false)
+
+  const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
   const { data: suppliers = [], isLoading } = useSuppliers({
     search: search || undefined,
@@ -40,17 +46,30 @@ export default function Suppliers() {
       <Navigation
         breadcrumbs={[{ label: 'Suppliers' }]}
         actions={
-          <Link
-            to="/supplier-registration"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Supplier
-          </Link>
+          <div className="flex items-center gap-2">
+            {isExec && (
+              <button
+                onClick={() => setShowQuickAddModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-700 border border-blue-300 rounded-lg hover:bg-blue-50 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Quick Add
+              </button>
+            )}
+            <Link
+              to="/supplier-registration"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Supplier
+            </Link>
+          </div>
         }
       />
 
@@ -150,9 +169,9 @@ export default function Suppliers() {
                     <tr key={s.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900 truncate max-w-[180px]">{s.entity_name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{s.entity_type}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{s.entity_type ?? '—'}</p>
                       </td>
-                      <td className="px-4 py-3 hidden sm:table-cell font-mono text-xs text-gray-700">{s.pan_number}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell font-mono text-xs text-gray-700">{s.pan_number ?? '—'}</td>
                       <td className="px-4 py-3 hidden md:table-cell text-gray-600 truncate max-w-[200px]">{s.nature_of_work}</td>
                       <td className="px-4 py-3 hidden lg:table-cell text-gray-500 text-xs">
                         {new Date(s.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -178,6 +197,12 @@ export default function Suppliers() {
           )}
         </div>
       </div>
+
+      <QuickAddSupplierModal
+        isOpen={showQuickAddModal}
+        onClose={() => setShowQuickAddModal(false)}
+        onSuccess={() => setShowQuickAddModal(false)}
+      />
     </div>
   )
 }
