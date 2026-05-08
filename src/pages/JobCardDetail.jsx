@@ -13,6 +13,7 @@ import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
 import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
+import ScrapDecisionModal from '../components/job-cards/ScrapDecisionModal'
 import { supabase } from '../lib/supabase'
 import IssueWorkCard from '../components/job-cards/IssueWorkCard'
 
@@ -56,6 +57,7 @@ export default function JobCardDetail() {
     const [editingSupplier, setEditingSupplier] = useState(false)
     const [selectedSupplierId, setSelectedSupplierId] = useState('')
     const [showQuickAddModal, setShowQuickAddModal] = useState(false)
+    const [showScrapModal, setShowScrapModal] = useState(false)
 
     useEffect(() => {
         if (jobCard) {
@@ -159,18 +161,7 @@ export default function JobCardDetail() {
         }
     }
 
-    const handleCompleteJobCard = async () => {
-        if (!window.confirm('Are you sure you want to complete this Job Card? Ensure all work is done.')) return
-        try {
-            await updateJobCard.mutateAsync({
-                id: jobCard.id,
-                updates: { status: 'Completed', completed_at: new Date().toISOString(), remarks },
-            })
-            alert('Job Card Completed!')
-        } catch (e) {
-            alert('Failed to complete job card')
-        }
-    }
+    const handleCompleteJobCard = () => setShowScrapModal(true)
 
     const handleReopenJobCard = async () => {
         if (!window.confirm('Reopen this Job Card? This will allow parts and labour to be updated.')) return
@@ -586,6 +577,15 @@ export default function JobCardDetail() {
                 onClose={() => setShowQuickAddModal(false)}
                 onSuccess={handleQuickAddSuccess}
             />
+
+            {/* ── Scrap Decision Modal (job card closure) ───────────────────── */}
+            {showScrapModal && (
+                <ScrapDecisionModal
+                    jobCard={jobCard}
+                    onClose={() => setShowScrapModal(false)}
+                    onSuccess={() => setShowScrapModal(false)}
+                />
+            )}
         </div>
     )
 }
