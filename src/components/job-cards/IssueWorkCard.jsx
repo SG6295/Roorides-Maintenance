@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useUpdateIssue } from '../../hooks/useIssues'
 import { useAddIssuePart, useDeleteIssuePart } from '../../hooks/useParts'
+import SearchableSelect from '../shared/SearchableSelect'
 
 /**
  * IssueWorkCard - displays a single issue within a Job Card with labour, parts, and status controls
@@ -209,18 +210,16 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                 {/* Add part form */}
                 {form.showAddPart && (
                     <div className="flex flex-col gap-2 mt-2">
-                        <select
+                        <SearchableSelect
                             value={form.selectedPartId}
-                            onChange={e => setForm(prev => ({ ...prev, selectedPartId: e.target.value }))}
-                            className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                            <option value="">Select a part...</option>
-                            {parts.map(part => (
-                                <option key={part.id} value={part.id}>
-                                    {part.name}{part.part_number ? ` (${part.part_number})` : ''} — {part.quantity_in_stock} {part.unit} in stock
-                                </option>
-                            ))}
-                        </select>
+                            onChange={val => setForm(prev => ({ ...prev, selectedPartId: val }))}
+                            options={parts.map(p => ({
+                                value: p.id,
+                                label: `${p.name}${p.part_number ? ` (${p.part_number})` : ''} — ${p.quantity_in_stock} ${p.unit} in stock`,
+                            }))}
+                            placeholder="Select a part..."
+                            showAllOnFocus={true}
+                        />
                         <div className="flex items-center gap-2">
                             <input
                                 type="number"

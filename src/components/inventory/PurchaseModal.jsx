@@ -1,9 +1,9 @@
-import { useState, Fragment, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useParts, useRecordPurchase, useCreatePart, usePartUnits } from '../../hooks/useInventory'
-import { PlusIcon, TrashIcon, XMarkIcon, CheckIcon, ChevronUpDownIcon, PaperClipIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline'
-import { Listbox, ListboxButton, ListboxOptions, ListboxOption, Transition } from '@headlessui/react'
+import { PlusIcon, TrashIcon, XMarkIcon, CheckIcon, PaperClipIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
+import SearchableSelect from '../shared/SearchableSelect'
 import { supabase } from '../../lib/supabase'
 
 const NEW_PART_SENTINEL = '__NEW__'
@@ -352,50 +352,17 @@ export default function PurchaseModal({ onClose }) {
                                                     </div>
                                                 ) : (
                                                     /* ── Part dropdown ── */
-                                                    <Listbox value={line.part_id} onChange={val => handlePartSelect(i, val)}>
-                                                        <div className="relative">
-                                                            <ListboxButton className="relative w-full cursor-default rounded-lg bg-white border border-gray-300 py-2.5 pl-3 pr-10 text-left text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                                <span className={line.part_id ? 'text-gray-900' : 'text-gray-400'}>
-                                                                    {line.part_id
-                                                                        ? (() => { const p = parts.find(p => p.id === line.part_id); return p ? `${p.name}${p.part_number ? ` (${p.part_number})` : ''} · ${p.unit}` : 'Select part…' })()
-                                                                        : 'Select part…'}
-                                                                </span>
-                                                                <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
-                                                                    <ChevronUpDownIcon className="h-4 w-4 text-gray-400" />
-                                                                </span>
-                                                            </ListboxButton>
-                                                            <Transition as={Fragment} leave="transition ease-in duration-100" leaveFrom="opacity-100" leaveTo="opacity-0">
-                                                                <ListboxOptions anchor="bottom start" className="z-[100] mt-1 max-h-60 w-[var(--button-width)] overflow-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
-                                                                    {/* Create new part */}
-                                                                    <ListboxOption value={NEW_PART_SENTINEL} className={({ active }) => `cursor-default select-none py-2 pl-3 pr-9 text-blue-600 font-medium ${active ? 'bg-blue-50' : ''}`}>
-                                                                        + Create new part…
-                                                                    </ListboxOption>
-                                                                    <div className="my-1 border-t border-gray-100" />
-                                                                    {/* Existing parts */}
-                                                                    {parts.map(p => (
-                                                                        <ListboxOption
-                                                                            key={p.id}
-                                                                            value={p.id}
-                                                                            className={({ active }) => `cursor-default select-none py-2 pl-3 pr-9 ${active ? 'bg-blue-600 text-white' : 'text-gray-900'}`}
-                                                                        >
-                                                                            {({ selected, active }) => (
-                                                                                <>
-                                                                                    <span className={selected ? 'font-semibold' : 'font-normal'}>
-                                                                                        {p.name}{p.part_number ? ` (${p.part_number})` : ''} · {p.unit}
-                                                                                    </span>
-                                                                                    {selected && (
-                                                                                        <span className={`absolute inset-y-0 right-0 flex items-center pr-3 ${active ? 'text-white' : 'text-blue-600'}`}>
-                                                                                            <CheckIcon className="h-4 w-4" />
-                                                                                        </span>
-                                                                                    )}
-                                                                                </>
-                                                                            )}
-                                                                        </ListboxOption>
-                                                                    ))}
-                                                                </ListboxOptions>
-                                                            </Transition>
-                                                        </div>
-                                                    </Listbox>
+                                                    <SearchableSelect
+                                                        value={line.part_id}
+                                                        onChange={val => handlePartSelect(i, val)}
+                                                        options={parts.map(p => ({
+                                                            value: p.id,
+                                                            label: `${p.name}${p.part_number ? ` (${p.part_number})` : ''} · ${p.unit}`,
+                                                        }))}
+                                                        placeholder="Select part…"
+                                                        showAllOnFocus={true}
+                                                        pinnedOption={{ value: NEW_PART_SENTINEL, label: '+ Create new part…' }}
+                                                    />
                                                 )}
                                             </div>
                                             <div className="col-span-2 pt-1">
