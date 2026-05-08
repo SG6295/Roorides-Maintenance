@@ -200,6 +200,10 @@ export type Database = {
           added_by: string | null
           id: string
           issue_id: string
+          outsource_part_disposition:
+            | Database["public"]["Enums"]["outsource_part_disposition"]
+            | null
+          outsource_vendor_credit_amount: number | null
           part_id: string
           quantity_used: number
         }
@@ -208,6 +212,10 @@ export type Database = {
           added_by?: string | null
           id?: string
           issue_id: string
+          outsource_part_disposition?:
+            | Database["public"]["Enums"]["outsource_part_disposition"]
+            | null
+          outsource_vendor_credit_amount?: number | null
           part_id: string
           quantity_used: number
         }
@@ -216,6 +224,10 @@ export type Database = {
           added_by?: string | null
           id?: string
           issue_id?: string
+          outsource_part_disposition?:
+            | Database["public"]["Enums"]["outsource_part_disposition"]
+            | null
+          outsource_vendor_credit_amount?: number | null
           part_id?: string
           quantity_used?: number
         }
@@ -509,6 +521,217 @@ export type Database = {
           {
             foreignKeyName: "purchase_invoices_created_by_fkey"
             columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scrap_excluded_parts: {
+        Row: {
+          excluded_at: string
+          excluded_by: string
+          id: string
+          notes: string | null
+          part_id_snapshot: string | null
+          part_name_snapshot: string
+          quantity_snapshot: number
+          reason: Database["public"]["Enums"]["scrap_exclusion_reason"]
+          source_issue_id: string
+          source_issue_part_id: string
+          source_job_card_id: string
+        }
+        Insert: {
+          excluded_at?: string
+          excluded_by: string
+          id?: string
+          notes?: string | null
+          part_id_snapshot?: string | null
+          part_name_snapshot: string
+          quantity_snapshot: number
+          reason: Database["public"]["Enums"]["scrap_exclusion_reason"]
+          source_issue_id: string
+          source_issue_part_id: string
+          source_job_card_id: string
+        }
+        Update: {
+          excluded_at?: string
+          excluded_by?: string
+          id?: string
+          notes?: string | null
+          part_id_snapshot?: string | null
+          part_name_snapshot?: string
+          quantity_snapshot?: number
+          reason?: Database["public"]["Enums"]["scrap_exclusion_reason"]
+          source_issue_id?: string
+          source_issue_part_id?: string
+          source_job_card_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_excluded_parts_excluded_by_fkey"
+            columns: ["excluded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_excluded_parts_source_issue_fkey"
+            columns: ["source_issue_id"]
+            isOneToOne: false
+            referencedRelation: "issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_excluded_parts_source_issue_part_fkey"
+            columns: ["source_issue_part_id"]
+            isOneToOne: false
+            referencedRelation: "issue_parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_excluded_parts_source_job_card_fkey"
+            columns: ["source_job_card_id"]
+            isOneToOne: false
+            referencedRelation: "job_cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scrap_inventory: {
+        Row: {
+          created_at: string
+          created_by: string
+          current_location: string | null
+          description: string | null
+          estimated_value: number | null
+          id: string
+          notes: string | null
+          outsource_part_disposition_snapshot:
+            | Database["public"]["Enums"]["outsource_part_disposition"]
+            | null
+          outsource_vendor_credit_amount_snapshot: number | null
+          part_id_snapshot: string | null
+          part_name_snapshot: string
+          part_number_snapshot: string | null
+          photos: string[]
+          quantity_snapshot: number
+          received_at: string | null
+          received_by: string | null
+          source_issue_id: string
+          source_issue_part_id: string
+          source_job_card_id: string
+          source_ticket_id: string
+          source_vehicle_number: string
+          status: Database["public"]["Enums"]["scrap_item_status"]
+          unit_snapshot: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          current_location?: string | null
+          description?: string | null
+          estimated_value?: number | null
+          id?: string
+          notes?: string | null
+          outsource_part_disposition_snapshot?:
+            | Database["public"]["Enums"]["outsource_part_disposition"]
+            | null
+          outsource_vendor_credit_amount_snapshot?: number | null
+          part_id_snapshot?: string | null
+          part_name_snapshot: string
+          part_number_snapshot?: string | null
+          photos?: string[]
+          quantity_snapshot: number
+          received_at?: string | null
+          received_by?: string | null
+          source_issue_id: string
+          source_issue_part_id: string
+          source_job_card_id: string
+          source_ticket_id: string
+          source_vehicle_number: string
+          status?: Database["public"]["Enums"]["scrap_item_status"]
+          unit_snapshot: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          current_location?: string | null
+          description?: string | null
+          estimated_value?: number | null
+          id?: string
+          notes?: string | null
+          outsource_part_disposition_snapshot?:
+            | Database["public"]["Enums"]["outsource_part_disposition"]
+            | null
+          outsource_vendor_credit_amount_snapshot?: number | null
+          part_id_snapshot?: string | null
+          part_name_snapshot?: string
+          part_number_snapshot?: string | null
+          photos?: string[]
+          quantity_snapshot?: number
+          received_at?: string | null
+          received_by?: string | null
+          source_issue_id?: string
+          source_issue_part_id?: string
+          source_job_card_id?: string
+          source_ticket_id?: string
+          source_vehicle_number?: string
+          status?: Database["public"]["Enums"]["scrap_item_status"]
+          unit_snapshot?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_inventory_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_received_by_fkey"
+            columns: ["received_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_source_issue_fkey"
+            columns: ["source_issue_id"]
+            isOneToOne: false
+            referencedRelation: "issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_source_issue_part_fkey"
+            columns: ["source_issue_part_id"]
+            isOneToOne: false
+            referencedRelation: "issue_parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_source_job_card_fkey"
+            columns: ["source_job_card_id"]
+            isOneToOne: false
+            referencedRelation: "job_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_source_ticket_fkey"
+            columns: ["source_ticket_id"]
+            isOneToOne: false
+            referencedRelation: "tickets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_updated_by_fkey"
+            columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1143,6 +1366,14 @@ export type Database = {
         Returns: number
       }
       check_pan_exists: { Args: { p_pan: string }; Returns: boolean }
+      close_job_card_with_scrap: {
+        Args: {
+          p_job_card_id: string
+          p_remarks: string
+          p_scrap_decisions: Json
+        }
+        Returns: Json
+      }
       evaluate_acceptance_sla: {
         Args: { p_first_issue_created: string; p_ticket_id: string }
         Returns: Database["public"]["Enums"]["sla_status_enum"]
@@ -1208,7 +1439,23 @@ export type Database = {
       issue_severity: "Minor" | "Major"
       issue_status: "Open" | "Done" | "Blocked"
       job_card_status: "Open" | "Completed"
+      outsource_part_disposition:
+        | "returned_to_nvs"
+        | "retained_by_vendor"
+        | "retained_by_vendor_with_credit"
       rating_enum: "Good" | "Ok" | "Bad"
+      scrap_exclusion_reason:
+        | "consumable"
+        | "destroyed_on_removal"
+        | "retained_by_vendor"
+        | "other"
+      scrap_item_status:
+        | "in_storage"
+        | "sent_for_refurbishment"
+        | "refurbished"
+        | "sold"
+        | "written_off"
+        | "reversed"
       sla_status_enum: "Pending" | "Adhered" | "Violated"
       ticket_status_new:
         | "New"
@@ -1357,7 +1604,26 @@ export const Constants = {
       issue_severity: ["Minor", "Major"],
       issue_status: ["Open", "Done", "Blocked"],
       job_card_status: ["Open", "Completed"],
+      outsource_part_disposition: [
+        "returned_to_nvs",
+        "retained_by_vendor",
+        "retained_by_vendor_with_credit",
+      ],
       rating_enum: ["Good", "Ok", "Bad"],
+      scrap_exclusion_reason: [
+        "consumable",
+        "destroyed_on_removal",
+        "retained_by_vendor",
+        "other",
+      ],
+      scrap_item_status: [
+        "in_storage",
+        "sent_for_refurbishment",
+        "refurbished",
+        "sold",
+        "written_off",
+        "reversed",
+      ],
       sla_status_enum: ["Pending", "Adhered", "Violated"],
       ticket_status_new: [
         "New",

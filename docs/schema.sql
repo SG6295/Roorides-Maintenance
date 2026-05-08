@@ -353,6 +353,19 @@ CREATE TYPE public.job_card_status AS ENUM (
 ALTER TYPE public.job_card_status OWNER TO postgres;
 
 --
+-- Name: outsource_part_disposition; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.outsource_part_disposition AS ENUM (
+    'returned_to_nvs',
+    'retained_by_vendor',
+    'retained_by_vendor_with_credit'
+);
+
+
+ALTER TYPE public.outsource_part_disposition OWNER TO postgres;
+
+--
 -- Name: rating_enum; Type: TYPE; Schema: public; Owner: postgres
 --
 
@@ -364,6 +377,36 @@ CREATE TYPE public.rating_enum AS ENUM (
 
 
 ALTER TYPE public.rating_enum OWNER TO postgres;
+
+--
+-- Name: scrap_exclusion_reason; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.scrap_exclusion_reason AS ENUM (
+    'consumable',
+    'destroyed_on_removal',
+    'retained_by_vendor',
+    'other'
+);
+
+
+ALTER TYPE public.scrap_exclusion_reason OWNER TO postgres;
+
+--
+-- Name: scrap_item_status; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.scrap_item_status AS ENUM (
+    'in_storage',
+    'sent_for_refurbishment',
+    'refurbished',
+    'sold',
+    'written_off',
+    'reversed'
+);
+
+
+ALTER TYPE public.scrap_item_status OWNER TO postgres;
 
 --
 -- Name: sla_status_enum; Type: TYPE; Schema: public; Owner: postgres
@@ -1147,6 +1190,263 @@ $$;
 
 
 ALTER FUNCTION public.check_pan_exists(p_pan text) OWNER TO postgres;
+
+--
+-- Name: close_job_card_with_scrap(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_job_card          job_cards%ROWTYPE;
+    v_decision          jsonb;
+    v_issue_part_id     uuid;
+    v_action            text;
+    v_scrap_ids         uuid[] := '{}';
+    v_exclusion_ids     uuid[] := '{}';
+    v_new_id            uuid;
+    v_issue_part_ids    uuid[];
+    v_decision_part_ids uuid[];
+    v_missing_ids       uuid[];
+    v_extra_ids         uuid[];
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'UNAUTHORIZED',
+            'error_message', 'Only maintenance executives can close job cards.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT * INTO v_job_card
+    FROM public.job_cards
+    WHERE id = p_job_card_id AND status = 'Open';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'JOB_CARD_NOT_FOUND_OR_NOT_OPEN',
+            'error_message', 'Job card not found or is not currently Open.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF v_job_card.type = 'Outsource' AND v_job_card.invoice_url IS NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_REQUIRED',
+            'error_message', 'Outsource job cards require an invoice before closure.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.issues
+        WHERE job_card_id = p_job_card_id
+          AND status <> 'Done'::issue_status
+    ) THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'ISSUES_NOT_DONE',
+            'error_message', 'All issues must be marked Done before closing the job card.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT coalesce(array_agg(ip.id), '{}')
+    INTO v_issue_part_ids
+    FROM public.issue_parts ip
+    JOIN public.issues i ON i.id = ip.issue_id
+    WHERE i.job_card_id = p_job_card_id;
+
+    SELECT coalesce(array_agg((d->>'issue_part_id')::uuid), '{}')
+    INTO v_decision_part_ids
+    FROM jsonb_array_elements(coalesce(p_scrap_decisions, '[]'::jsonb)) AS d;
+
+    SELECT array_agg(id)
+    INTO v_missing_ids
+    FROM unnest(v_issue_part_ids) AS id
+    WHERE id != ALL(v_decision_part_ids);
+
+    IF v_missing_ids IS NOT NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'DECISIONS_MISSING_PART',
+            'error_message', 'A part was added to this job card while you were entering decisions. The card will refresh — please review and re-submit.',
+            'details',       json_build_object('missing_part_ids', v_missing_ids)
+        )::text;
+    END IF;
+
+    SELECT array_agg(id)
+    INTO v_extra_ids
+    FROM unnest(v_decision_part_ids) AS id
+    WHERE id != ALL(v_issue_part_ids);
+
+    IF v_extra_ids IS NOT NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'DECISIONS_EXTRA_PART',
+            'error_message', 'A part was removed from this job card while you were entering decisions. The card will refresh — please review and re-submit.',
+            'details',       json_build_object('extra_part_ids', v_extra_ids)
+        )::text;
+    END IF;
+
+    FOR v_decision IN
+        SELECT * FROM jsonb_array_elements(coalesce(p_scrap_decisions, '[]'::jsonb))
+    LOOP
+        v_action        := v_decision->>'action';
+        v_issue_part_id := (v_decision->>'issue_part_id')::uuid;
+
+        IF v_action = 'exclude' AND (v_decision->>'exclusion_reason') IS NULL THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'MISSING_EXCLUSION_REASON',
+                'error_message', 'Exclusion reason is required for excluded parts.',
+                'details',       json_build_object('issue_part_id', v_issue_part_id)
+            )::text;
+        END IF;
+
+        IF v_action = 'scrap'
+           AND v_job_card.type = 'Outsource'
+           AND (v_decision->>'outsource_disposition') IS NULL
+        THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'MISSING_DISPOSITION',
+                'error_message', 'Outsource disposition is required for scrapped parts on Outsource job cards.',
+                'details',       json_build_object('issue_part_id', v_issue_part_id)
+            )::text;
+        END IF;
+
+        IF (v_decision->>'outsource_disposition') = 'retained_by_vendor_with_credit' THEN
+            IF (v_decision->>'outsource_credit_amount') IS NULL
+               OR (v_decision->>'outsource_credit_amount')::numeric <= 0
+            THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'INVALID_CREDIT_AMOUNT',
+                    'error_message', 'Credit amount must be a positive number when disposition is "retained by vendor with credit".',
+                    'details',       json_build_object('issue_part_id', v_issue_part_id)
+                )::text;
+            END IF;
+        END IF;
+    END LOOP;
+
+    UPDATE public.job_cards
+    SET
+        status       = 'Completed',
+        completed_at = now(),
+        remarks      = p_remarks
+    WHERE id = p_job_card_id;
+
+    FOR v_decision IN
+        SELECT * FROM jsonb_array_elements(coalesce(p_scrap_decisions, '[]'::jsonb))
+    LOOP
+        v_action        := v_decision->>'action';
+        v_issue_part_id := (v_decision->>'issue_part_id')::uuid;
+
+        IF v_action = 'scrap' THEN
+
+            IF v_job_card.type = 'Outsource' THEN
+                UPDATE public.issue_parts
+                SET
+                    outsource_part_disposition     = (v_decision->>'outsource_disposition')::outsource_part_disposition,
+                    outsource_vendor_credit_amount =
+                        CASE
+                            WHEN (v_decision->>'outsource_disposition') = 'retained_by_vendor_with_credit'
+                            THEN (v_decision->>'outsource_credit_amount')::numeric
+                            ELSE NULL
+                        END
+                WHERE id = v_issue_part_id;
+            END IF;
+
+            INSERT INTO public.scrap_inventory (
+                source_ticket_id,
+                source_job_card_id,
+                source_issue_id,
+                source_issue_part_id,
+                source_vehicle_number,
+                part_id_snapshot,
+                part_name_snapshot,
+                part_number_snapshot,
+                quantity_snapshot,
+                unit_snapshot,
+                status,
+                outsource_part_disposition_snapshot,
+                outsource_vendor_credit_amount_snapshot,
+                created_by
+            )
+            SELECT
+                i.ticket_id,
+                jc.id,
+                ip.issue_id,
+                ip.id,
+                jc.vehicle_number,
+                p.id,
+                p.name,
+                p.part_number,
+                ip.quantity_used,
+                p.unit,
+                'in_storage'::scrap_item_status,
+                CASE WHEN jc.type = 'Outsource'
+                     THEN (v_decision->>'outsource_disposition')::outsource_part_disposition
+                     ELSE NULL
+                END,
+                CASE WHEN jc.type = 'Outsource'
+                          AND (v_decision->>'outsource_disposition') = 'retained_by_vendor_with_credit'
+                     THEN (v_decision->>'outsource_credit_amount')::numeric
+                     ELSE NULL
+                END,
+                auth.uid()
+            FROM public.issue_parts ip
+            JOIN public.issues    i  ON i.id  = ip.issue_id
+            JOIN public.job_cards jc ON jc.id = i.job_card_id
+            JOIN public.parts     p  ON p.id  = ip.part_id
+            WHERE ip.id = v_issue_part_id
+            RETURNING id INTO v_new_id;
+
+            v_scrap_ids := v_scrap_ids || v_new_id;
+
+        ELSIF v_action = 'exclude' THEN
+
+            INSERT INTO public.scrap_excluded_parts (
+                source_job_card_id,
+                source_issue_id,
+                source_issue_part_id,
+                part_id_snapshot,
+                part_name_snapshot,
+                quantity_snapshot,
+                reason,
+                notes,
+                excluded_by
+            )
+            SELECT
+                jc.id,
+                ip.issue_id,
+                ip.id,
+                p.id,
+                p.name,
+                ip.quantity_used,
+                (v_decision->>'exclusion_reason')::scrap_exclusion_reason,
+                v_decision->>'exclusion_notes',
+                auth.uid()
+            FROM public.issue_parts ip
+            JOIN public.issues    i  ON i.id  = ip.issue_id
+            JOIN public.job_cards jc ON jc.id = i.job_card_id
+            JOIN public.parts     p  ON p.id  = ip.part_id
+            WHERE ip.id = v_issue_part_id
+            RETURNING id INTO v_new_id;
+
+            v_exclusion_ids := v_exclusion_ids || v_new_id;
+
+        END IF;
+    END LOOP;
+
+    RETURN json_build_object(
+        'success',         true,
+        'job_card_id',     p_job_card_id,
+        'scrap_entry_ids', v_scrap_ids,
+        'exclusion_ids',   v_exclusion_ids
+    );
+END;
+$$;
+
+
+ALTER FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) OWNER TO postgres;
 
 --
 -- Name: deduct_part_from_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4279,6 +4579,9 @@ CREATE TABLE public.issue_parts (
     quantity_used numeric(10,2) NOT NULL,
     added_by uuid,
     added_at timestamp without time zone DEFAULT now(),
+    outsource_part_disposition public.outsource_part_disposition,
+    outsource_vendor_credit_amount numeric(10,2),
+    CONSTRAINT issue_parts_outsource_credit_consistency CHECK (((outsource_part_disposition = 'retained_by_vendor_with_credit'::public.outsource_part_disposition) = (outsource_vendor_credit_amount IS NOT NULL))),
     CONSTRAINT issue_parts_quantity_used_check CHECK ((quantity_used > (0)::numeric))
 );
 
@@ -4480,6 +4783,62 @@ CREATE TABLE public.purchase_invoices (
 
 
 ALTER TABLE public.purchase_invoices OWNER TO postgres;
+
+--
+-- Name: scrap_excluded_parts; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.scrap_excluded_parts (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    source_job_card_id uuid NOT NULL,
+    source_issue_id uuid NOT NULL,
+    source_issue_part_id uuid NOT NULL,
+    part_id_snapshot uuid,
+    part_name_snapshot text NOT NULL,
+    quantity_snapshot numeric(10,2) NOT NULL,
+    reason public.scrap_exclusion_reason NOT NULL,
+    notes text,
+    excluded_by uuid NOT NULL,
+    excluded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.scrap_excluded_parts OWNER TO postgres;
+
+--
+-- Name: scrap_inventory; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.scrap_inventory (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    source_ticket_id uuid NOT NULL,
+    source_job_card_id uuid NOT NULL,
+    source_issue_id uuid NOT NULL,
+    source_issue_part_id uuid NOT NULL,
+    source_vehicle_number text NOT NULL,
+    part_id_snapshot uuid,
+    part_name_snapshot text NOT NULL,
+    part_number_snapshot text,
+    quantity_snapshot numeric(10,2) NOT NULL,
+    unit_snapshot text NOT NULL,
+    description text,
+    notes text,
+    estimated_value numeric(10,2),
+    photos text[] DEFAULT '{}'::text[] NOT NULL,
+    status public.scrap_item_status DEFAULT 'in_storage'::public.scrap_item_status NOT NULL,
+    received_by uuid,
+    received_at timestamp with time zone,
+    current_location text,
+    outsource_part_disposition_snapshot public.outsource_part_disposition,
+    outsource_vendor_credit_amount_snapshot numeric(10,2),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid
+);
+
+
+ALTER TABLE public.scrap_inventory OWNER TO postgres;
 
 --
 -- Name: sites; Type: TABLE; Schema: public; Owner: postgres
@@ -5344,6 +5703,22 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
+-- Name: scrap_excluded_parts scrap_excluded_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_excluded_parts
+    ADD CONSTRAINT scrap_excluded_parts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sites sites_name_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -6056,6 +6431,55 @@ CREATE INDEX idx_job_cards_status ON public.job_cards USING btree (status);
 
 
 --
+-- Name: idx_scrap_excluded_parts_issue_part_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_excluded_parts_issue_part_id ON public.scrap_excluded_parts USING btree (source_issue_part_id);
+
+
+--
+-- Name: idx_scrap_excluded_parts_job_card_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_excluded_parts_job_card_id ON public.scrap_excluded_parts USING btree (source_job_card_id);
+
+
+--
+-- Name: idx_scrap_inventory_created_at; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_inventory_created_at ON public.scrap_inventory USING btree (created_at DESC);
+
+
+--
+-- Name: idx_scrap_inventory_issue_part_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_inventory_issue_part_id ON public.scrap_inventory USING btree (source_issue_part_id);
+
+
+--
+-- Name: idx_scrap_inventory_job_card_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_inventory_job_card_id ON public.scrap_inventory USING btree (source_job_card_id);
+
+
+--
+-- Name: idx_scrap_inventory_status; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_inventory_status ON public.scrap_inventory USING btree (status);
+
+
+--
+-- Name: idx_scrap_inventory_ticket_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_inventory_ticket_id ON public.scrap_inventory USING btree (source_ticket_id);
+
+
+--
 -- Name: idx_sla_events_ticket_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -6564,6 +6988,94 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
+-- Name: scrap_excluded_parts scrap_excluded_parts_excluded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_excluded_parts
+    ADD CONSTRAINT scrap_excluded_parts_excluded_by_fkey FOREIGN KEY (excluded_by) REFERENCES public.users(id);
+
+
+--
+-- Name: scrap_excluded_parts scrap_excluded_parts_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_excluded_parts
+    ADD CONSTRAINT scrap_excluded_parts_source_issue_fkey FOREIGN KEY (source_issue_id) REFERENCES public.issues(id);
+
+
+--
+-- Name: scrap_excluded_parts scrap_excluded_parts_source_issue_part_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_excluded_parts
+    ADD CONSTRAINT scrap_excluded_parts_source_issue_part_fkey FOREIGN KEY (source_issue_part_id) REFERENCES public.issue_parts(id);
+
+
+--
+-- Name: scrap_excluded_parts scrap_excluded_parts_source_job_card_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_excluded_parts
+    ADD CONSTRAINT scrap_excluded_parts_source_job_card_fkey FOREIGN KEY (source_job_card_id) REFERENCES public.job_cards(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_received_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_received_by_fkey FOREIGN KEY (received_by) REFERENCES public.users(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_source_issue_fkey FOREIGN KEY (source_issue_id) REFERENCES public.issues(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_source_issue_part_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_source_issue_part_fkey FOREIGN KEY (source_issue_part_id) REFERENCES public.issue_parts(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_source_job_card_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_source_job_card_fkey FOREIGN KEY (source_job_card_id) REFERENCES public.job_cards(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_source_ticket_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_source_ticket_fkey FOREIGN KEY (source_ticket_id) REFERENCES public.tickets(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id);
+
+
+--
 -- Name: sla_events sla_events_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -7004,6 +7516,20 @@ CREATE POLICY "Execs manage part_units" ON public.part_units USING (public.is_ma
 
 
 --
+-- Name: scrap_inventory Execs manage scrap_inventory; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs manage scrap_inventory" ON public.scrap_inventory TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
+
+
+--
+-- Name: scrap_excluded_parts Execs view scrap_excluded_parts; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs view scrap_excluded_parts" ON public.scrap_excluded_parts FOR SELECT TO authenticated USING (public.is_maintenance_exec());
+
+
+--
 -- Name: finance_entries Finance creates entries; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -7035,6 +7561,24 @@ CREATE POLICY "Finance updates entries" ON public.finance_entries FOR UPDATE USI
 --
 
 CREATE POLICY "Finance view job cards" ON public.job_cards FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.users
+  WHERE ((users.id = auth.uid()) AND (users.role = 'finance'::text)))));
+
+
+--
+-- Name: scrap_excluded_parts Finance view scrap_excluded_parts; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view scrap_excluded_parts" ON public.scrap_excluded_parts FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.users
+  WHERE ((users.id = auth.uid()) AND (users.role = 'finance'::text)))));
+
+
+--
+-- Name: scrap_inventory Finance view scrap_inventory; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view scrap_inventory" ON public.scrap_inventory FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = 'finance'::text)))));
 
@@ -7214,6 +7758,34 @@ CREATE POLICY "Supervisors view site issues" ON public.issues FOR SELECT USING (
 
 
 --
+-- Name: scrap_inventory Supervisors view site scrap; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Supervisors view site scrap" ON public.scrap_inventory FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = 'supervisor'::text)))) AND (EXISTS ( SELECT 1
+   FROM public.job_cards jc
+  WHERE ((jc.id = scrap_inventory.source_job_card_id) AND (jc.site IN ( SELECT s.name
+           FROM (public.user_sites us
+             JOIN public.sites s ON ((s.id = us.site_id)))
+          WHERE (us.user_id = auth.uid()))))))));
+
+
+--
+-- Name: scrap_excluded_parts Supervisors view site scrap excluded; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Supervisors view site scrap excluded" ON public.scrap_excluded_parts FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = 'supervisor'::text)))) AND (EXISTS ( SELECT 1
+   FROM public.job_cards jc
+  WHERE ((jc.id = scrap_excluded_parts.source_job_card_id) AND (jc.site IN ( SELECT s.name
+           FROM (public.user_sites us
+             JOIN public.sites s ON ((s.id = us.site_id)))
+          WHERE (us.user_id = auth.uid()))))))));
+
+
+--
 -- Name: audit_logs Users can insert audit logs; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -7340,6 +7912,18 @@ ALTER TABLE public.purchase_invoice_items ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.purchase_invoices ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: scrap_excluded_parts; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.scrap_excluded_parts ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: scrap_inventory; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.scrap_inventory ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: sites; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -8251,6 +8835,16 @@ GRANT ALL ON FUNCTION public.check_pan_exists(p_pan text) TO service_role;
 
 
 --
+-- Name: FUNCTION close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO anon;
+GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION deduct_part_from_inventory(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -8872,6 +9466,24 @@ GRANT ALL ON TABLE public.purchase_invoice_items TO service_role;
 GRANT ALL ON TABLE public.purchase_invoices TO anon;
 GRANT ALL ON TABLE public.purchase_invoices TO authenticated;
 GRANT ALL ON TABLE public.purchase_invoices TO service_role;
+
+
+--
+-- Name: TABLE scrap_excluded_parts; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.scrap_excluded_parts TO anon;
+GRANT ALL ON TABLE public.scrap_excluded_parts TO authenticated;
+GRANT ALL ON TABLE public.scrap_excluded_parts TO service_role;
+
+
+--
+-- Name: TABLE scrap_inventory; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.scrap_inventory TO anon;
+GRANT ALL ON TABLE public.scrap_inventory TO authenticated;
+GRANT ALL ON TABLE public.scrap_inventory TO service_role;
 
 
 --
