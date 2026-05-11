@@ -527,6 +527,104 @@ export type Database = {
           },
         ]
       }
+      scrap_disposal: {
+        Row: {
+          buyer_contact: string | null
+          buyer_name: string
+          disposal_date: string
+          id: string
+          notes: string | null
+          payment_mode: Database["public"]["Enums"]["scrap_payment_mode"]
+          payment_reference: string | null
+          receipt_photos: string[]
+          recorded_at: string
+          recorded_by: string
+          total_value: number
+        }
+        Insert: {
+          buyer_contact?: string | null
+          buyer_name: string
+          disposal_date: string
+          id?: string
+          notes?: string | null
+          payment_mode: Database["public"]["Enums"]["scrap_payment_mode"]
+          payment_reference?: string | null
+          receipt_photos?: string[]
+          recorded_at?: string
+          recorded_by: string
+          total_value: number
+        }
+        Update: {
+          buyer_contact?: string | null
+          buyer_name?: string
+          disposal_date?: string
+          id?: string
+          notes?: string | null
+          payment_mode?: Database["public"]["Enums"]["scrap_payment_mode"]
+          payment_reference?: string | null
+          receipt_photos?: string[]
+          recorded_at?: string
+          recorded_by?: string
+          total_value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_disposal_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scrap_disposal_items: {
+        Row: {
+          created_at: string
+          disposal_id: string
+          id: string
+          part_name_snapshot: string
+          quantity_snapshot: number
+          scrap_inventory_id: string
+          unit_snapshot: string
+          value_allocated: number
+        }
+        Insert: {
+          created_at?: string
+          disposal_id: string
+          id?: string
+          part_name_snapshot: string
+          quantity_snapshot: number
+          scrap_inventory_id: string
+          unit_snapshot: string
+          value_allocated: number
+        }
+        Update: {
+          created_at?: string
+          disposal_id?: string
+          id?: string
+          part_name_snapshot?: string
+          quantity_snapshot?: number
+          scrap_inventory_id?: string
+          unit_snapshot?: string
+          value_allocated?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_disposal_items_disposal_fkey"
+            columns: ["disposal_id"]
+            isOneToOne: false
+            referencedRelation: "scrap_disposal"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_disposal_items_scrap_inventory_fkey"
+            columns: ["scrap_inventory_id"]
+            isOneToOne: false
+            referencedRelation: "scrap_inventory"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scrap_excluded_parts: {
         Row: {
           excluded_at: string
@@ -538,7 +636,7 @@ export type Database = {
           quantity_snapshot: number
           reason: Database["public"]["Enums"]["scrap_exclusion_reason"]
           source_issue_id: string
-          source_issue_part_id: string
+          source_issue_part_id: string | null
           source_job_card_id: string
         }
         Insert: {
@@ -551,7 +649,7 @@ export type Database = {
           quantity_snapshot: number
           reason: Database["public"]["Enums"]["scrap_exclusion_reason"]
           source_issue_id: string
-          source_issue_part_id: string
+          source_issue_part_id?: string | null
           source_job_card_id: string
         }
         Update: {
@@ -564,7 +662,7 @@ export type Database = {
           quantity_snapshot?: number
           reason?: Database["public"]["Enums"]["scrap_exclusion_reason"]
           source_issue_id?: string
-          source_issue_part_id?: string
+          source_issue_part_id?: string | null
           source_job_card_id?: string
         }
         Relationships: [
@@ -619,7 +717,7 @@ export type Database = {
           received_at: string | null
           received_by: string | null
           source_issue_id: string
-          source_issue_part_id: string
+          source_issue_part_id: string | null
           source_job_card_id: string
           source_ticket_id: string
           source_vehicle_number: string
@@ -648,7 +746,7 @@ export type Database = {
           received_at?: string | null
           received_by?: string | null
           source_issue_id: string
-          source_issue_part_id: string
+          source_issue_part_id?: string | null
           source_job_card_id: string
           source_ticket_id: string
           source_vehicle_number: string
@@ -677,7 +775,7 @@ export type Database = {
           received_at?: string | null
           received_by?: string | null
           source_issue_id?: string
-          source_issue_part_id?: string
+          source_issue_part_id?: string | null
           source_job_card_id?: string
           source_ticket_id?: string
           source_vehicle_number?: string
@@ -734,6 +832,92 @@ export type Database = {
             columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scrap_writeoff: {
+        Row: {
+          description: string
+          evidence_photos: string[]
+          id: string
+          notes: string | null
+          reason: Database["public"]["Enums"]["scrap_writeoff_reason"]
+          recorded_at: string
+          recorded_by: string
+          writeoff_date: string
+        }
+        Insert: {
+          description: string
+          evidence_photos?: string[]
+          id?: string
+          notes?: string | null
+          reason: Database["public"]["Enums"]["scrap_writeoff_reason"]
+          recorded_at?: string
+          recorded_by: string
+          writeoff_date: string
+        }
+        Update: {
+          description?: string
+          evidence_photos?: string[]
+          id?: string
+          notes?: string | null
+          reason?: Database["public"]["Enums"]["scrap_writeoff_reason"]
+          recorded_at?: string
+          recorded_by?: string
+          writeoff_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_writeoff_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scrap_writeoff_items: {
+        Row: {
+          created_at: string
+          id: string
+          part_name_snapshot: string
+          quantity_snapshot: number
+          scrap_inventory_id: string
+          unit_snapshot: string
+          writeoff_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          part_name_snapshot: string
+          quantity_snapshot: number
+          scrap_inventory_id: string
+          unit_snapshot: string
+          writeoff_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          part_name_snapshot?: string
+          quantity_snapshot?: number
+          scrap_inventory_id?: string
+          unit_snapshot?: string
+          writeoff_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_writeoff_items_scrap_inventory_fkey"
+            columns: ["scrap_inventory_id"]
+            isOneToOne: false
+            referencedRelation: "scrap_inventory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_writeoff_items_writeoff_fkey"
+            columns: ["writeoff_id"]
+            isOneToOne: false
+            referencedRelation: "scrap_writeoff"
             referencedColumns: ["id"]
           },
         ]
@@ -1374,9 +1558,17 @@ export type Database = {
         }
         Returns: Json
       }
+      delete_issue_part_with_scrap_check: {
+        Args: { p_issue_part_id: string }
+        Returns: Json
+      }
       evaluate_acceptance_sla: {
         Args: { p_first_issue_created: string; p_ticket_id: string }
         Returns: Database["public"]["Enums"]["sla_status_enum"]
+      }
+      get_blocking_scrap_for_issue_part: {
+        Args: { p_issue_part_id: string }
+        Returns: Json
       }
       get_maintenance_stats: {
         Args: {
@@ -1426,6 +1618,18 @@ export type Database = {
       }
       is_maintenance_exec: { Args: never; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
+      job_card_site_accessible_to_user: {
+        Args: { p_job_card_id: string }
+        Returns: boolean
+      }
+      record_scrap_disposal: {
+        Args: { p_header: Json; p_items: Json }
+        Returns: Json
+      }
+      record_scrap_writeoff: {
+        Args: { p_header: Json; p_items: Json }
+        Returns: Json
+      }
     }
     Enums: {
       issue_category:
@@ -1456,6 +1660,14 @@ export type Database = {
         | "sold"
         | "written_off"
         | "reversed"
+      scrap_payment_mode: "cash" | "upi" | "bank_transfer" | "cheque" | "other"
+      scrap_writeoff_reason:
+        | "lost"
+        | "damaged_unsaleable"
+        | "hazmat_disposal"
+        | "stocktake_adjustment"
+        | "donated"
+        | "other"
       sla_status_enum: "Pending" | "Adhered" | "Violated"
       ticket_status_new:
         | "New"
@@ -1624,6 +1836,15 @@ export const Constants = {
         "written_off",
         "reversed",
       ],
+      scrap_payment_mode: ["cash", "upi", "bank_transfer", "cheque", "other"],
+      scrap_writeoff_reason: [
+        "lost",
+        "damaged_unsaleable",
+        "hazmat_disposal",
+        "stocktake_adjustment",
+        "donated",
+        "other",
+      ],
       sla_status_enum: ["Pending", "Adhered", "Violated"],
       ticket_status_new: [
         "New",
@@ -1637,3 +1858,5 @@ export const Constants = {
     },
   },
 } as const
+A new version of Supabase CLI is available: v2.98.2 (currently installed v2.67.1)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
