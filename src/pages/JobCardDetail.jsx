@@ -71,6 +71,10 @@ export default function JobCardDetail() {
     const [assigningMechanic, setAssigningMechanic] = useState(false)
     const [selectedMechanicId, setSelectedMechanicId] = useState('')
 
+    // Odometer editing
+    const [editingOdometer, setEditingOdometer] = useState(false)
+    const [odometerValue, setOdometerValue] = useState('')
+
     // Job Location editing
     const [editingJobLocation, setEditingJobLocation] = useState(false)
     const [pendingType, setPendingType] = useState('')
@@ -101,6 +105,7 @@ export default function JobCardDetail() {
             setRemarks(jobCard.remarks || '')
             setSelectedMechanicId(jobCard.assigned_mechanic_id || '')
             setSelectedSupplierId(jobCard.supplier_id || '')
+            setOdometerValue(jobCard.odometer != null ? String(jobCard.odometer) : '')
         }
     }, [jobCard])
 
@@ -265,6 +270,17 @@ export default function JobCardDetail() {
             alert('Remarks saved')
         } catch (e) {
             alert('Failed to save')
+        }
+    }
+
+    const handleSaveOdometer = async () => {
+        const parsed = odometerValue === '' ? null : parseInt(odometerValue, 10)
+        if (odometerValue !== '' && (isNaN(parsed) || parsed < 0)) return
+        try {
+            await updateJobCard.mutateAsync({ id: jobCard.id, updates: { odometer: parsed } })
+            setEditingOdometer(false)
+        } catch (e) {
+            alert('Failed to save odometer: ' + e.message)
         }
     }
 
@@ -530,6 +546,55 @@ export default function JobCardDetail() {
                                             </button>
                                         )}
                                     </span>
+                                )}
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Odometer */}
+                    <div className="flex items-center gap-2 mb-4 text-sm text-gray-700">
+                        <span className="font-medium text-gray-500 text-xs uppercase tracking-wide w-20 shrink-0">Odometer</span>
+                        {editingOdometer ? (
+                            <span className="flex items-center gap-2">
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={odometerValue}
+                                        onChange={e => setOdometerValue(e.target.value)}
+                                        placeholder="e.g. 45000"
+                                        className="w-32 text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        autoFocus
+                                    />
+                                    <span className="text-xs text-gray-500">km</span>
+                                </div>
+                                <button
+                                    onClick={handleSaveOdometer}
+                                    disabled={updateJobCard.isPending}
+                                    className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                    Save
+                                </button>
+                                <button
+                                    onClick={() => { setEditingOdometer(false); setOdometerValue(jobCard.odometer != null ? String(jobCard.odometer) : '') }}
+                                    className="text-xs px-2 py-0.5 bg-gray-200 text-gray-600 rounded hover:bg-gray-300"
+                                >
+                                    Cancel
+                                </button>
+                            </span>
+                        ) : (
+                            <span className="flex items-center gap-1.5">
+                                <span className="text-gray-900">
+                                    {jobCard.odometer != null ? `${jobCard.odometer.toLocaleString('en-IN')} km` : <span className="text-gray-400 italic">Not recorded</span>}
+                                </span>
+                                {isMechanic && jobCard.status !== 'Completed' && (
+                                    <button
+                                        onClick={() => setEditingOdometer(true)}
+                                        className="text-gray-500 hover:text-blue-600"
+                                    >
+                                        <PencilIcon className="w-3.5 h-3.5" />
+                                    </button>
                                 )}
                             </span>
                         )}

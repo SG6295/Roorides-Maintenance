@@ -338,6 +338,7 @@ export type Database = {
           id: string
           invoice_url: string | null
           job_card_number: number
+          odometer: number | null
           remarks: string | null
           site: string
           status: Database["public"]["Enums"]["job_card_status"] | null
@@ -352,6 +353,7 @@ export type Database = {
           id?: string
           invoice_url?: string | null
           job_card_number?: never
+          odometer?: number | null
           remarks?: string | null
           site: string
           status?: Database["public"]["Enums"]["job_card_status"] | null
@@ -366,6 +368,7 @@ export type Database = {
           id?: string
           invoice_url?: string | null
           job_card_number?: never
+          odometer?: number | null
           remarks?: string | null
           site?: string
           status?: Database["public"]["Enums"]["job_card_status"] | null

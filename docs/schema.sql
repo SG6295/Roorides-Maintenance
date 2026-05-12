@@ -5104,7 +5104,9 @@ CREATE TABLE public.job_cards (
     remarks text,
     supplier_id uuid,
     invoice_url text,
+    odometer integer,
     CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at))),
+    CONSTRAINT job_cards_odometer_check CHECK (((odometer IS NULL) OR (odometer >= 0))),
     CONSTRAINT outsource_completion_requires_invoice CHECK (((status <> 'Completed'::public.job_card_status) OR (type <> 'Outsource'::public.work_type_enum) OR (invoice_url IS NOT NULL)))
 );
 
