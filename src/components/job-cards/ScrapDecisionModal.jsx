@@ -2,7 +2,12 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../../hooks/useAuth'
-import { useCloseJobCardWithScrap, ScrapRPCError } from '../../hooks/useScrap'
+import {
+    useCloseJobCardWithScrap,
+    useExistingScrapForJobCard,
+    PERMANENT_SCRAP_STATUSES,
+    ScrapRPCError,
+} from '../../hooks/useScrap'
 import { logAuditEvent } from '../../utils/auditLogger'
 import CustomSelect from '../shared/CustomSelect'
 
@@ -35,10 +40,11 @@ function buildInitialDecisions(jobCard) {
     return decisions
 }
 
-export default function ScrapDecisionModal({ jobCard, onClose, onSuccess }) {
+export default function ScrapDecisionModal({ jobCard, onClose, onSuccess, onRaceError }) {
     const { userProfile } = useAuth()
     const queryClient = useQueryClient()
     const closeJobCard = useCloseJobCardWithScrap()
+    const { data: existingScrapMap = {} } = useExistingScrapForJobCard(jobCard.id)
 
     const isOutsource = jobCard.type === 'Outsource'
 
@@ -53,7 +59,9 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess }) {
         }))
     }
 
-    const isValid = Object.values(decisions).every(d => {
+    const isValid = Object.entries(decisions).every(([issuePartId, d]) => {
+        // Group A parts are not submitted — no validation required
+        if (PERMANENT_SCRAP_STATUSES.includes(existingScrapMap[issuePartId]?.status)) return true
         if (d.action === 'exclude') return d.exclusionReason !== null
         if (d.action === 'scrap' && isOutsource) {
             if (!d.outsourceDisposition) return false
@@ -68,19 +76,25 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess }) {
     const handleSubmit = async () => {
         setSubmitError(null)
 
-        const scrapDecisions = Object.entries(decisions).map(([issuePartId, d]) => {
-            const entry = { issue_part_id: issuePartId, action: d.action }
-            if (d.action === 'exclude') {
-                entry.exclusion_reason = d.exclusionReason
-                entry.exclusion_notes  = d.exclusionNotes || null
-            } else if (d.action === 'scrap' && isOutsource) {
-                entry.outsource_disposition = d.outsourceDisposition
-                if (d.outsourceDisposition === 'retained_by_vendor_with_credit') {
-                    entry.outsource_credit_amount = parseFloat(d.outsourceCreditAmount)
+        // Group A parts (permanent scrap) are excluded from the decisions array —
+        // their existing scrap entries stay untouched.
+        const scrapDecisions = Object.entries(decisions)
+            .filter(([issuePartId]) =>
+                !PERMANENT_SCRAP_STATUSES.includes(existingScrapMap[issuePartId]?.status)
+            )
+            .map(([issuePartId, d]) => {
+                const entry = { issue_part_id: issuePartId, action: d.action }
+                if (d.action === 'exclude') {
+                    entry.exclusion_reason = d.exclusionReason
+                    entry.exclusion_notes  = d.exclusionNotes || null
+                } else if (d.action === 'scrap' && isOutsource) {
+                    entry.outsource_disposition = d.outsourceDisposition
+                    if (d.outsourceDisposition === 'retained_by_vendor_with_credit') {
+                        entry.outsource_credit_amount = parseFloat(d.outsourceCreditAmount)
+                    }
                 }
-            }
-            return entry
-        })
+                return entry
+            })
 
         try {
             const result = await closeJobCard.mutateAsync({
@@ -114,16 +128,27 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess }) {
                 })
             }
 
+            // Audit: in_storage scrap entries reversed during re-close
+            for (const scrapId of result.reversed_scrap_ids || []) {
+                await logAuditEvent(scrapId, 'scrap_inventory', 'UPDATE', userProfile.id, {
+                    oldData:       { status: 'in_storage' },
+                    newData:       { status: 'reversed' },
+                    changedFields: ['status', 'updated_at', 'updated_by'],
+                })
+            }
+
             onSuccess()
         } catch (err) {
             if (err instanceof ScrapRPCError) {
                 const { errorCode } = err
                 if (errorCode === 'DECISIONS_MISSING_PART' || errorCode === 'DECISIONS_EXTRA_PART') {
-                    // Parts changed while the modal was open — invalidate so parent shows fresh data.
-                    // User must close the modal manually and re-open once they've reviewed the changes.
+                    // Parts changed while modal was open — stale decisions cannot be retried.
+                    // Close the modal and let the parent show the error with fresh data.
                     queryClient.invalidateQueries({ queryKey: ['job_card'] })
+                    onRaceError(err.message)
+                } else {
+                    setSubmitError(err.message)
                 }
-                setSubmitError(err.message)
             } else {
                 setSubmitError('Failed to complete job card. Please try again.')
             }
@@ -178,42 +203,60 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess }) {
                             {issue.issue_parts.map(ip => {
                                 const d = decisions[ip.id]
                                 if (!d) return null
+                                const existingScrap = existingScrapMap[ip.id]
+                                const isPermanent = PERMANENT_SCRAP_STATUSES.includes(existingScrap?.status)
+                                const isInStorage = existingScrap?.status === 'in_storage'
                                 return (
                                     <div key={ip.id} className="rounded-lg bg-gray-50 border border-gray-200 p-3 space-y-3">
 
                                         {/* Part label */}
-                                        <p className="text-sm font-medium text-gray-800">
-                                            {ip.part?.name ?? 'Unknown part'} &times; {ip.quantity_used} {ip.part?.unit ?? ''}
-                                        </p>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <p className="text-sm font-medium text-gray-800">
+                                                {ip.part?.name ?? 'Unknown part'} &times; {ip.quantity_used} {ip.part?.unit ?? ''}
+                                            </p>
+                                            {isPermanent && (
+                                                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                                                    Already {existingScrap.status.replace(/_/g, ' ')}
+                                                </span>
+                                            )}
+                                        </div>
 
                                         {/* Scrap / Exclude radio */}
                                         <div className="flex items-center gap-6">
-                                            <label className="flex items-center gap-2 cursor-pointer">
+                                            <label className={`flex items-center gap-2 ${isPermanent ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}>
                                                 <input
                                                     type="radio"
                                                     name={`action-${ip.id}`}
                                                     value="scrap"
                                                     checked={d.action === 'scrap'}
-                                                    onChange={() => updateDecision(ip.id, 'action', 'scrap')}
+                                                    onChange={() => !isPermanent && updateDecision(ip.id, 'action', 'scrap')}
+                                                    disabled={isPermanent}
                                                     className="accent-green-600"
                                                 />
                                                 <span className="text-sm text-gray-700">Generate scrap</span>
                                             </label>
-                                            <label className="flex items-center gap-2 cursor-pointer">
+                                            <label className={`flex items-center gap-2 ${isPermanent ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
                                                 <input
                                                     type="radio"
                                                     name={`action-${ip.id}`}
                                                     value="exclude"
                                                     checked={d.action === 'exclude'}
-                                                    onChange={() => updateDecision(ip.id, 'action', 'exclude')}
+                                                    onChange={() => !isPermanent && updateDecision(ip.id, 'action', 'exclude')}
+                                                    disabled={isPermanent}
                                                     className="accent-orange-500"
                                                 />
                                                 <span className="text-sm text-gray-700">Exclude from scrap</span>
                                             </label>
                                         </div>
 
-                                        {/* Outsource disposition (only for scrap + Outsource jobs) */}
-                                        {d.action === 'scrap' && isOutsource && (
+                                        {isInStorage && (
+                                            <p className="text-xs text-amber-600">
+                                                Previously scrapped — previous entry will be replaced on submit.
+                                            </p>
+                                        )}
+
+                                        {/* Outsource disposition (only for scrap + Outsource jobs, not locked Group A parts) */}
+                                        {d.action === 'scrap' && isOutsource && !isPermanent && (
                                             <div className="space-y-2">
                                                 <CustomSelect
                                                     label="Outsource disposition"
@@ -242,7 +285,7 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess }) {
                                         )}
 
                                         {/* Exclusion reason + notes */}
-                                        {d.action === 'exclude' && (
+                                        {d.action === 'exclude' && !isPermanent && (
                                             <div className="space-y-2">
                                                 <CustomSelect
                                                     label="Exclusion reason"

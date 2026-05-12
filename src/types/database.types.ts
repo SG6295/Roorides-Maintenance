@@ -390,6 +390,117 @@ export type Database = {
           },
         ]
       }
+      outsource_invoice_payments: {
+        Row: {
+          amount_paid: number
+          attachment_urls: string[]
+          created_at: string
+          id: string
+          notes: string | null
+          outsource_invoice_id: string
+          paid_on: string
+          recorded_by: string | null
+        }
+        Insert: {
+          amount_paid: number
+          attachment_urls?: string[]
+          created_at?: string
+          id?: string
+          notes?: string | null
+          outsource_invoice_id: string
+          paid_on: string
+          recorded_by?: string | null
+        }
+        Update: {
+          amount_paid?: number
+          attachment_urls?: string[]
+          created_at?: string
+          id?: string
+          notes?: string | null
+          outsource_invoice_id?: string
+          paid_on?: string
+          recorded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outsource_invoice_payments_outsource_invoice_id_fkey"
+            columns: ["outsource_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "outsource_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "outsource_invoice_payments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      outsource_invoices: {
+        Row: {
+          advance_amount: number | null
+          approved_amount: number | null
+          created_at: string
+          created_by: string | null
+          date_of_activity: string | null
+          id: string
+          invoice_no: string | null
+          invoice_value: number | null
+          job_card_id: string | null
+          paid_by: string | null
+          payby_date: string | null
+          payment_status: string | null
+          updated_at: string
+        }
+        Insert: {
+          advance_amount?: number | null
+          approved_amount?: number | null
+          created_at?: string
+          created_by?: string | null
+          date_of_activity?: string | null
+          id?: string
+          invoice_no?: string | null
+          invoice_value?: number | null
+          job_card_id?: string | null
+          paid_by?: string | null
+          payby_date?: string | null
+          payment_status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          advance_amount?: number | null
+          approved_amount?: number | null
+          created_at?: string
+          created_by?: string | null
+          date_of_activity?: string | null
+          id?: string
+          invoice_no?: string | null
+          invoice_value?: number | null
+          job_card_id?: string | null
+          paid_by?: string | null
+          payby_date?: string | null
+          payment_status?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outsource_invoices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "outsource_invoices_job_card_id_fkey"
+            columns: ["job_card_id"]
+            isOneToOne: true
+            referencedRelation: "job_cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       part_units: {
         Row: {
           created_at: string | null
@@ -414,6 +525,7 @@ export type Database = {
       parts: {
         Row: {
           created_at: string | null
+          created_via: string
           id: string
           name: string
           part_number: string | null
@@ -422,6 +534,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          created_via?: string
           id?: string
           name: string
           part_number?: string | null
@@ -430,6 +543,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          created_via?: string
           id?: string
           name?: string
           part_number?: string | null
@@ -1616,6 +1730,19 @@ export type Database = {
           type_outsource: number
         }[]
       }
+      get_outsource_invoice_summary: {
+        Args: {
+          p_date_from?: string
+          p_date_to?: string
+          p_paid_by?: string[]
+          p_payment_status?: string[]
+        }
+        Returns: {
+          overdue_count: number
+          pending_approval_count: number
+          total_unpaid_payable: number
+        }[]
+      }
       is_maintenance_exec: { Args: never; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
       job_card_site_accessible_to_user: {
@@ -1858,5 +1985,3 @@ export const Constants = {
     },
   },
 } as const
-A new version of Supabase CLI is available: v2.98.2 (currently installed v2.67.1)
-We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli

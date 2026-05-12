@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useUpdateIssue } from '../../hooks/useIssues'
-import { useAddIssuePart, useDeleteIssuePart } from '../../hooks/useParts'
+import { useAddIssuePart, useDeleteIssuePart, useCreatePart } from '../../hooks/useParts'
+import { usePartUnits } from '../../hooks/useInventory'
+import { ScrapRPCError } from '../../hooks/useScrap'
+import { logAuditEvent } from '../../utils/auditLogger'
 import SearchableSelect from '../shared/SearchableSelect'
 
 /**
@@ -16,10 +19,16 @@ import SearchableSelect from '../shared/SearchableSelect'
  *   parts        - array of parts from useParts()
  *   userProfile  - current user profile object
  */
-export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMechanic, parts, userProfile }) {
+const CREATE_PART_SENTINEL = '__create_part__'
+
+export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMechanic, parts, userProfile, jobCardType }) {
     const updateIssue = useUpdateIssue()
     const addIssuePart = useAddIssuePart(jobCardId)
     const deleteIssuePart = useDeleteIssuePart(jobCardId)
+    const createPart = useCreatePart()
+    const { data: partUnits = [] } = usePartUnits()
+
+    const isOutsource = jobCardType === 'Outsource'
 
     const [form, setForm] = useState({
         labourHours: issue.labour_hours != null ? String(issue.labour_hours) : '',
@@ -28,6 +37,11 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
         partQty: '',
     })
     const [labourSaved, setLabourSaved] = useState(false)
+    const [deleteError, setDeleteError] = useState(null)
+    const [showCreateForm, setShowCreateForm] = useState(false)
+    const [newPartName, setNewPartName] = useState('')
+    const [newPartUnit, setNewPartUnit] = useState('')
+    const [newPartNumber, setNewPartNumber] = useState('')
 
     // Re-sync labourHours when issue prop changes (e.g. after refetch)
     useEffect(() => {
@@ -61,10 +75,22 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
     }
 
     const handleDeletePart = async (issuePartId) => {
+        setDeleteError(null)
         try {
-            await deleteIssuePart.mutateAsync(issuePartId)
+            const result = await deleteIssuePart.mutateAsync(issuePartId)
+            for (const scrapId of result?.reversed_scrap_ids || []) {
+                await logAuditEvent(scrapId, 'scrap_inventory', 'UPDATE', userProfile?.id, {
+                    oldData:       { status: 'in_storage' },
+                    newData:       { status: 'reversed' },
+                    changedFields: ['status', 'updated_at', 'updated_by'],
+                })
+            }
         } catch (e) {
-            alert('Failed to remove part: ' + e.message)
+            if (e instanceof ScrapRPCError && e.errorCode === 'SCRAP_BLOCKING_DELETE') {
+                setDeleteError({ partId: issuePartId, message: e.message })
+            } else {
+                alert('Failed to remove part: ' + e.message)
+            }
         }
     }
 
@@ -88,6 +114,40 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
         } catch (e) {
             alert('Failed to add part: ' + e.message)
+        }
+    }
+
+    const handlePartSelect = (val) => {
+        if (val === CREATE_PART_SENTINEL) {
+            setShowCreateForm(true)
+            return
+        }
+        setForm(prev => ({ ...prev, selectedPartId: val }))
+    }
+
+    const handleCreatePart = async () => {
+        if (!newPartName.trim()) { alert('Part name is required.'); return }
+        if (!newPartUnit) { alert('Unit is required.'); return }
+        const duplicate = parts.find(
+            p => p.name.trim().toLowerCase() === newPartName.trim().toLowerCase()
+        )
+        if (duplicate) {
+            alert('This part already exists — please select it from the dropdown.')
+            return
+        }
+        try {
+            const created = await createPart.mutateAsync({
+                name: newPartName,
+                unit: newPartUnit,
+                part_number: newPartNumber || null,
+            })
+            setForm(prev => ({ ...prev, selectedPartId: created.id }))
+            setShowCreateForm(false)
+            setNewPartName('')
+            setNewPartUnit('')
+            setNewPartNumber('')
+        } catch (e) {
+            alert('Failed to create part: ' + e.message)
         }
     }
 
@@ -184,23 +244,31 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
 
                 {/* Existing parts list */}
                 {issue.issue_parts && issue.issue_parts.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5 mb-2">
-                        {issue.issue_parts.map(ip => (
-                            <span key={ip.id} className="inline-flex items-center gap-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1">
-                                {ip.part?.name} &times; {ip.quantity_used} {ip.part?.unit}
-                                {canEdit && (
-                                    <button
-                                        onClick={() => handleDeletePart(ip.id)}
-                                        disabled={isPending}
-                                        className="text-gray-500 hover:text-red-500 transition-colors disabled:opacity-50 leading-none"
-                                        title="Remove part"
-                                    >
-                                        &times;
-                                    </button>
-                                )}
-                            </span>
-                        ))}
-                    </div>
+                    <>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                            {issue.issue_parts.map(ip => (
+                                <span key={ip.id} className="inline-flex items-center gap-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1">
+                                    {ip.part?.name} &times; {ip.quantity_used} {ip.part?.unit}
+                                    {canEdit && (
+                                        <button
+                                            onClick={() => handleDeletePart(ip.id)}
+                                            disabled={isPending}
+                                            className="text-gray-500 hover:text-red-500 transition-colors disabled:opacity-50 leading-none"
+                                            title="Remove part"
+                                        >
+                                            &times;
+                                        </button>
+                                    )}
+                                </span>
+                            ))}
+                        </div>
+                        {deleteError && (
+                            <p className="text-xs text-red-600 mt-1">
+                                {deleteError.message}{' '}
+                                <Link to="/scrap" className="underline">View scrap</Link>
+                            </p>
+                        )}
+                    </>
                 ) : (
                     !form.showAddPart && (
                         <p className="text-xs text-gray-500 italic">No parts added</p>
@@ -212,14 +280,66 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                     <div className="flex flex-col gap-2 mt-2">
                         <SearchableSelect
                             value={form.selectedPartId}
-                            onChange={val => setForm(prev => ({ ...prev, selectedPartId: val }))}
+                            onChange={handlePartSelect}
                             options={parts.map(p => ({
                                 value: p.id,
-                                label: `${p.name}${p.part_number ? ` (${p.part_number})` : ''} — ${p.quantity_in_stock} ${p.unit} in stock`,
+                                label: isOutsource
+                                    ? `${p.name}${p.part_number ? ` (${p.part_number})` : ''}`
+                                    : `${p.name}${p.part_number ? ` (${p.part_number})` : ''} — ${p.quantity_in_stock} ${p.unit} in stock`,
                             }))}
+                            pinnedOption={isOutsource ? { value: CREATE_PART_SENTINEL, label: '+ Create new part' } : null}
                             placeholder="Select a part..."
                             showAllOnFocus={true}
                         />
+
+                        {/* Inline create-part form — outsource only */}
+                        {showCreateForm && isOutsource && (
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
+                                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">New part</p>
+                                <input
+                                    type="text"
+                                    value={newPartName}
+                                    onChange={e => setNewPartName(e.target.value)}
+                                    placeholder="Part name *"
+                                    className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <div className="flex gap-2">
+                                    <select
+                                        value={newPartUnit}
+                                        onChange={e => setNewPartUnit(e.target.value)}
+                                        className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                                    >
+                                        <option value="">Unit *</option>
+                                        {partUnits.map(u => (
+                                            <option key={u.id} value={u.name}>{u.name}</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        type="text"
+                                        value={newPartNumber}
+                                        onChange={e => setNewPartNumber(e.target.value)}
+                                        placeholder="Part no. (optional)"
+                                        className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handleCreatePart}
+                                        disabled={createPart.isPending}
+                                        className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                    >
+                                        {createPart.isPending ? 'Creating…' : 'Create & select'}
+                                    </button>
+                                    <button
+                                        onClick={() => { setShowCreateForm(false); setNewPartName(''); setNewPartUnit(''); setNewPartNumber('') }}
+                                        className="text-sm px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex items-center gap-2">
                             <input
                                 type="number"

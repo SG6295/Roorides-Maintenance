@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from '@headlessui/react'
 import { useAuth } from '../hooks/useAuth'
 import { useJobCard, useUpdateJobCard } from '../hooks/useJobCards'
+import { useOutsourceInvoice, useUpsertOutsourceInvoice } from '../hooks/useOutsourceInvoices'
 import { useApprovedSuppliers } from '../hooks/useSuppliers'
 import { useParts } from '../hooks/useParts'
 import Navigation from '../components/shared/Navigation'
@@ -31,6 +32,27 @@ const JOB_LOCATION_OPTIONS = [
 ]
 
 const QUICK_ADD_SENTINEL = '__quick_add__'
+
+function validateInvoiceForm(f, today) {
+    const errors = {}
+    if (!f.dateOfActivity) errors.dateOfActivity = 'Required'
+    else if (f.dateOfActivity > today) errors.dateOfActivity = 'Cannot be in the future'
+    if (!f.invoiceNo.trim()) errors.invoiceNo = 'Required'
+    else if (f.invoiceNo.trim().length > 50) errors.invoiceNo = 'Max 50 characters'
+    if (!f.paidBy) errors.paidBy = 'Required'
+    const iv = parseFloat(f.invoiceValue)
+    if (f.invoiceValue === '' || isNaN(iv) || iv <= 0) errors.invoiceValue = 'Must be > 0'
+    const aa = parseFloat(f.approvedAmount)
+    if (f.approvedAmount === '' || isNaN(aa) || aa < 0) errors.approvedAmount = 'Must be ≥ 0'
+    else if (!isNaN(iv) && aa > iv) errors.approvedAmount = 'Must be ≤ invoice value'
+    const adv = parseFloat(f.advanceAmount)
+    if (f.advanceAmount === '' || isNaN(adv) || adv < 0) errors.advanceAmount = 'Must be ≥ 0'
+    else if (!isNaN(aa) && adv > aa) errors.advanceAmount = 'Must be ≤ approved amount'
+    if (!f.paymentStatus) errors.paymentStatus = 'Required'
+    if (!f.paybyDate) errors.paybyDate = 'Required'
+    else if (f.dateOfActivity && f.paybyDate < f.dateOfActivity) errors.paybyDate = 'Must be ≥ date of activity'
+    return errors
+}
 
 export default function JobCardDetail() {
     const { id } = useParams()
@@ -58,6 +80,21 @@ export default function JobCardDetail() {
     const [selectedSupplierId, setSelectedSupplierId] = useState('')
     const [showQuickAddModal, setShowQuickAddModal] = useState(false)
     const [showScrapModal, setShowScrapModal] = useState(false)
+    const [scrapRaceError, setScrapRaceError] = useState(null)
+
+    const [invoiceForm, setInvoiceForm] = useState({
+        dateOfActivity: '',
+        invoiceNo: '',
+        paidBy: '',
+        invoiceValue: '',
+        approvedAmount: '',
+        advanceAmount: '',
+        paymentStatus: '',
+        paybyDate: '',
+    })
+    const [showInvoiceErrors, setShowInvoiceErrors] = useState(false)
+
+    const todayStr = new Date().toISOString().split('T')[0]
 
     useEffect(() => {
         if (jobCard) {
@@ -81,6 +118,25 @@ export default function JobCardDetail() {
         },
         enabled: isExec,
     })
+
+    const { data: existingInvoice } = useOutsourceInvoice(
+        jobCard?.type === 'Outsource' ? jobCard?.id : null
+    )
+    const upsertInvoice = useUpsertOutsourceInvoice()
+
+    useEffect(() => {
+        if (!existingInvoice) return
+        setInvoiceForm({
+            dateOfActivity: existingInvoice.date_of_activity || '',
+            invoiceNo: existingInvoice.invoice_no || '',
+            paidBy: existingInvoice.paid_by || '',
+            invoiceValue: existingInvoice.invoice_value != null ? String(existingInvoice.invoice_value) : '',
+            approvedAmount: existingInvoice.approved_amount != null ? String(existingInvoice.approved_amount) : '',
+            advanceAmount: existingInvoice.advance_amount != null ? String(existingInvoice.advance_amount) : '',
+            paymentStatus: existingInvoice.payment_status || '',
+            paybyDate: existingInvoice.payby_date || '',
+        })
+    }, [existingInvoice])
 
     if (isLoading) return <TicketDetailSkeleton />
     if (!jobCard) return <div className="p-8 text-center">Job Card not found</div>
@@ -161,7 +217,35 @@ export default function JobCardDetail() {
         }
     }
 
-    const handleCompleteJobCard = () => setShowScrapModal(true)
+    const handleCompleteJobCard = async () => {
+        if (jobCard.type === 'Outsource') {
+            const errors = validateInvoiceForm(invoiceForm, todayStr)
+            if (Object.keys(errors).length > 0) {
+                setShowInvoiceErrors(true)
+                return
+            }
+            try {
+                await upsertInvoice.mutateAsync({
+                    jobCardId: jobCard.id,
+                    userId: userProfile?.id,
+                    data: {
+                        date_of_activity: invoiceForm.dateOfActivity,
+                        invoice_no: invoiceForm.invoiceNo.trim(),
+                        paid_by: invoiceForm.paidBy,
+                        invoice_value: parseFloat(invoiceForm.invoiceValue),
+                        approved_amount: parseFloat(invoiceForm.approvedAmount),
+                        advance_amount: parseFloat(invoiceForm.advanceAmount),
+                        payment_status: invoiceForm.paymentStatus,
+                        payby_date: invoiceForm.paybyDate,
+                    },
+                })
+            } catch (e) {
+                alert('Failed to save invoice details: ' + e.message)
+                return
+            }
+        }
+        setShowScrapModal(true)
+    }
 
     const handleReopenJobCard = async () => {
         if (!window.confirm('Reopen this Job Card? This will allow parts and labour to be updated.')) return
@@ -190,8 +274,18 @@ export default function JobCardDetail() {
     const completedIssues = jobCard.issues?.filter(i => i.status === 'Done').length || 0
     const progress = totalIssues > 0 ? (completedIssues / totalIssues) * 100 : 0
     const isAllDone = totalIssues > 0 && totalIssues === completedIssues
-    const needsInvoice = jobCard.type === 'Outsource' && !jobCard.invoice_url
-    const canComplete = isAllDone && !needsInvoice
+    const isOutsource = jobCard.type === 'Outsource'
+    const needsInvoiceFile = isOutsource && !jobCard.invoice_url
+    const invoiceErrs = isOutsource ? validateInvoiceForm(invoiceForm, todayStr) : {}
+    const invoiceValid = Object.keys(invoiceErrs).length === 0
+    const hasSupplier = isOutsource ? !!jobCard.supplier_id : true
+    const hasPayments = (existingInvoice?.payments?.length ?? 0) > 0
+    const payableAmount = (() => {
+        const aa = parseFloat(invoiceForm.approvedAmount)
+        const adv = parseFloat(invoiceForm.advanceAmount)
+        return !isNaN(aa) && !isNaN(adv) ? aa - adv : null
+    })()
+    const canComplete = isAllDone && !needsInvoiceFile && invoiceValid && hasSupplier
 
     const jobLocationLabel = jobCard.type === 'InHouse' ? 'In-house' : 'Outsource'
 
@@ -205,6 +299,19 @@ export default function JobCardDetail() {
             />
 
             <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
+
+                {scrapRaceError && (
+                    <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 flex items-start justify-between gap-3">
+                        <p className="text-sm text-amber-800">{scrapRaceError}</p>
+                        <button
+                            type="button"
+                            onClick={() => setScrapRaceError(null)}
+                            className="text-amber-500 hover:text-amber-700 shrink-0 text-lg leading-none"
+                        >
+                            &times;
+                        </button>
+                    </div>
+                )}
 
                 {/* ── Header Card ──────────────────────────────────────────── */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
@@ -464,13 +571,225 @@ export default function JobCardDetail() {
                                     isMechanic={isMechanic}
                                     parts={parts}
                                     userProfile={userProfile}
+                                    jobCardType={jobCard.type}
                                 />
                             ))}
                         </div>
                     )}
                 </div>
 
-                {/* ── Invoice (Outsource only) ─────────────────────────────── */}
+                {/* ── Invoice Details form (Outsource only) ────────────────── */}
+                {isOutsource && (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                        <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-3">
+                            Invoice Details
+                        </h2>
+
+                        {jobCard.status === 'Completed' ? (
+                            /* Read-only display after closure */
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                                {[
+                                    ['Date of Activity', existingInvoice?.date_of_activity
+                                        ? format(new Date(existingInvoice.date_of_activity), 'dd MMM yyyy')
+                                        : '—'],
+                                    ['Invoice No', existingInvoice?.invoice_no || '—'],
+                                    ['Paid By', existingInvoice?.paid_by || '—'],
+                                    ['Payment Status', existingInvoice?.payment_status || '—'],
+                                    ['Invoice Value', existingInvoice?.invoice_value != null
+                                        ? `₹${Number(existingInvoice.invoice_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                                        : '—'],
+                                    ['Approved Amount', existingInvoice?.approved_amount != null
+                                        ? `₹${Number(existingInvoice.approved_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                                        : '—'],
+                                    ['Advance Amount', existingInvoice?.advance_amount != null
+                                        ? `₹${Number(existingInvoice.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                                        : '—'],
+                                    ['Payable Amount', (existingInvoice?.approved_amount != null && existingInvoice?.advance_amount != null)
+                                        ? `₹${Number(existingInvoice.approved_amount - existingInvoice.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                                        : '—'],
+                                    ['Pay By Date', existingInvoice?.payby_date
+                                        ? format(new Date(existingInvoice.payby_date), 'dd MMM yyyy')
+                                        : '—'],
+                                ].map(([label, value]) => (
+                                    <div key={label}>
+                                        <p className="text-xs text-gray-500 mb-0.5">{label}</p>
+                                        <p className="font-medium text-gray-900">{value}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            /* Editable form — shown while job card is Open */
+                            <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Date of Activity <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={invoiceForm.dateOfActivity}
+                                            max={todayStr}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, dateOfActivity: e.target.value }))}
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.dateOfActivity ? 'border-red-400' : 'border-gray-300'}`}
+                                        />
+                                        {showInvoiceErrors && invoiceErrs.dateOfActivity && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.dateOfActivity}</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Invoice No <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={invoiceForm.invoiceNo}
+                                            maxLength={50}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, invoiceNo: e.target.value }))}
+                                            placeholder="e.g. INV-2024-001"
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.invoiceNo ? 'border-red-400' : 'border-gray-300'}`}
+                                        />
+                                        {showInvoiceErrors && invoiceErrs.invoiceNo && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.invoiceNo}</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Paid By <span className="text-red-500">*</span>
+                                        </label>
+                                        <select
+                                            value={invoiceForm.paidBy}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, paidBy: e.target.value }))}
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.paidBy ? 'border-red-400' : 'border-gray-300'}`}
+                                        >
+                                            <option value="">Select…</option>
+                                            <option>Accounts</option>
+                                            <option>Nithin</option>
+                                            <option>Manjunath</option>
+                                        </select>
+                                        {showInvoiceErrors && invoiceErrs.paidBy && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paidBy}</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Payment Status <span className="text-red-500">*</span>
+                                        </label>
+                                        <select
+                                            value={invoiceForm.paymentStatus}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, paymentStatus: e.target.value }))}
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.paymentStatus ? 'border-red-400' : 'border-gray-300'}`}
+                                        >
+                                            <option value="">Select…</option>
+                                            <option>Approved</option>
+                                            <option>Hold</option>
+                                            <option>Reject</option>
+                                        </select>
+                                        {showInvoiceErrors && invoiceErrs.paymentStatus && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paymentStatus}</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Invoice Value (₹) <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min="0.01"
+                                            step="0.01"
+                                            value={invoiceForm.invoiceValue}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, invoiceValue: e.target.value }))}
+                                            placeholder="0.00"
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.invoiceValue ? 'border-red-400' : 'border-gray-300'}`}
+                                        />
+                                        {showInvoiceErrors && invoiceErrs.invoiceValue && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.invoiceValue}</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Approved Amount (₹) <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={invoiceForm.approvedAmount}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, approvedAmount: e.target.value }))}
+                                            placeholder="0.00"
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.approvedAmount ? 'border-red-400' : 'border-gray-300'}`}
+                                        />
+                                        {showInvoiceErrors && invoiceErrs.approvedAmount && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.approvedAmount}</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Advance Amount (₹) <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={invoiceForm.advanceAmount}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, advanceAmount: e.target.value }))}
+                                            placeholder="0.00"
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.advanceAmount ? 'border-red-400' : 'border-gray-300'}`}
+                                        />
+                                        {showInvoiceErrors && invoiceErrs.advanceAmount && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.advanceAmount}</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Payable Amount (₹)
+                                        </label>
+                                        <div className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 font-medium text-gray-900 min-h-[38px]">
+                                            {payableAmount !== null
+                                                ? `₹${payableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                                                : <span className="text-gray-400 font-normal">Auto-computed</span>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Pay By Date <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={invoiceForm.paybyDate}
+                                            min={invoiceForm.dateOfActivity || undefined}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, paybyDate: e.target.value }))}
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.paybyDate ? 'border-red-400' : 'border-gray-300'}`}
+                                        />
+                                        {showInvoiceErrors && invoiceErrs.paybyDate && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paybyDate}</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {showInvoiceErrors && !jobCard.supplier_id && (
+                                    <p className="text-xs text-red-600">
+                                        A supplier must be assigned before completing this job card.
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ── Invoice file upload (Outsource only) ─────────────────── */}
                 {jobCard.type === 'Outsource' && (
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                         <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-3">
@@ -540,12 +859,16 @@ export default function JobCardDetail() {
                 {isExec && jobCard.status !== 'Completed' && (
                     <button
                         onClick={handleCompleteJobCard}
-                        disabled={!canComplete || updateJobCard.isPending}
+                        disabled={!canComplete || updateJobCard.isPending || upsertInvoice.isPending}
                         title={
                             !isAllDone
                                 ? 'Mark all issues as Done first'
-                                : needsInvoice
+                                : needsInvoiceFile
                                 ? 'Upload an invoice before completing'
+                                : !hasSupplier
+                                ? 'Assign a supplier before completing'
+                                : !invoiceValid
+                                ? 'Fill in all required invoice details'
                                 : ''
                         }
                         className={`w-full py-4 rounded-xl text-base font-semibold text-white shadow-sm transition-colors ${
@@ -554,19 +877,26 @@ export default function JobCardDetail() {
                                 : 'bg-gray-300 cursor-not-allowed'
                         }`}
                     >
-                        Complete Job Card
+                        {upsertInvoice.isPending ? 'Saving invoice…' : 'Complete Job Card'}
                     </button>
                 )}
 
                 {/* ── Reopen Job Card — exec only ──────────────────────────── */}
                 {isExec && jobCard.status === 'Completed' && (
-                    <button
-                        onClick={handleReopenJobCard}
-                        disabled={updateJobCard.isPending}
-                        className="w-full py-4 rounded-xl text-base font-semibold text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 shadow-sm transition-colors disabled:opacity-50"
-                    >
-                        Reopen Job Card
-                    </button>
+                    <>
+                        {isOutsource && hasPayments && (
+                            <p className="text-sm text-red-600 text-center px-4">
+                                Cannot revert — payments have been recorded for this invoice. Contact finance to handle this manually.
+                            </p>
+                        )}
+                        <button
+                            onClick={handleReopenJobCard}
+                            disabled={updateJobCard.isPending || (isOutsource && hasPayments)}
+                            className="w-full py-4 rounded-xl text-base font-semibold text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Reopen Job Card
+                        </button>
+                    </>
                 )}
 
             </div>
@@ -584,6 +914,7 @@ export default function JobCardDetail() {
                     jobCard={jobCard}
                     onClose={() => setShowScrapModal(false)}
                     onSuccess={() => setShowScrapModal(false)}
+                    onRaceError={msg => { setShowScrapModal(false); setScrapRaceError(msg) }}
                 />
             )}
         </div>

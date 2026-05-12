@@ -13,10 +13,12 @@ import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
 import FeedbackReport from './pages/FeedbackReport'
 import Inventory from './pages/Inventory'
+import Scrap from './pages/Scrap'
 import VehicleHistory from './pages/VehicleHistory'
 import MechanicDetail from './pages/MechanicDetail'
 import Vehicles from './pages/Vehicles'
 
+import OutsourceInvoices from './pages/OutsourceInvoices'
 import Suppliers from './pages/Suppliers'
 import SupplierDetail from './pages/SupplierDetail'
 import SupplierRegistration from './pages/SupplierRegistration'
@@ -171,6 +173,14 @@ function App() {
               }
             />
             <Route
+              path="/scrap"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <Scrap />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/vehicles"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
@@ -205,6 +215,14 @@ function App() {
             {/* Public supplier registration — no auth required */}
             <Route path="/supplier-registration" element={<SupplierRegistration />} />
 
+            <Route
+              path="/outsource-invoices"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance', 'supervisor']}>
+                  <OutsourceInvoices />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/suppliers"
               element={
