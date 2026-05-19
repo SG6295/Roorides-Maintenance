@@ -52,7 +52,6 @@ ALTER SCHEMA extensions OWNER TO postgres;
 -- Name: graphql; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA graphql;
 
 
 ALTER SCHEMA graphql OWNER TO supabase_admin;
@@ -61,7 +60,6 @@ ALTER SCHEMA graphql OWNER TO supabase_admin;
 -- Name: graphql_public; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA graphql_public;
 
 
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
@@ -84,7 +82,6 @@ COMMENT ON EXTENSION pg_net IS 'Async HTTP';
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 
-CREATE SCHEMA pgbouncer;
 
 
 ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
@@ -109,7 +106,6 @@ ALTER SCHEMA storage OWNER TO supabase_admin;
 -- Name: supabase_migrations; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
-CREATE SCHEMA supabase_migrations;
 
 
 ALTER SCHEMA supabase_migrations OWNER TO postgres;
@@ -118,7 +114,6 @@ ALTER SCHEMA supabase_migrations OWNER TO postgres;
 -- Name: vault; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA vault;
 
 
 ALTER SCHEMA vault OWNER TO supabase_admin;
