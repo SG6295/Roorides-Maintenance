@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.1
 
@@ -19,35 +18,7 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pg_cron; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
-
-
---
--- Name: EXTENSION pg_cron; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION pg_cron IS 'Job scheduler for PostgreSQL';
-
-
---
--- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA public;
-
-
---
--- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION pg_net IS 'Async HTTP';
-
-
---
--- Name: issue_category; Type: TYPE; Schema: public; Owner: postgres
+-- Name: issue_category; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.issue_category AS ENUM (
@@ -61,10 +32,8 @@ CREATE TYPE public.issue_category AS ENUM (
 );
 
 
-ALTER TYPE public.issue_category OWNER TO postgres;
-
 --
--- Name: issue_severity; Type: TYPE; Schema: public; Owner: postgres
+-- Name: issue_severity; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.issue_severity AS ENUM (
@@ -73,10 +42,8 @@ CREATE TYPE public.issue_severity AS ENUM (
 );
 
 
-ALTER TYPE public.issue_severity OWNER TO postgres;
-
 --
--- Name: issue_status; Type: TYPE; Schema: public; Owner: postgres
+-- Name: issue_status; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.issue_status AS ENUM (
@@ -86,10 +53,8 @@ CREATE TYPE public.issue_status AS ENUM (
 );
 
 
-ALTER TYPE public.issue_status OWNER TO postgres;
-
 --
--- Name: job_card_status; Type: TYPE; Schema: public; Owner: postgres
+-- Name: job_card_status; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.job_card_status AS ENUM (
@@ -98,10 +63,8 @@ CREATE TYPE public.job_card_status AS ENUM (
 );
 
 
-ALTER TYPE public.job_card_status OWNER TO postgres;
-
 --
--- Name: outsource_part_disposition; Type: TYPE; Schema: public; Owner: postgres
+-- Name: outsource_part_disposition; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.outsource_part_disposition AS ENUM (
@@ -111,10 +74,8 @@ CREATE TYPE public.outsource_part_disposition AS ENUM (
 );
 
 
-ALTER TYPE public.outsource_part_disposition OWNER TO postgres;
-
 --
--- Name: rating_enum; Type: TYPE; Schema: public; Owner: postgres
+-- Name: rating_enum; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.rating_enum AS ENUM (
@@ -124,10 +85,8 @@ CREATE TYPE public.rating_enum AS ENUM (
 );
 
 
-ALTER TYPE public.rating_enum OWNER TO postgres;
-
 --
--- Name: scrap_exclusion_reason; Type: TYPE; Schema: public; Owner: postgres
+-- Name: scrap_exclusion_reason; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.scrap_exclusion_reason AS ENUM (
@@ -138,10 +97,8 @@ CREATE TYPE public.scrap_exclusion_reason AS ENUM (
 );
 
 
-ALTER TYPE public.scrap_exclusion_reason OWNER TO postgres;
-
 --
--- Name: scrap_item_status; Type: TYPE; Schema: public; Owner: postgres
+-- Name: scrap_item_status; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.scrap_item_status AS ENUM (
@@ -154,10 +111,8 @@ CREATE TYPE public.scrap_item_status AS ENUM (
 );
 
 
-ALTER TYPE public.scrap_item_status OWNER TO postgres;
-
 --
--- Name: scrap_payment_mode; Type: TYPE; Schema: public; Owner: postgres
+-- Name: scrap_payment_mode; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.scrap_payment_mode AS ENUM (
@@ -169,10 +124,8 @@ CREATE TYPE public.scrap_payment_mode AS ENUM (
 );
 
 
-ALTER TYPE public.scrap_payment_mode OWNER TO postgres;
-
 --
--- Name: scrap_writeoff_reason; Type: TYPE; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_reason; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.scrap_writeoff_reason AS ENUM (
@@ -185,10 +138,8 @@ CREATE TYPE public.scrap_writeoff_reason AS ENUM (
 );
 
 
-ALTER TYPE public.scrap_writeoff_reason OWNER TO postgres;
-
 --
--- Name: sla_status_enum; Type: TYPE; Schema: public; Owner: postgres
+-- Name: sla_status_enum; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.sla_status_enum AS ENUM (
@@ -198,10 +149,8 @@ CREATE TYPE public.sla_status_enum AS ENUM (
 );
 
 
-ALTER TYPE public.sla_status_enum OWNER TO postgres;
-
 --
--- Name: ticket_status_new; Type: TYPE; Schema: public; Owner: postgres
+-- Name: ticket_status_new; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.ticket_status_new AS ENUM (
@@ -214,10 +163,8 @@ CREATE TYPE public.ticket_status_new AS ENUM (
 );
 
 
-ALTER TYPE public.ticket_status_new OWNER TO postgres;
-
 --
--- Name: work_type_enum; Type: TYPE; Schema: public; Owner: postgres
+-- Name: work_type_enum; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.work_type_enum AS ENUM (
@@ -226,10 +173,8 @@ CREATE TYPE public.work_type_enum AS ENUM (
 );
 
 
-ALTER TYPE public.work_type_enum OWNER TO postgres;
-
 --
--- Name: add_part_to_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: add_part_to_inventory(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.add_part_to_inventory() RETURNS trigger
@@ -244,10 +189,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.add_part_to_inventory() OWNER TO postgres;
-
 --
--- Name: add_working_days(date, integer); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: add_working_days(date, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.add_working_days(start_date date, n_days integer) RETURNS date
@@ -283,10 +226,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.add_working_days(start_date date, n_days integer) OWNER TO postgres;
-
 --
--- Name: adjust_part_inventory_on_update(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: adjust_part_inventory_on_update(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.adjust_part_inventory_on_update() RETURNS trigger
@@ -308,10 +249,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.adjust_part_inventory_on_update() OWNER TO postgres;
-
 --
--- Name: calculate_issue_sla_dynamic(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: calculate_issue_sla_dynamic(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.calculate_issue_sla_dynamic() RETURNS trigger
@@ -342,10 +281,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.calculate_issue_sla_dynamic() OWNER TO postgres;
-
 --
--- Name: calculate_sla_days(text, text); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: calculate_sla_days(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.calculate_sla_days(p_impact text, p_category text) RETURNS integer
@@ -365,10 +302,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.calculate_sla_days(p_impact text, p_category text) OWNER TO postgres;
-
 --
--- Name: calculate_ticket_overall_sla(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: calculate_ticket_overall_sla(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.calculate_ticket_overall_sla() RETURNS trigger
@@ -408,10 +343,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.calculate_ticket_overall_sla() OWNER TO postgres;
-
 --
--- Name: check_pan_exists(text); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: check_pan_exists(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.check_pan_exists(p_pan text) RETURNS boolean
@@ -423,10 +356,8 @@ CREATE FUNCTION public.check_pan_exists(p_pan text) RETURNS boolean
 $$;
 
 
-ALTER FUNCTION public.check_pan_exists(p_pan text) OWNER TO postgres;
-
 --
--- Name: close_job_card_with_scrap(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: close_job_card_with_scrap(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) RETURNS jsonb
@@ -692,10 +623,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) OWNER TO postgres;
-
 --
--- Name: deduct_part_from_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: deduct_part_from_inventory(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.deduct_part_from_inventory() RETURNS trigger
@@ -723,10 +652,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.deduct_part_from_inventory() OWNER TO postgres;
-
 --
--- Name: delete_issue_part_with_scrap_check(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: delete_issue_part_with_scrap_check(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) RETURNS jsonb
@@ -787,10 +714,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) OWNER TO postgres;
-
 --
--- Name: evaluate_acceptance_sla(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: evaluate_acceptance_sla(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) RETURNS public.sla_status_enum
@@ -814,10 +739,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) OWNER TO postgres;
-
 --
--- Name: generate_issue_number(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: generate_issue_number(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.generate_issue_number() RETURNS trigger
@@ -835,10 +758,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.generate_issue_number() OWNER TO postgres;
-
 --
--- Name: get_blocking_scrap_for_issue_part(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_blocking_scrap_for_issue_part(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) RETURNS jsonb
@@ -883,10 +804,8 @@ CREATE FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) R
 $$;
 
 
-ALTER FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) OWNER TO postgres;
-
 --
--- Name: get_maintenance_stats(date, date, text); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_maintenance_stats(date, date, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.get_maintenance_stats(start_date_input date DEFAULT NULL::date, end_date_input date DEFAULT NULL::date, site_filter text DEFAULT NULL::text) RETURNS TABLE(total_tickets bigint, status_new bigint, status_pending bigint, status_accepted bigint, status_wip bigint, status_resolved bigint, status_closed bigint, status_rejected bigint, status_completed bigint, major_total bigint, major_electrical bigint, major_mechanical bigint, major_body bigint, major_tyre bigint, minor_total bigint, minor_electrical bigint, minor_mechanical bigint, minor_body bigint, minor_tyre bigint, type_in_house bigint, type_outsource bigint, accept_pending bigint, accept_adhered bigint, accept_violated bigint, comp_in_wip_within bigint, comp_in_adhered bigint, comp_in_violated bigint, comp_out_wip_within bigint, comp_out_adhered bigint, comp_out_violated bigint, rating_pending bigint, rating_collected bigint, rating_good bigint, rating_ok bigint, rating_bad bigint, csat_score_sum bigint, total_completed_tickets bigint)
@@ -996,10 +915,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) OWNER TO postgres;
-
 --
--- Name: get_outsource_invoice_summary(text[], text[], date, date); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_outsource_invoice_summary(text[], text[], date, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.get_outsource_invoice_summary(p_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date) RETURNS TABLE(total_unpaid_payable numeric, overdue_count bigint, pending_approval_count bigint)
@@ -1039,10 +956,8 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_payment_status text[] DEF
 $$;
 
 
-ALTER FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) OWNER TO postgres;
-
 --
--- Name: is_maintenance_exec(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: is_maintenance_exec(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.is_maintenance_exec() RETURNS boolean
@@ -1055,10 +970,8 @@ CREATE FUNCTION public.is_maintenance_exec() RETURNS boolean
 $$;
 
 
-ALTER FUNCTION public.is_maintenance_exec() OWNER TO postgres;
-
 --
--- Name: is_super_admin(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: is_super_admin(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.is_super_admin() RETURNS boolean
@@ -1071,10 +984,8 @@ CREATE FUNCTION public.is_super_admin() RETURNS boolean
 $$;
 
 
-ALTER FUNCTION public.is_super_admin() OWNER TO postgres;
-
 --
--- Name: job_card_site_accessible_to_user(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: job_card_site_accessible_to_user(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) RETURNS boolean
@@ -1094,10 +1005,8 @@ CREATE FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) RETU
 $$;
 
 
-ALTER FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) OWNER TO postgres;
-
 --
--- Name: recalculate_ticket_sla_on_status_change(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: recalculate_ticket_sla_on_status_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.recalculate_ticket_sla_on_status_change() RETURNS trigger
@@ -1131,10 +1040,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.recalculate_ticket_sla_on_status_change() OWNER TO postgres;
-
 --
--- Name: record_scrap_disposal(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: record_scrap_disposal(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) RETURNS jsonb
@@ -1356,10 +1263,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) OWNER TO postgres;
-
 --
--- Name: record_scrap_writeoff(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: record_scrap_writeoff(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) RETURNS jsonb
@@ -1534,10 +1439,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) OWNER TO postgres;
-
 --
--- Name: restore_part_to_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: restore_part_to_inventory(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.restore_part_to_inventory() RETURNS trigger
@@ -1565,10 +1468,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.restore_part_to_inventory() OWNER TO postgres;
-
 --
--- Name: reverse_part_inventory_on_delete(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: reverse_part_inventory_on_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.reverse_part_inventory_on_delete() RETURNS trigger
@@ -1583,10 +1484,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.reverse_part_inventory_on_delete() OWNER TO postgres;
-
 --
--- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.set_updated_at() RETURNS trigger
@@ -1599,10 +1498,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
-
 --
--- Name: stamp_rejected_at_and_evaluate_acceptance_sla(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: stamp_rejected_at_and_evaluate_acceptance_sla(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() RETURNS trigger
@@ -1659,10 +1556,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() OWNER TO postgres;
-
 --
--- Name: trg_set_acceptance_sla_on_first_issue(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: trg_set_acceptance_sla_on_first_issue(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.trg_set_acceptance_sla_on_first_issue() RETURNS trigger
@@ -1683,10 +1578,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.trg_set_acceptance_sla_on_first_issue() OWNER TO postgres;
-
 --
--- Name: update_ticket_sla(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: update_ticket_sla(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.update_ticket_sla() RETURNS trigger
@@ -1738,10 +1631,8 @@ END;
 $$;
 
 
-ALTER FUNCTION public.update_ticket_sla() OWNER TO postgres;
-
 --
--- Name: update_ticket_status_on_issue_change(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: update_ticket_status_on_issue_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.update_ticket_status_on_issue_change() RETURNS trigger
@@ -1793,10 +1684,12 @@ END;
 $$;
 
 
-ALTER FUNCTION public.update_ticket_status_on_issue_change() OWNER TO postgres;
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
 
 --
--- Name: audit_logs; Type: TABLE; Schema: public; Owner: postgres
+-- Name: audit_logs; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.audit_logs (
@@ -1813,10 +1706,8 @@ CREATE TABLE public.audit_logs (
 );
 
 
-ALTER TABLE public.audit_logs OWNER TO postgres;
-
 --
--- Name: finance_entries; Type: TABLE; Schema: public; Owner: postgres
+-- Name: finance_entries; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.finance_entries (
@@ -1854,10 +1745,8 @@ CREATE TABLE public.finance_entries (
 );
 
 
-ALTER TABLE public.finance_entries OWNER TO postgres;
-
 --
--- Name: holidays; Type: TABLE; Schema: public; Owner: postgres
+-- Name: holidays; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.holidays (
@@ -1868,10 +1757,8 @@ CREATE TABLE public.holidays (
 );
 
 
-ALTER TABLE public.holidays OWNER TO postgres;
-
 --
--- Name: issue_parts; Type: TABLE; Schema: public; Owner: postgres
+-- Name: issue_parts; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.issue_parts (
@@ -1888,10 +1775,8 @@ CREATE TABLE public.issue_parts (
 );
 
 
-ALTER TABLE public.issue_parts OWNER TO postgres;
-
 --
--- Name: issues; Type: TABLE; Schema: public; Owner: postgres
+-- Name: issues; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.issues (
@@ -1916,10 +1801,8 @@ CREATE TABLE public.issues (
 );
 
 
-ALTER TABLE public.issues OWNER TO postgres;
-
 --
--- Name: job_cards; Type: TABLE; Schema: public; Owner: postgres
+-- Name: job_cards; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.job_cards (
@@ -1942,10 +1825,8 @@ CREATE TABLE public.job_cards (
 );
 
 
-ALTER TABLE public.job_cards OWNER TO postgres;
-
 --
--- Name: job_cards_job_card_number_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+-- Name: job_cards_job_card_number_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
 ALTER TABLE public.job_cards ALTER COLUMN job_card_number ADD GENERATED ALWAYS AS IDENTITY (
@@ -1959,7 +1840,7 @@ ALTER TABLE public.job_cards ALTER COLUMN job_card_number ADD GENERATED ALWAYS A
 
 
 --
--- Name: tickets; Type: TABLE; Schema: public; Owner: postgres
+-- Name: tickets; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.tickets (
@@ -1994,10 +1875,8 @@ CREATE TABLE public.tickets (
 );
 
 
-ALTER TABLE public.tickets OWNER TO postgres;
-
 --
--- Name: maintenance_dashboard_stats; Type: VIEW; Schema: public; Owner: postgres
+-- Name: maintenance_dashboard_stats; Type: VIEW; Schema: public; Owner: -
 --
 
 CREATE VIEW public.maintenance_dashboard_stats AS
@@ -2018,10 +1897,8 @@ CREATE VIEW public.maintenance_dashboard_stats AS
    FROM public.tickets;
 
 
-ALTER VIEW public.maintenance_dashboard_stats OWNER TO postgres;
-
 --
--- Name: outsource_invoice_payments; Type: TABLE; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.outsource_invoice_payments (
@@ -2036,10 +1913,8 @@ CREATE TABLE public.outsource_invoice_payments (
 );
 
 
-ALTER TABLE public.outsource_invoice_payments OWNER TO postgres;
-
 --
--- Name: outsource_invoices; Type: TABLE; Schema: public; Owner: postgres
+-- Name: outsource_invoices; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.outsource_invoices (
@@ -2061,10 +1936,8 @@ CREATE TABLE public.outsource_invoices (
 );
 
 
-ALTER TABLE public.outsource_invoices OWNER TO postgres;
-
 --
--- Name: part_units; Type: TABLE; Schema: public; Owner: postgres
+-- Name: part_units; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.part_units (
@@ -2075,10 +1948,8 @@ CREATE TABLE public.part_units (
 );
 
 
-ALTER TABLE public.part_units OWNER TO postgres;
-
 --
--- Name: parts; Type: TABLE; Schema: public; Owner: postgres
+-- Name: parts; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.parts (
@@ -2093,10 +1964,8 @@ CREATE TABLE public.parts (
 );
 
 
-ALTER TABLE public.parts OWNER TO postgres;
-
 --
--- Name: purchase_invoice_items; Type: TABLE; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.purchase_invoice_items (
@@ -2112,10 +1981,8 @@ CREATE TABLE public.purchase_invoice_items (
 );
 
 
-ALTER TABLE public.purchase_invoice_items OWNER TO postgres;
-
 --
--- Name: purchase_invoices; Type: TABLE; Schema: public; Owner: postgres
+-- Name: purchase_invoices; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.purchase_invoices (
@@ -2131,10 +1998,8 @@ CREATE TABLE public.purchase_invoices (
 );
 
 
-ALTER TABLE public.purchase_invoices OWNER TO postgres;
-
 --
--- Name: scrap_disposal; Type: TABLE; Schema: public; Owner: postgres
+-- Name: scrap_disposal; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.scrap_disposal (
@@ -2153,10 +2018,8 @@ CREATE TABLE public.scrap_disposal (
 );
 
 
-ALTER TABLE public.scrap_disposal OWNER TO postgres;
-
 --
--- Name: scrap_disposal_items; Type: TABLE; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.scrap_disposal_items (
@@ -2172,10 +2035,8 @@ CREATE TABLE public.scrap_disposal_items (
 );
 
 
-ALTER TABLE public.scrap_disposal_items OWNER TO postgres;
-
 --
--- Name: scrap_excluded_parts; Type: TABLE; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.scrap_excluded_parts (
@@ -2193,10 +2054,8 @@ CREATE TABLE public.scrap_excluded_parts (
 );
 
 
-ALTER TABLE public.scrap_excluded_parts OWNER TO postgres;
-
 --
--- Name: scrap_inventory; Type: TABLE; Schema: public; Owner: postgres
+-- Name: scrap_inventory; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.scrap_inventory (
@@ -2228,10 +2087,8 @@ CREATE TABLE public.scrap_inventory (
 );
 
 
-ALTER TABLE public.scrap_inventory OWNER TO postgres;
-
 --
--- Name: scrap_writeoff; Type: TABLE; Schema: public; Owner: postgres
+-- Name: scrap_writeoff; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.scrap_writeoff (
@@ -2246,10 +2103,8 @@ CREATE TABLE public.scrap_writeoff (
 );
 
 
-ALTER TABLE public.scrap_writeoff OWNER TO postgres;
-
 --
--- Name: scrap_writeoff_items; Type: TABLE; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.scrap_writeoff_items (
@@ -2263,10 +2118,8 @@ CREATE TABLE public.scrap_writeoff_items (
 );
 
 
-ALTER TABLE public.scrap_writeoff_items OWNER TO postgres;
-
 --
--- Name: sites; Type: TABLE; Schema: public; Owner: postgres
+-- Name: sites; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.sites (
@@ -2277,10 +2130,8 @@ CREATE TABLE public.sites (
 );
 
 
-ALTER TABLE public.sites OWNER TO postgres;
-
 --
--- Name: sla_events; Type: TABLE; Schema: public; Owner: postgres
+-- Name: sla_events; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.sla_events (
@@ -2294,10 +2145,8 @@ CREATE TABLE public.sla_events (
 );
 
 
-ALTER TABLE public.sla_events OWNER TO postgres;
-
 --
--- Name: sla_rules; Type: TABLE; Schema: public; Owner: postgres
+-- Name: sla_rules; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.sla_rules (
@@ -2310,10 +2159,8 @@ CREATE TABLE public.sla_rules (
 );
 
 
-ALTER TABLE public.sla_rules OWNER TO postgres;
-
 --
--- Name: sla_rules_config; Type: TABLE; Schema: public; Owner: postgres
+-- Name: sla_rules_config; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.sla_rules_config (
@@ -2324,10 +2171,8 @@ CREATE TABLE public.sla_rules_config (
 );
 
 
-ALTER TABLE public.sla_rules_config OWNER TO postgres;
-
 --
--- Name: supervisor_dashboard_stats; Type: VIEW; Schema: public; Owner: postgres
+-- Name: supervisor_dashboard_stats; Type: VIEW; Schema: public; Owner: -
 --
 
 CREATE VIEW public.supervisor_dashboard_stats AS
@@ -2349,10 +2194,8 @@ CREATE VIEW public.supervisor_dashboard_stats AS
   GROUP BY t.site;
 
 
-ALTER VIEW public.supervisor_dashboard_stats OWNER TO postgres;
-
 --
--- Name: suppliers; Type: TABLE; Schema: public; Owner: postgres
+-- Name: suppliers; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.suppliers (
@@ -2408,10 +2251,8 @@ CREATE TABLE public.suppliers (
 );
 
 
-ALTER TABLE public.suppliers OWNER TO postgres;
-
 --
--- Name: system_settings; Type: TABLE; Schema: public; Owner: postgres
+-- Name: system_settings; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.system_settings (
@@ -2422,10 +2263,8 @@ CREATE TABLE public.system_settings (
 );
 
 
-ALTER TABLE public.system_settings OWNER TO postgres;
-
 --
--- Name: tickets_ticket_number_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+-- Name: tickets_ticket_number_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
 ALTER TABLE public.tickets ALTER COLUMN ticket_number ADD GENERATED ALWAYS AS IDENTITY (
@@ -2439,7 +2278,7 @@ ALTER TABLE public.tickets ALTER COLUMN ticket_number ADD GENERATED ALWAYS AS ID
 
 
 --
--- Name: user_settings; Type: TABLE; Schema: public; Owner: postgres
+-- Name: user_settings; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.user_settings (
@@ -2451,10 +2290,8 @@ CREATE TABLE public.user_settings (
 );
 
 
-ALTER TABLE public.user_settings OWNER TO postgres;
-
 --
--- Name: user_sites; Type: TABLE; Schema: public; Owner: postgres
+-- Name: user_sites; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.user_sites (
@@ -2465,10 +2302,8 @@ CREATE TABLE public.user_sites (
 );
 
 
-ALTER TABLE public.user_sites OWNER TO postgres;
-
 --
--- Name: users; Type: TABLE; Schema: public; Owner: postgres
+-- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.users (
@@ -2485,10 +2320,8 @@ CREATE TABLE public.users (
 );
 
 
-ALTER TABLE public.users OWNER TO postgres;
-
 --
--- Name: vehicle_sites; Type: TABLE; Schema: public; Owner: postgres
+-- Name: vehicle_sites; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.vehicle_sites (
@@ -2497,10 +2330,8 @@ CREATE TABLE public.vehicle_sites (
 );
 
 
-ALTER TABLE public.vehicle_sites OWNER TO postgres;
-
 --
--- Name: vehicles; Type: TABLE; Schema: public; Owner: postgres
+-- Name: vehicles; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.vehicles (
@@ -2517,10 +2348,8 @@ CREATE TABLE public.vehicles (
 );
 
 
-ALTER TABLE public.vehicles OWNER TO postgres;
-
 --
--- Name: audit_logs audit_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: audit_logs audit_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.audit_logs
@@ -2528,7 +2357,7 @@ ALTER TABLE ONLY public.audit_logs
 
 
 --
--- Name: finance_entries finance_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: finance_entries finance_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.finance_entries
@@ -2536,7 +2365,7 @@ ALTER TABLE ONLY public.finance_entries
 
 
 --
--- Name: holidays holidays_date_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: holidays holidays_date_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.holidays
@@ -2544,7 +2373,7 @@ ALTER TABLE ONLY public.holidays
 
 
 --
--- Name: holidays holidays_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: holidays holidays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.holidays
@@ -2552,7 +2381,7 @@ ALTER TABLE ONLY public.holidays
 
 
 --
--- Name: issue_parts issue_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issue_parts issue_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issue_parts
@@ -2560,7 +2389,7 @@ ALTER TABLE ONLY public.issue_parts
 
 
 --
--- Name: issues issues_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issues issues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issues
@@ -2568,7 +2397,7 @@ ALTER TABLE ONLY public.issues
 
 
 --
--- Name: job_cards job_cards_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: job_cards job_cards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.job_cards
@@ -2576,7 +2405,7 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
--- Name: outsource_invoice_payments outsource_invoice_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments outsource_invoice_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoice_payments
@@ -2584,7 +2413,7 @@ ALTER TABLE ONLY public.outsource_invoice_payments
 
 
 --
--- Name: outsource_invoices outsource_invoices_job_card_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoices outsource_invoices_job_card_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoices
@@ -2592,7 +2421,7 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
--- Name: outsource_invoices outsource_invoices_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoices outsource_invoices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoices
@@ -2600,7 +2429,7 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
--- Name: part_units part_units_name_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: part_units part_units_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.part_units
@@ -2608,7 +2437,7 @@ ALTER TABLE ONLY public.part_units
 
 
 --
--- Name: part_units part_units_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: part_units part_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.part_units
@@ -2616,7 +2445,7 @@ ALTER TABLE ONLY public.part_units
 
 
 --
--- Name: parts parts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: parts parts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.parts
@@ -2624,7 +2453,7 @@ ALTER TABLE ONLY public.parts
 
 
 --
--- Name: purchase_invoice_items purchase_invoice_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items purchase_invoice_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.purchase_invoice_items
@@ -2632,7 +2461,7 @@ ALTER TABLE ONLY public.purchase_invoice_items
 
 
 --
--- Name: purchase_invoices purchase_invoices_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: purchase_invoices purchase_invoices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.purchase_invoices
@@ -2640,7 +2469,7 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
--- Name: scrap_disposal_items scrap_disposal_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items scrap_disposal_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_disposal_items
@@ -2648,7 +2477,7 @@ ALTER TABLE ONLY public.scrap_disposal_items
 
 
 --
--- Name: scrap_disposal_items scrap_disposal_items_unique_item_per_disposal; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items scrap_disposal_items_unique_item_per_disposal; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_disposal_items
@@ -2656,7 +2485,7 @@ ALTER TABLE ONLY public.scrap_disposal_items
 
 
 --
--- Name: scrap_disposal scrap_disposal_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_disposal scrap_disposal_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_disposal
@@ -2664,7 +2493,7 @@ ALTER TABLE ONLY public.scrap_disposal
 
 
 --
--- Name: scrap_excluded_parts scrap_excluded_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts scrap_excluded_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_excluded_parts
@@ -2672,7 +2501,7 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 
 --
--- Name: scrap_inventory scrap_inventory_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -2680,7 +2509,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_writeoff_items scrap_writeoff_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items scrap_writeoff_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_writeoff_items
@@ -2688,7 +2517,7 @@ ALTER TABLE ONLY public.scrap_writeoff_items
 
 
 --
--- Name: scrap_writeoff_items scrap_writeoff_items_unique_item_per_writeoff; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items scrap_writeoff_items_unique_item_per_writeoff; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_writeoff_items
@@ -2696,7 +2525,7 @@ ALTER TABLE ONLY public.scrap_writeoff_items
 
 
 --
--- Name: scrap_writeoff scrap_writeoff_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_writeoff scrap_writeoff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_writeoff
@@ -2704,7 +2533,7 @@ ALTER TABLE ONLY public.scrap_writeoff
 
 
 --
--- Name: sites sites_name_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sites sites_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sites
@@ -2712,7 +2541,7 @@ ALTER TABLE ONLY public.sites
 
 
 --
--- Name: sites sites_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sites sites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sites
@@ -2720,7 +2549,7 @@ ALTER TABLE ONLY public.sites
 
 
 --
--- Name: sla_events sla_events_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_events sla_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_events
@@ -2728,7 +2557,7 @@ ALTER TABLE ONLY public.sla_events
 
 
 --
--- Name: sla_rules_config sla_rules_config_category_severity_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_rules_config sla_rules_config_category_severity_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_rules_config
@@ -2736,7 +2565,7 @@ ALTER TABLE ONLY public.sla_rules_config
 
 
 --
--- Name: sla_rules_config sla_rules_config_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_rules_config sla_rules_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_rules_config
@@ -2744,7 +2573,7 @@ ALTER TABLE ONLY public.sla_rules_config
 
 
 --
--- Name: sla_rules sla_rules_impact_category_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_rules sla_rules_impact_category_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_rules
@@ -2752,7 +2581,7 @@ ALTER TABLE ONLY public.sla_rules
 
 
 --
--- Name: sla_rules sla_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_rules sla_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_rules
@@ -2760,7 +2589,7 @@ ALTER TABLE ONLY public.sla_rules
 
 
 --
--- Name: suppliers suppliers_pan_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: suppliers suppliers_pan_number_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.suppliers
@@ -2768,7 +2597,7 @@ ALTER TABLE ONLY public.suppliers
 
 
 --
--- Name: suppliers suppliers_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: suppliers suppliers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.suppliers
@@ -2776,7 +2605,7 @@ ALTER TABLE ONLY public.suppliers
 
 
 --
--- Name: system_settings system_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: system_settings system_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.system_settings
@@ -2784,7 +2613,7 @@ ALTER TABLE ONLY public.system_settings
 
 
 --
--- Name: tickets tickets_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: tickets tickets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tickets
@@ -2792,7 +2621,7 @@ ALTER TABLE ONLY public.tickets
 
 
 --
--- Name: user_settings user_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_settings user_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.user_settings
@@ -2800,7 +2629,7 @@ ALTER TABLE ONLY public.user_settings
 
 
 --
--- Name: user_sites user_sites_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.user_sites
@@ -2808,7 +2637,7 @@ ALTER TABLE ONLY public.user_sites
 
 
 --
--- Name: user_sites user_sites_user_id_site_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_user_id_site_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.user_sites
@@ -2816,7 +2645,7 @@ ALTER TABLE ONLY public.user_sites
 
 
 --
--- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
@@ -2824,7 +2653,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
@@ -2832,7 +2661,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: vehicle_sites vehicle_sites_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: vehicle_sites vehicle_sites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vehicle_sites
@@ -2840,7 +2669,7 @@ ALTER TABLE ONLY public.vehicle_sites
 
 
 --
--- Name: vehicles vehicles_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: vehicles vehicles_number_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vehicles
@@ -2848,7 +2677,7 @@ ALTER TABLE ONLY public.vehicles
 
 
 --
--- Name: vehicles vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: vehicles vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vehicles
@@ -2856,350 +2685,350 @@ ALTER TABLE ONLY public.vehicles
 
 
 --
--- Name: idx_finance_job_sheet_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_finance_job_sheet_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_finance_job_sheet_id ON public.finance_entries USING btree (job_sheet_id);
 
 
 --
--- Name: idx_finance_site; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_finance_site; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_finance_site ON public.finance_entries USING btree (site);
 
 
 --
--- Name: idx_finance_ticket_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_finance_ticket_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_finance_ticket_id ON public.finance_entries USING btree (ticket_id);
 
 
 --
--- Name: idx_issues_job_card_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_issues_job_card_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_issues_job_card_id ON public.issues USING btree (job_card_id);
 
 
 --
--- Name: idx_issues_status; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_issues_status; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_issues_status ON public.issues USING btree (status);
 
 
 --
--- Name: idx_issues_ticket_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_issues_ticket_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_issues_ticket_id ON public.issues USING btree (ticket_id);
 
 
 --
--- Name: idx_job_cards_mechanic; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_job_cards_mechanic; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_job_cards_mechanic ON public.job_cards USING btree (assigned_mechanic_id);
 
 
 --
--- Name: idx_job_cards_status; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_job_cards_status; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_job_cards_status ON public.job_cards USING btree (status);
 
 
 --
--- Name: idx_scrap_disposal_disposal_date; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_disposal_disposal_date; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_disposal_disposal_date ON public.scrap_disposal USING btree (disposal_date DESC);
 
 
 --
--- Name: idx_scrap_disposal_items_disposal_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_disposal_items_disposal_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_disposal_items_disposal_id ON public.scrap_disposal_items USING btree (disposal_id);
 
 
 --
--- Name: idx_scrap_disposal_items_scrap_inventory_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_disposal_items_scrap_inventory_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_disposal_items_scrap_inventory_id ON public.scrap_disposal_items USING btree (scrap_inventory_id);
 
 
 --
--- Name: idx_scrap_disposal_recorded_by; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_disposal_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_disposal_recorded_by ON public.scrap_disposal USING btree (recorded_by);
 
 
 --
--- Name: idx_scrap_excluded_parts_issue_part_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_excluded_parts_issue_part_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_excluded_parts_issue_part_id ON public.scrap_excluded_parts USING btree (source_issue_part_id);
 
 
 --
--- Name: idx_scrap_excluded_parts_job_card_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_excluded_parts_job_card_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_excluded_parts_job_card_id ON public.scrap_excluded_parts USING btree (source_job_card_id);
 
 
 --
--- Name: idx_scrap_inventory_created_at; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_inventory_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_inventory_created_at ON public.scrap_inventory USING btree (created_at DESC);
 
 
 --
--- Name: idx_scrap_inventory_issue_part_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_inventory_issue_part_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_inventory_issue_part_id ON public.scrap_inventory USING btree (source_issue_part_id);
 
 
 --
--- Name: idx_scrap_inventory_job_card_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_inventory_job_card_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_inventory_job_card_id ON public.scrap_inventory USING btree (source_job_card_id);
 
 
 --
--- Name: idx_scrap_inventory_status; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_inventory_status; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_inventory_status ON public.scrap_inventory USING btree (status);
 
 
 --
--- Name: idx_scrap_inventory_ticket_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_inventory_ticket_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_inventory_ticket_id ON public.scrap_inventory USING btree (source_ticket_id);
 
 
 --
--- Name: idx_scrap_writeoff_items_scrap_inventory_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_writeoff_items_scrap_inventory_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_writeoff_items_scrap_inventory_id ON public.scrap_writeoff_items USING btree (scrap_inventory_id);
 
 
 --
--- Name: idx_scrap_writeoff_items_writeoff_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_writeoff_items_writeoff_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_writeoff_items_writeoff_id ON public.scrap_writeoff_items USING btree (writeoff_id);
 
 
 --
--- Name: idx_scrap_writeoff_recorded_by; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_writeoff_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_writeoff_recorded_by ON public.scrap_writeoff USING btree (recorded_by);
 
 
 --
--- Name: idx_scrap_writeoff_writeoff_date; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_scrap_writeoff_writeoff_date; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scrap_writeoff_writeoff_date ON public.scrap_writeoff USING btree (writeoff_date DESC);
 
 
 --
--- Name: idx_sla_events_ticket_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_sla_events_ticket_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_sla_events_ticket_id ON public.sla_events USING btree (ticket_id);
 
 
 --
--- Name: idx_tickets_created_at; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_created_at ON public.tickets USING btree (created_at DESC);
 
 
 --
--- Name: idx_tickets_created_by; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_created_by; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_created_by ON public.tickets USING btree (created_by_user_id);
 
 
 --
--- Name: idx_tickets_site; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_site; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_site ON public.tickets USING btree (site);
 
 
 --
--- Name: idx_tickets_site_new; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_site_new; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_site_new ON public.tickets USING btree (site);
 
 
 --
--- Name: idx_tickets_status; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_status; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_status ON public.tickets USING btree (status);
 
 
 --
--- Name: idx_tickets_status_new; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_status_new; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_status_new ON public.tickets USING btree (status);
 
 
 --
--- Name: idx_tickets_vehicle_number; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_tickets_vehicle_number; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_tickets_vehicle_number ON public.tickets USING btree (vehicle_number);
 
 
 --
--- Name: outsource_invoice_payments_invoice_id_idx; Type: INDEX; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments_invoice_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX outsource_invoice_payments_invoice_id_idx ON public.outsource_invoice_payments USING btree (outsource_invoice_id);
 
 
 --
--- Name: outsource_invoices_job_card_id_idx; Type: INDEX; Schema: public; Owner: postgres
+-- Name: outsource_invoices_job_card_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX outsource_invoices_job_card_id_idx ON public.outsource_invoices USING btree (job_card_id);
 
 
 --
--- Name: outsource_invoices_paid_by_idx; Type: INDEX; Schema: public; Owner: postgres
+-- Name: outsource_invoices_paid_by_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX outsource_invoices_paid_by_idx ON public.outsource_invoices USING btree (paid_by);
 
 
 --
--- Name: outsource_invoices_payby_date_idx; Type: INDEX; Schema: public; Owner: postgres
+-- Name: outsource_invoices_payby_date_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX outsource_invoices_payby_date_idx ON public.outsource_invoices USING btree (payby_date);
 
 
 --
--- Name: outsource_invoices_payment_status_idx; Type: INDEX; Schema: public; Owner: postgres
+-- Name: outsource_invoices_payment_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX outsource_invoices_payment_status_idx ON public.outsource_invoices USING btree (payment_status);
 
 
 --
--- Name: outsource_invoices outsource_invoices_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: outsource_invoices outsource_invoices_set_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER outsource_invoices_set_updated_at BEFORE UPDATE ON public.outsource_invoices FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
--- Name: issues trg_acceptance_sla_on_first_issue; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issues trg_acceptance_sla_on_first_issue; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_acceptance_sla_on_first_issue AFTER INSERT ON public.issues FOR EACH ROW EXECUTE FUNCTION public.trg_set_acceptance_sla_on_first_issue();
 
 
 --
--- Name: issues trg_generate_issue_number; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issues trg_generate_issue_number; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_generate_issue_number BEFORE INSERT ON public.issues FOR EACH ROW WHEN ((new.issue_number IS NULL)) EXECUTE FUNCTION public.generate_issue_number();
 
 
 --
--- Name: issues trg_issue_sla_dynamic; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issues trg_issue_sla_dynamic; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_issue_sla_dynamic BEFORE INSERT OR UPDATE ON public.issues FOR EACH ROW EXECUTE FUNCTION public.calculate_issue_sla_dynamic();
 
 
 --
--- Name: tickets trg_stamp_rejected_at_and_acceptance_sla; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: tickets trg_stamp_rejected_at_and_acceptance_sla; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_stamp_rejected_at_and_acceptance_sla BEFORE UPDATE ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla();
 
 
 --
--- Name: tickets trg_ticket_sla_on_status_change; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: tickets trg_ticket_sla_on_status_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_ticket_sla_on_status_change AFTER UPDATE OF status ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.recalculate_ticket_sla_on_status_change();
 
 
 --
--- Name: issues trg_update_ticket_sla_agg; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issues trg_update_ticket_sla_agg; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_update_ticket_sla_agg AFTER INSERT OR UPDATE OF sla_end_date, status, category, severity ON public.issues FOR EACH ROW EXECUTE FUNCTION public.calculate_ticket_overall_sla();
 
 
 --
--- Name: purchase_invoice_items trigger_add_part_inventory; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items trigger_add_part_inventory; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_add_part_inventory AFTER INSERT ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.add_part_to_inventory();
 
 
 --
--- Name: purchase_invoice_items trigger_adjust_part_inventory_on_update; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items trigger_adjust_part_inventory_on_update; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_adjust_part_inventory_on_update AFTER UPDATE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.adjust_part_inventory_on_update();
 
 
 --
--- Name: issue_parts trigger_deduct_part_inventory; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issue_parts trigger_deduct_part_inventory; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_deduct_part_inventory AFTER INSERT ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.deduct_part_from_inventory();
 
 
 --
--- Name: issue_parts trigger_restore_part_inventory; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issue_parts trigger_restore_part_inventory; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_restore_part_inventory AFTER DELETE ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.restore_part_to_inventory();
 
 
 --
--- Name: purchase_invoice_items trigger_reverse_part_inventory_on_delete; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items trigger_reverse_part_inventory_on_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_reverse_part_inventory_on_delete AFTER DELETE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.reverse_part_inventory_on_delete();
 
 
 --
--- Name: issues trigger_update_ticket_status; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: issues trigger_update_ticket_status; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_update_ticket_status AFTER INSERT OR UPDATE ON public.issues FOR EACH ROW EXECUTE FUNCTION public.update_ticket_status_on_issue_change();
 
 
 --
--- Name: audit_logs audit_logs_performed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: audit_logs audit_logs_performed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.audit_logs
@@ -3207,7 +3036,7 @@ ALTER TABLE ONLY public.audit_logs
 
 
 --
--- Name: finance_entries finance_entries_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: finance_entries finance_entries_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.finance_entries
@@ -3215,7 +3044,7 @@ ALTER TABLE ONLY public.finance_entries
 
 
 --
--- Name: finance_entries finance_entries_site_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: finance_entries finance_entries_site_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.finance_entries
@@ -3223,7 +3052,7 @@ ALTER TABLE ONLY public.finance_entries
 
 
 --
--- Name: finance_entries finance_entries_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: finance_entries finance_entries_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.finance_entries
@@ -3231,7 +3060,7 @@ ALTER TABLE ONLY public.finance_entries
 
 
 --
--- Name: issue_parts issue_parts_added_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issue_parts issue_parts_added_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issue_parts
@@ -3239,7 +3068,7 @@ ALTER TABLE ONLY public.issue_parts
 
 
 --
--- Name: issue_parts issue_parts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issue_parts issue_parts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issue_parts
@@ -3247,7 +3076,7 @@ ALTER TABLE ONLY public.issue_parts
 
 
 --
--- Name: issue_parts issue_parts_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issue_parts issue_parts_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issue_parts
@@ -3255,7 +3084,7 @@ ALTER TABLE ONLY public.issue_parts
 
 
 --
--- Name: issues issues_job_card_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issues issues_job_card_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issues
@@ -3263,7 +3092,7 @@ ALTER TABLE ONLY public.issues
 
 
 --
--- Name: issues issues_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: issues issues_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.issues
@@ -3271,7 +3100,7 @@ ALTER TABLE ONLY public.issues
 
 
 --
--- Name: job_cards job_cards_assigned_mechanic_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: job_cards job_cards_assigned_mechanic_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.job_cards
@@ -3279,7 +3108,7 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
--- Name: job_cards job_cards_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: job_cards job_cards_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.job_cards
@@ -3287,7 +3116,7 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
--- Name: outsource_invoice_payments outsource_invoice_payments_outsource_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments outsource_invoice_payments_outsource_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoice_payments
@@ -3295,7 +3124,7 @@ ALTER TABLE ONLY public.outsource_invoice_payments
 
 
 --
--- Name: outsource_invoice_payments outsource_invoice_payments_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments outsource_invoice_payments_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoice_payments
@@ -3303,7 +3132,7 @@ ALTER TABLE ONLY public.outsource_invoice_payments
 
 
 --
--- Name: outsource_invoices outsource_invoices_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoices outsource_invoices_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoices
@@ -3311,7 +3140,7 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
--- Name: outsource_invoices outsource_invoices_job_card_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: outsource_invoices outsource_invoices_job_card_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outsource_invoices
@@ -3319,7 +3148,7 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
--- Name: purchase_invoice_items purchase_invoice_items_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items purchase_invoice_items_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.purchase_invoice_items
@@ -3327,7 +3156,7 @@ ALTER TABLE ONLY public.purchase_invoice_items
 
 
 --
--- Name: purchase_invoice_items purchase_invoice_items_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items purchase_invoice_items_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.purchase_invoice_items
@@ -3335,7 +3164,7 @@ ALTER TABLE ONLY public.purchase_invoice_items
 
 
 --
--- Name: purchase_invoices purchase_invoices_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: purchase_invoices purchase_invoices_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.purchase_invoices
@@ -3343,7 +3172,7 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
--- Name: scrap_disposal_items scrap_disposal_items_disposal_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items scrap_disposal_items_disposal_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_disposal_items
@@ -3351,7 +3180,7 @@ ALTER TABLE ONLY public.scrap_disposal_items
 
 
 --
--- Name: scrap_disposal_items scrap_disposal_items_scrap_inventory_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items scrap_disposal_items_scrap_inventory_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_disposal_items
@@ -3359,7 +3188,7 @@ ALTER TABLE ONLY public.scrap_disposal_items
 
 
 --
--- Name: scrap_disposal scrap_disposal_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_disposal scrap_disposal_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_disposal
@@ -3367,7 +3196,7 @@ ALTER TABLE ONLY public.scrap_disposal
 
 
 --
--- Name: scrap_excluded_parts scrap_excluded_parts_excluded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts scrap_excluded_parts_excluded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_excluded_parts
@@ -3375,7 +3204,7 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 
 --
--- Name: scrap_excluded_parts scrap_excluded_parts_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts scrap_excluded_parts_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_excluded_parts
@@ -3383,7 +3212,7 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 
 --
--- Name: scrap_excluded_parts scrap_excluded_parts_source_issue_part_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts scrap_excluded_parts_source_issue_part_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_excluded_parts
@@ -3391,7 +3220,7 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 
 --
--- Name: scrap_excluded_parts scrap_excluded_parts_source_job_card_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts scrap_excluded_parts_source_job_card_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_excluded_parts
@@ -3399,7 +3228,7 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 
 --
--- Name: scrap_inventory scrap_inventory_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3407,7 +3236,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_inventory scrap_inventory_received_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_received_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3415,7 +3244,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_inventory scrap_inventory_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3423,7 +3252,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_inventory scrap_inventory_source_issue_part_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_source_issue_part_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3431,7 +3260,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_inventory scrap_inventory_source_job_card_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_source_job_card_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3439,7 +3268,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_inventory scrap_inventory_source_ticket_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_source_ticket_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3447,7 +3276,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_inventory scrap_inventory_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_inventory scrap_inventory_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_inventory
@@ -3455,7 +3284,7 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
--- Name: scrap_writeoff_items scrap_writeoff_items_scrap_inventory_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items scrap_writeoff_items_scrap_inventory_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_writeoff_items
@@ -3463,7 +3292,7 @@ ALTER TABLE ONLY public.scrap_writeoff_items
 
 
 --
--- Name: scrap_writeoff_items scrap_writeoff_items_writeoff_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items scrap_writeoff_items_writeoff_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_writeoff_items
@@ -3471,7 +3300,7 @@ ALTER TABLE ONLY public.scrap_writeoff_items
 
 
 --
--- Name: scrap_writeoff scrap_writeoff_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: scrap_writeoff scrap_writeoff_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.scrap_writeoff
@@ -3479,7 +3308,7 @@ ALTER TABLE ONLY public.scrap_writeoff
 
 
 --
--- Name: sla_events sla_events_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_events sla_events_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_events
@@ -3487,7 +3316,7 @@ ALTER TABLE ONLY public.sla_events
 
 
 --
--- Name: sla_events sla_events_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_events sla_events_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sla_events
@@ -3495,7 +3324,7 @@ ALTER TABLE ONLY public.sla_events
 
 
 --
--- Name: suppliers suppliers_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: suppliers suppliers_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.suppliers
@@ -3503,7 +3332,7 @@ ALTER TABLE ONLY public.suppliers
 
 
 --
--- Name: tickets tickets_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: tickets tickets_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tickets
@@ -3511,7 +3340,7 @@ ALTER TABLE ONLY public.tickets
 
 
 --
--- Name: tickets tickets_merged_into_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: tickets tickets_merged_into_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tickets
@@ -3519,7 +3348,7 @@ ALTER TABLE ONLY public.tickets
 
 
 --
--- Name: tickets tickets_site_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: tickets tickets_site_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tickets
@@ -3527,7 +3356,7 @@ ALTER TABLE ONLY public.tickets
 
 
 --
--- Name: user_settings user_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_settings user_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.user_settings
@@ -3535,7 +3364,7 @@ ALTER TABLE ONLY public.user_settings
 
 
 --
--- Name: user_sites user_sites_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.user_sites
@@ -3543,7 +3372,7 @@ ALTER TABLE ONLY public.user_sites
 
 
 --
--- Name: user_sites user_sites_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.user_sites
@@ -3551,7 +3380,7 @@ ALTER TABLE ONLY public.user_sites
 
 
 --
--- Name: users users_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: users users_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
@@ -3559,7 +3388,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: users users_site_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: users users_site_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.users
@@ -3567,7 +3396,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: vehicle_sites vehicle_sites_site_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: vehicle_sites vehicle_sites_site_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vehicle_sites
@@ -3575,7 +3404,7 @@ ALTER TABLE ONLY public.vehicle_sites
 
 
 --
--- Name: vehicle_sites vehicle_sites_vehicle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: vehicle_sites vehicle_sites_vehicle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vehicle_sites
@@ -3583,91 +3412,91 @@ ALTER TABLE ONLY public.vehicle_sites
 
 
 --
--- Name: sites All authenticated users see sites; Type: POLICY; Schema: public; Owner: postgres
+-- Name: sites All authenticated users see sites; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "All authenticated users see sites" ON public.sites FOR SELECT USING ((auth.uid() IS NOT NULL));
 
 
 --
--- Name: vehicles All authenticated users see vehicles; Type: POLICY; Schema: public; Owner: postgres
+-- Name: vehicles All authenticated users see vehicles; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "All authenticated users see vehicles" ON public.vehicles FOR SELECT USING ((auth.uid() IS NOT NULL));
 
 
 --
--- Name: part_units Authenticated read part_units; Type: POLICY; Schema: public; Owner: postgres
+-- Name: part_units Authenticated read part_units; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated read part_units" ON public.part_units FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: vehicle_sites Authenticated users can read vehicle_sites; Type: POLICY; Schema: public; Owner: postgres
+-- Name: vehicle_sites Authenticated users can read vehicle_sites; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated users can read vehicle_sites" ON public.vehicle_sites FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: parts Authenticated users view parts; Type: POLICY; Schema: public; Owner: postgres
+-- Name: parts Authenticated users view parts; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated users view parts" ON public.parts FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: vehicles Authenticated users view vehicles; Type: POLICY; Schema: public; Owner: postgres
+-- Name: vehicles Authenticated users view vehicles; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated users view vehicles" ON public.vehicles FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: outsource_invoice_payments Authenticated view invoice payments; Type: POLICY; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments Authenticated view invoice payments; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated view invoice payments" ON public.outsource_invoice_payments FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: outsource_invoices Authenticated view outsource invoices; Type: POLICY; Schema: public; Owner: postgres
+-- Name: outsource_invoices Authenticated view outsource invoices; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated view outsource invoices" ON public.outsource_invoices FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: tickets Creators can rate tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Creators can rate tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Creators can rate tickets" ON public.tickets FOR UPDATE TO authenticated USING ((auth.uid() = created_by_user_id)) WITH CHECK ((auth.uid() = created_by_user_id));
 
 
 --
--- Name: sla_rules Everyone can read SLA rules; Type: POLICY; Schema: public; Owner: postgres
+-- Name: sla_rules Everyone can read SLA rules; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Everyone can read SLA rules" ON public.sla_rules FOR SELECT USING (true);
 
 
 --
--- Name: holidays Everyone can read holidays; Type: POLICY; Schema: public; Owner: postgres
+-- Name: holidays Everyone can read holidays; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Everyone can read holidays" ON public.holidays FOR SELECT USING (true);
 
 
 --
--- Name: system_settings Everyone can read settings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: system_settings Everyone can read settings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Everyone can read settings" ON public.system_settings FOR SELECT USING (true);
 
 
 --
--- Name: purchase_invoice_items Exec and finance delete invoice items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items Exec and finance delete invoice items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance delete invoice items" ON public.purchase_invoice_items FOR DELETE USING ((EXISTS ( SELECT 1
@@ -3676,7 +3505,7 @@ CREATE POLICY "Exec and finance delete invoice items" ON public.purchase_invoice
 
 
 --
--- Name: purchase_invoice_items Exec and finance insert invoice items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items Exec and finance insert invoice items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance insert invoice items" ON public.purchase_invoice_items FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
@@ -3685,7 +3514,7 @@ CREATE POLICY "Exec and finance insert invoice items" ON public.purchase_invoice
 
 
 --
--- Name: purchase_invoices Exec and finance insert invoices; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoices Exec and finance insert invoices; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance insert invoices" ON public.purchase_invoices FOR INSERT WITH CHECK (((auth.uid() = created_by) AND (EXISTS ( SELECT 1
@@ -3694,7 +3523,7 @@ CREATE POLICY "Exec and finance insert invoices" ON public.purchase_invoices FOR
 
 
 --
--- Name: parts Exec and finance manage parts; Type: POLICY; Schema: public; Owner: postgres
+-- Name: parts Exec and finance manage parts; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance manage parts" ON public.parts USING ((EXISTS ( SELECT 1
@@ -3703,7 +3532,7 @@ CREATE POLICY "Exec and finance manage parts" ON public.parts USING ((EXISTS ( S
 
 
 --
--- Name: vehicles Exec and finance manage vehicles; Type: POLICY; Schema: public; Owner: postgres
+-- Name: vehicles Exec and finance manage vehicles; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance manage vehicles" ON public.vehicles USING ((EXISTS ( SELECT 1
@@ -3712,7 +3541,7 @@ CREATE POLICY "Exec and finance manage vehicles" ON public.vehicles USING ((EXIS
 
 
 --
--- Name: purchase_invoice_items Exec and finance update invoice items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items Exec and finance update invoice items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance update invoice items" ON public.purchase_invoice_items FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -3721,7 +3550,7 @@ CREATE POLICY "Exec and finance update invoice items" ON public.purchase_invoice
 
 
 --
--- Name: purchase_invoices Exec and finance update invoices; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoices Exec and finance update invoices; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance update invoices" ON public.purchase_invoices FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -3730,7 +3559,7 @@ CREATE POLICY "Exec and finance update invoices" ON public.purchase_invoices FOR
 
 
 --
--- Name: purchase_invoice_items Exec and finance view invoice items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items Exec and finance view invoice items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance view invoice items" ON public.purchase_invoice_items FOR SELECT USING ((EXISTS ( SELECT 1
@@ -3739,7 +3568,7 @@ CREATE POLICY "Exec and finance view invoice items" ON public.purchase_invoice_i
 
 
 --
--- Name: purchase_invoices Exec and finance view invoices; Type: POLICY; Schema: public; Owner: postgres
+-- Name: purchase_invoices Exec and finance view invoices; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec and finance view invoices" ON public.purchase_invoices FOR SELECT USING ((EXISTS ( SELECT 1
@@ -3748,7 +3577,7 @@ CREATE POLICY "Exec and finance view invoices" ON public.purchase_invoices FOR S
 
 
 --
--- Name: outsource_invoice_payments Exec finance insert invoice payments; Type: POLICY; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments Exec finance insert invoice payments; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec finance insert invoice payments" ON public.outsource_invoice_payments FOR INSERT WITH CHECK ((public.is_maintenance_exec() OR (EXISTS ( SELECT 1
@@ -3757,7 +3586,7 @@ CREATE POLICY "Exec finance insert invoice payments" ON public.outsource_invoice
 
 
 --
--- Name: outsource_invoices Exec finance supervisor insert outsource invoices; Type: POLICY; Schema: public; Owner: postgres
+-- Name: outsource_invoices Exec finance supervisor insert outsource invoices; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec finance supervisor insert outsource invoices" ON public.outsource_invoices FOR INSERT WITH CHECK ((public.is_maintenance_exec() OR (EXISTS ( SELECT 1
@@ -3766,7 +3595,7 @@ CREATE POLICY "Exec finance supervisor insert outsource invoices" ON public.outs
 
 
 --
--- Name: outsource_invoices Exec finance supervisor update outsource invoices; Type: POLICY; Schema: public; Owner: postgres
+-- Name: outsource_invoices Exec finance supervisor update outsource invoices; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Exec finance supervisor update outsource invoices" ON public.outsource_invoices FOR UPDATE USING ((public.is_maintenance_exec() OR (EXISTS ( SELECT 1
@@ -3777,98 +3606,98 @@ CREATE POLICY "Exec finance supervisor update outsource invoices" ON public.outs
 
 
 --
--- Name: users Execs can read all profiles; Type: POLICY; Schema: public; Owner: postgres
+-- Name: users Execs can read all profiles; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs can read all profiles" ON public.users FOR SELECT USING (public.is_maintenance_exec());
 
 
 --
--- Name: tickets Execs can see all tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Execs can see all tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs can see all tickets" ON public.tickets FOR SELECT USING (public.is_maintenance_exec());
 
 
 --
--- Name: tickets Execs can update tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Execs can update tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs can update tickets" ON public.tickets FOR UPDATE USING (public.is_maintenance_exec());
 
 
 --
--- Name: users Execs can update users; Type: POLICY; Schema: public; Owner: postgres
+-- Name: users Execs can update users; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs can update users" ON public.users FOR UPDATE USING (public.is_maintenance_exec());
 
 
 --
--- Name: issues Execs manage issues; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issues Execs manage issues; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage issues" ON public.issues USING (public.is_maintenance_exec());
 
 
 --
--- Name: job_cards Execs manage job cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: job_cards Execs manage job cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage job cards" ON public.job_cards USING (public.is_maintenance_exec());
 
 
 --
--- Name: part_units Execs manage part_units; Type: POLICY; Schema: public; Owner: postgres
+-- Name: part_units Execs manage part_units; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage part_units" ON public.part_units USING (public.is_maintenance_exec());
 
 
 --
--- Name: scrap_disposal Execs manage scrap_disposal; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_disposal Execs manage scrap_disposal; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage scrap_disposal" ON public.scrap_disposal TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
 
 
 --
--- Name: scrap_disposal_items Execs manage scrap_disposal_items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items Execs manage scrap_disposal_items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage scrap_disposal_items" ON public.scrap_disposal_items TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
 
 
 --
--- Name: scrap_inventory Execs manage scrap_inventory; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_inventory Execs manage scrap_inventory; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage scrap_inventory" ON public.scrap_inventory TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
 
 
 --
--- Name: scrap_writeoff Execs manage scrap_writeoff; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff Execs manage scrap_writeoff; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage scrap_writeoff" ON public.scrap_writeoff TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
 
 
 --
--- Name: scrap_writeoff_items Execs manage scrap_writeoff_items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items Execs manage scrap_writeoff_items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs manage scrap_writeoff_items" ON public.scrap_writeoff_items TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
 
 
 --
--- Name: scrap_excluded_parts Execs view scrap_excluded_parts; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts Execs view scrap_excluded_parts; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Execs view scrap_excluded_parts" ON public.scrap_excluded_parts FOR SELECT TO authenticated USING (public.is_maintenance_exec());
 
 
 --
--- Name: finance_entries Finance creates entries; Type: POLICY; Schema: public; Owner: postgres
+-- Name: finance_entries Finance creates entries; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance creates entries" ON public.finance_entries FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
@@ -3877,7 +3706,7 @@ CREATE POLICY "Finance creates entries" ON public.finance_entries FOR INSERT WIT
 
 
 --
--- Name: finance_entries Finance sees all entries; Type: POLICY; Schema: public; Owner: postgres
+-- Name: finance_entries Finance sees all entries; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance sees all entries" ON public.finance_entries FOR SELECT USING ((EXISTS ( SELECT 1
@@ -3886,7 +3715,7 @@ CREATE POLICY "Finance sees all entries" ON public.finance_entries FOR SELECT US
 
 
 --
--- Name: finance_entries Finance updates entries; Type: POLICY; Schema: public; Owner: postgres
+-- Name: finance_entries Finance updates entries; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance updates entries" ON public.finance_entries FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -3895,7 +3724,7 @@ CREATE POLICY "Finance updates entries" ON public.finance_entries FOR UPDATE USI
 
 
 --
--- Name: job_cards Finance view job cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: job_cards Finance view job cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view job cards" ON public.job_cards FOR SELECT USING ((EXISTS ( SELECT 1
@@ -3904,7 +3733,7 @@ CREATE POLICY "Finance view job cards" ON public.job_cards FOR SELECT USING ((EX
 
 
 --
--- Name: scrap_disposal Finance view scrap_disposal; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_disposal Finance view scrap_disposal; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view scrap_disposal" ON public.scrap_disposal FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -3913,7 +3742,7 @@ CREATE POLICY "Finance view scrap_disposal" ON public.scrap_disposal FOR SELECT 
 
 
 --
--- Name: scrap_disposal_items Finance view scrap_disposal_items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items Finance view scrap_disposal_items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view scrap_disposal_items" ON public.scrap_disposal_items FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -3922,7 +3751,7 @@ CREATE POLICY "Finance view scrap_disposal_items" ON public.scrap_disposal_items
 
 
 --
--- Name: scrap_excluded_parts Finance view scrap_excluded_parts; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts Finance view scrap_excluded_parts; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view scrap_excluded_parts" ON public.scrap_excluded_parts FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -3931,7 +3760,7 @@ CREATE POLICY "Finance view scrap_excluded_parts" ON public.scrap_excluded_parts
 
 
 --
--- Name: scrap_inventory Finance view scrap_inventory; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_inventory Finance view scrap_inventory; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view scrap_inventory" ON public.scrap_inventory FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -3940,7 +3769,7 @@ CREATE POLICY "Finance view scrap_inventory" ON public.scrap_inventory FOR SELEC
 
 
 --
--- Name: scrap_writeoff Finance view scrap_writeoff; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff Finance view scrap_writeoff; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view scrap_writeoff" ON public.scrap_writeoff FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -3949,7 +3778,7 @@ CREATE POLICY "Finance view scrap_writeoff" ON public.scrap_writeoff FOR SELECT 
 
 
 --
--- Name: scrap_writeoff_items Finance view scrap_writeoff_items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items Finance view scrap_writeoff_items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Finance view scrap_writeoff_items" ON public.scrap_writeoff_items FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -3958,7 +3787,7 @@ CREATE POLICY "Finance view scrap_writeoff_items" ON public.scrap_writeoff_items
 
 
 --
--- Name: tickets Maintenance exec sees all tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Maintenance exec sees all tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Maintenance exec sees all tickets" ON public.tickets FOR SELECT USING ((EXISTS ( SELECT 1
@@ -3967,7 +3796,7 @@ CREATE POLICY "Maintenance exec sees all tickets" ON public.tickets FOR SELECT U
 
 
 --
--- Name: tickets Maintenance exec updates tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Maintenance exec updates tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Maintenance exec updates tickets" ON public.tickets FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -3976,7 +3805,7 @@ CREATE POLICY "Maintenance exec updates tickets" ON public.tickets FOR UPDATE US
 
 
 --
--- Name: issue_parts Mechanics delete issue parts on assigned cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issue_parts Mechanics delete issue parts on assigned cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Mechanics delete issue parts on assigned cards" ON public.issue_parts FOR DELETE USING ((EXISTS ( SELECT 1
@@ -3986,7 +3815,7 @@ CREATE POLICY "Mechanics delete issue parts on assigned cards" ON public.issue_p
 
 
 --
--- Name: issue_parts Mechanics insert issue parts; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issue_parts Mechanics insert issue parts; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Mechanics insert issue parts" ON public.issue_parts FOR INSERT WITH CHECK (((auth.uid() = added_by) AND (EXISTS ( SELECT 1
@@ -3996,14 +3825,14 @@ CREATE POLICY "Mechanics insert issue parts" ON public.issue_parts FOR INSERT WI
 
 
 --
--- Name: job_cards Mechanics update assigned cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: job_cards Mechanics update assigned cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Mechanics update assigned cards" ON public.job_cards FOR UPDATE USING ((assigned_mechanic_id = auth.uid()));
 
 
 --
--- Name: issues Mechanics update issues on assigned cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issues Mechanics update issues on assigned cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Mechanics update issues on assigned cards" ON public.issues FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -4012,14 +3841,14 @@ CREATE POLICY "Mechanics update issues on assigned cards" ON public.issues FOR U
 
 
 --
--- Name: job_cards Mechanics view assigned cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: job_cards Mechanics view assigned cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Mechanics view assigned cards" ON public.job_cards FOR SELECT USING (((assigned_mechanic_id = auth.uid()) OR public.is_maintenance_exec()));
 
 
 --
--- Name: issues Mechanics view issues on assigned cards; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issues Mechanics view issues on assigned cards; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Mechanics view issues on assigned cards" ON public.issues FOR SELECT USING ((EXISTS ( SELECT 1
@@ -4028,49 +3857,49 @@ CREATE POLICY "Mechanics view issues on assigned cards" ON public.issues FOR SEL
 
 
 --
--- Name: holidays Super admins can delete holidays; Type: POLICY; Schema: public; Owner: postgres
+-- Name: holidays Super admins can delete holidays; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Super admins can delete holidays" ON public.holidays FOR DELETE USING (public.is_super_admin());
 
 
 --
--- Name: holidays Super admins can insert holidays; Type: POLICY; Schema: public; Owner: postgres
+-- Name: holidays Super admins can insert holidays; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Super admins can insert holidays" ON public.holidays FOR INSERT WITH CHECK (public.is_super_admin());
 
 
 --
--- Name: system_settings Super admins can insert settings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: system_settings Super admins can insert settings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Super admins can insert settings" ON public.system_settings FOR INSERT WITH CHECK (public.is_super_admin());
 
 
 --
--- Name: sla_rules Super admins can update SLA rules; Type: POLICY; Schema: public; Owner: postgres
+-- Name: sla_rules Super admins can update SLA rules; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Super admins can update SLA rules" ON public.sla_rules FOR UPDATE USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
 
 
 --
--- Name: holidays Super admins can update holidays; Type: POLICY; Schema: public; Owner: postgres
+-- Name: holidays Super admins can update holidays; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Super admins can update holidays" ON public.holidays FOR UPDATE USING (public.is_super_admin());
 
 
 --
--- Name: system_settings Super admins can update settings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: system_settings Super admins can update settings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Super admins can update settings" ON public.system_settings FOR UPDATE USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
 
 
 --
--- Name: tickets Supervisors and execs create tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Supervisors and execs create tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors and execs create tickets" ON public.tickets FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
@@ -4079,7 +3908,7 @@ CREATE POLICY "Supervisors and execs create tickets" ON public.tickets FOR INSER
 
 
 --
--- Name: issues Supervisors create issues; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issues Supervisors create issues; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors create issues" ON public.issues FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
@@ -4092,7 +3921,7 @@ CREATE POLICY "Supervisors create issues" ON public.issues FOR INSERT WITH CHECK
 
 
 --
--- Name: tickets Supervisors see own site tickets; Type: POLICY; Schema: public; Owner: postgres
+-- Name: tickets Supervisors see own site tickets; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors see own site tickets" ON public.tickets FOR SELECT USING (((EXISTS ( SELECT 1
@@ -4104,7 +3933,7 @@ CREATE POLICY "Supervisors see own site tickets" ON public.tickets FOR SELECT US
 
 
 --
--- Name: issues Supervisors update own ratings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issues Supervisors update own ratings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors update own ratings" ON public.issues FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -4118,7 +3947,7 @@ CREATE POLICY "Supervisors update own ratings" ON public.issues FOR UPDATE USING
 
 
 --
--- Name: issues Supervisors view site issues; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issues Supervisors view site issues; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site issues" ON public.issues FOR SELECT USING ((EXISTS ( SELECT 1
@@ -4132,7 +3961,7 @@ CREATE POLICY "Supervisors view site issues" ON public.issues FOR SELECT USING (
 
 
 --
--- Name: scrap_inventory Supervisors view site scrap; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_inventory Supervisors view site scrap; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site scrap" ON public.scrap_inventory FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
@@ -4141,7 +3970,7 @@ CREATE POLICY "Supervisors view site scrap" ON public.scrap_inventory FOR SELECT
 
 
 --
--- Name: scrap_excluded_parts Supervisors view site scrap excluded; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts Supervisors view site scrap excluded; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site scrap excluded" ON public.scrap_excluded_parts FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
@@ -4150,7 +3979,7 @@ CREATE POLICY "Supervisors view site scrap excluded" ON public.scrap_excluded_pa
 
 
 --
--- Name: scrap_disposal Supervisors view site scrap_disposal; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_disposal Supervisors view site scrap_disposal; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site scrap_disposal" ON public.scrap_disposal FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
@@ -4162,7 +3991,7 @@ CREATE POLICY "Supervisors view site scrap_disposal" ON public.scrap_disposal FO
 
 
 --
--- Name: scrap_disposal_items Supervisors view site scrap_disposal_items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items Supervisors view site scrap_disposal_items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site scrap_disposal_items" ON public.scrap_disposal_items FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
@@ -4173,7 +4002,7 @@ CREATE POLICY "Supervisors view site scrap_disposal_items" ON public.scrap_dispo
 
 
 --
--- Name: scrap_writeoff Supervisors view site scrap_writeoff; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff Supervisors view site scrap_writeoff; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site scrap_writeoff" ON public.scrap_writeoff FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
@@ -4185,7 +4014,7 @@ CREATE POLICY "Supervisors view site scrap_writeoff" ON public.scrap_writeoff FO
 
 
 --
--- Name: scrap_writeoff_items Supervisors view site scrap_writeoff_items; Type: POLICY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items Supervisors view site scrap_writeoff_items; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Supervisors view site scrap_writeoff_items" ON public.scrap_writeoff_items FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
@@ -4196,49 +4025,49 @@ CREATE POLICY "Supervisors view site scrap_writeoff_items" ON public.scrap_write
 
 
 --
--- Name: audit_logs Users can insert audit logs; Type: POLICY; Schema: public; Owner: postgres
+-- Name: audit_logs Users can insert audit logs; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can insert audit logs" ON public.audit_logs FOR INSERT WITH CHECK ((auth.uid() = performed_by));
 
 
 --
--- Name: sla_events Users can insert events; Type: POLICY; Schema: public; Owner: postgres
+-- Name: sla_events Users can insert events; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can insert events" ON public.sla_events FOR INSERT WITH CHECK ((auth.uid() = created_by));
 
 
 --
--- Name: user_settings Users can insert their own settings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: user_settings Users can insert their own settings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can insert their own settings" ON public.user_settings FOR INSERT WITH CHECK ((auth.uid() = user_id));
 
 
 --
--- Name: users Users can read own profile; Type: POLICY; Schema: public; Owner: postgres
+-- Name: users Users can read own profile; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can read own profile" ON public.users FOR SELECT USING ((auth.uid() = id));
 
 
 --
--- Name: user_settings Users can update their own settings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: user_settings Users can update their own settings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can update their own settings" ON public.user_settings FOR UPDATE USING ((auth.uid() = user_id));
 
 
 --
--- Name: audit_logs Users can view audit logs; Type: POLICY; Schema: public; Owner: postgres
+-- Name: audit_logs Users can view audit logs; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can view audit logs" ON public.audit_logs FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
--- Name: sla_events Users can view events for tickets they can access; Type: POLICY; Schema: public; Owner: postgres
+-- Name: sla_events Users can view events for tickets they can access; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can view events for tickets they can access" ON public.sla_events FOR SELECT USING ((EXISTS ( SELECT 1
@@ -4247,14 +4076,14 @@ CREATE POLICY "Users can view events for tickets they can access" ON public.sla_
 
 
 --
--- Name: user_settings Users can view their own settings; Type: POLICY; Schema: public; Owner: postgres
+-- Name: user_settings Users can view their own settings; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Users can view their own settings" ON public.user_settings FOR SELECT USING ((auth.uid() = user_id));
 
 
 --
--- Name: issue_parts View issue parts; Type: POLICY; Schema: public; Owner: postgres
+-- Name: issue_parts View issue parts; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "View issue parts" ON public.issue_parts FOR SELECT USING ((EXISTS ( SELECT 1
@@ -4264,139 +4093,139 @@ CREATE POLICY "View issue parts" ON public.issue_parts FOR SELECT USING ((EXISTS
 
 
 --
--- Name: audit_logs; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: audit_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: finance_entries; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: finance_entries; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.finance_entries ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: holidays; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: holidays; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.holidays ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: issue_parts; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: issue_parts; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.issue_parts ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: issues; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: issues; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.issues ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: job_cards; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: job_cards; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.job_cards ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: outsource_invoice_payments; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: outsource_invoice_payments; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.outsource_invoice_payments ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: outsource_invoices; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: outsource_invoices; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.outsource_invoices ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: part_units; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: part_units; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.part_units ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: parts; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: parts; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.parts ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: purchase_invoice_items; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: purchase_invoice_items; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.purchase_invoice_items ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: purchase_invoices; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: purchase_invoices; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.purchase_invoices ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: scrap_disposal; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: scrap_disposal; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.scrap_disposal ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: scrap_disposal_items; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: scrap_disposal_items; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.scrap_disposal_items ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: scrap_excluded_parts; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: scrap_excluded_parts; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.scrap_excluded_parts ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: scrap_inventory; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: scrap_inventory; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.scrap_inventory ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: scrap_writeoff; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.scrap_writeoff ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: scrap_writeoff_items; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: scrap_writeoff_items; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.scrap_writeoff_items ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: sites; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: sites; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.sites ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: sla_events; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: sla_events; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.sla_events ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: sla_rules; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: sla_rules; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.sla_rules ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: suppliers; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: suppliers; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: suppliers suppliers_auth_select; Type: POLICY; Schema: public; Owner: postgres
+-- Name: suppliers suppliers_auth_select; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY suppliers_auth_select ON public.suppliers FOR SELECT USING ((EXISTS ( SELECT 1
@@ -4405,7 +4234,7 @@ CREATE POLICY suppliers_auth_select ON public.suppliers FOR SELECT USING ((EXIST
 
 
 --
--- Name: suppliers suppliers_exec_update; Type: POLICY; Schema: public; Owner: postgres
+-- Name: suppliers suppliers_exec_update; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY suppliers_exec_update ON public.suppliers FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -4414,892 +4243,78 @@ CREATE POLICY suppliers_exec_update ON public.suppliers FOR UPDATE USING ((EXIST
 
 
 --
--- Name: suppliers suppliers_public_insert; Type: POLICY; Schema: public; Owner: postgres
+-- Name: suppliers suppliers_public_insert; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY suppliers_public_insert ON public.suppliers FOR INSERT WITH CHECK (true);
 
 
 --
--- Name: system_settings; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: system_settings; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: tickets; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: tickets; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: user_settings; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: user_settings; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.user_settings ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: user_sites; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: user_sites; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.user_sites ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: user_sites user_sites_delete; Type: POLICY; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_delete; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY user_sites_delete ON public.user_sites FOR DELETE USING (public.is_maintenance_exec());
 
 
 --
--- Name: user_sites user_sites_insert; Type: POLICY; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_insert; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY user_sites_insert ON public.user_sites FOR INSERT WITH CHECK (public.is_maintenance_exec());
 
 
 --
--- Name: user_sites user_sites_select; Type: POLICY; Schema: public; Owner: postgres
+-- Name: user_sites user_sites_select; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY user_sites_select ON public.user_sites FOR SELECT USING (((user_id = auth.uid()) OR public.is_maintenance_exec()));
 
 
 --
--- Name: users; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: users; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: vehicle_sites; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: vehicle_sites; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.vehicle_sites ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: vehicles; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: vehicles; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: supabase_realtime; Type: PUBLICATION; Schema: -; Owner: postgres
---
-
-CREATE PUBLICATION supabase_realtime WITH (publish = 'insert, update, delete, truncate');
-
-
-ALTER PUBLICATION supabase_realtime OWNER TO postgres;
-
---
--- Name: SCHEMA cron; Type: ACL; Schema: -; Owner: supabase_admin
---
-
-GRANT USAGE ON SCHEMA cron TO postgres WITH GRANT OPTION;
-
-
---
--- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
---
-
-GRANT USAGE ON SCHEMA public TO postgres;
-GRANT USAGE ON SCHEMA public TO anon;
-GRANT USAGE ON SCHEMA public TO authenticated;
-GRANT USAGE ON SCHEMA public TO service_role;
-
-
---
--- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
---
-
-GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
-GRANT USAGE ON SCHEMA net TO postgres;
-GRANT USAGE ON SCHEMA net TO anon;
-GRANT USAGE ON SCHEMA net TO authenticated;
-GRANT USAGE ON SCHEMA net TO service_role;
-
-
---
--- Name: FUNCTION alter_job(job_id bigint, schedule text, command text, database text, username text, active boolean); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.alter_job(job_id bigint, schedule text, command text, database text, username text, active boolean) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION job_cache_invalidate(); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.job_cache_invalidate() TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION schedule(schedule text, command text); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.schedule(schedule text, command text) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION schedule(job_name text, schedule text, command text); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.schedule(job_name text, schedule text, command text) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION schedule_in_database(job_name text, schedule text, command text, database text, username text, active boolean); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.schedule_in_database(job_name text, schedule text, command text, database text, username text, active boolean) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION unschedule(job_id bigint); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.unschedule(job_id bigint) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION unschedule(job_name text); Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION cron.unschedule(job_name text) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION pg_reload_conf(); Type: ACL; Schema: pg_catalog; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION pg_catalog.pg_reload_conf() TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION add_part_to_inventory(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.add_part_to_inventory() TO anon;
-GRANT ALL ON FUNCTION public.add_part_to_inventory() TO authenticated;
-GRANT ALL ON FUNCTION public.add_part_to_inventory() TO service_role;
-
-
---
--- Name: FUNCTION add_working_days(start_date date, n_days integer); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.add_working_days(start_date date, n_days integer) TO anon;
-GRANT ALL ON FUNCTION public.add_working_days(start_date date, n_days integer) TO authenticated;
-GRANT ALL ON FUNCTION public.add_working_days(start_date date, n_days integer) TO service_role;
-
-
---
--- Name: FUNCTION adjust_part_inventory_on_update(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.adjust_part_inventory_on_update() TO anon;
-GRANT ALL ON FUNCTION public.adjust_part_inventory_on_update() TO authenticated;
-GRANT ALL ON FUNCTION public.adjust_part_inventory_on_update() TO service_role;
-
-
---
--- Name: FUNCTION calculate_issue_sla_dynamic(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.calculate_issue_sla_dynamic() TO anon;
-GRANT ALL ON FUNCTION public.calculate_issue_sla_dynamic() TO authenticated;
-GRANT ALL ON FUNCTION public.calculate_issue_sla_dynamic() TO service_role;
-
-
---
--- Name: FUNCTION calculate_sla_days(p_impact text, p_category text); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.calculate_sla_days(p_impact text, p_category text) TO anon;
-GRANT ALL ON FUNCTION public.calculate_sla_days(p_impact text, p_category text) TO authenticated;
-GRANT ALL ON FUNCTION public.calculate_sla_days(p_impact text, p_category text) TO service_role;
-
-
---
--- Name: FUNCTION calculate_ticket_overall_sla(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO anon;
-GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO authenticated;
-GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO service_role;
-
-
---
--- Name: FUNCTION check_pan_exists(p_pan text); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.check_pan_exists(p_pan text) TO anon;
-GRANT ALL ON FUNCTION public.check_pan_exists(p_pan text) TO authenticated;
-GRANT ALL ON FUNCTION public.check_pan_exists(p_pan text) TO service_role;
-
-
---
--- Name: FUNCTION close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb); Type: ACL; Schema: public; Owner: postgres
---
-
-REVOKE ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO anon;
-GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO authenticated;
-GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO service_role;
-
-
---
--- Name: FUNCTION deduct_part_from_inventory(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO anon;
-GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO authenticated;
-GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO service_role;
-
-
---
--- Name: FUNCTION delete_issue_part_with_scrap_check(p_issue_part_id uuid); Type: ACL; Schema: public; Owner: postgres
---
-
-REVOKE ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO anon;
-GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO authenticated;
-GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO service_role;
-
-
---
--- Name: FUNCTION evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) TO anon;
-GRANT ALL ON FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) TO authenticated;
-GRANT ALL ON FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) TO service_role;
-
-
---
--- Name: FUNCTION generate_issue_number(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.generate_issue_number() TO anon;
-GRANT ALL ON FUNCTION public.generate_issue_number() TO authenticated;
-GRANT ALL ON FUNCTION public.generate_issue_number() TO service_role;
-
-
---
--- Name: FUNCTION get_blocking_scrap_for_issue_part(p_issue_part_id uuid); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) TO anon;
-GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) TO authenticated;
-GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) TO service_role;
-
-
---
--- Name: FUNCTION get_maintenance_stats(start_date_input date, end_date_input date, site_filter text); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) TO anon;
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) TO authenticated;
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) TO service_role;
-
-
---
--- Name: FUNCTION get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) TO anon;
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) TO authenticated;
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) TO service_role;
-
-
---
--- Name: FUNCTION is_maintenance_exec(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.is_maintenance_exec() TO anon;
-GRANT ALL ON FUNCTION public.is_maintenance_exec() TO authenticated;
-GRANT ALL ON FUNCTION public.is_maintenance_exec() TO service_role;
-
-
---
--- Name: FUNCTION is_super_admin(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.is_super_admin() TO anon;
-GRANT ALL ON FUNCTION public.is_super_admin() TO authenticated;
-GRANT ALL ON FUNCTION public.is_super_admin() TO service_role;
-
-
---
--- Name: FUNCTION job_card_site_accessible_to_user(p_job_card_id uuid); Type: ACL; Schema: public; Owner: postgres
---
-
-REVOKE ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO anon;
-GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO authenticated;
-GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO service_role;
-
-
---
--- Name: FUNCTION recalculate_ticket_sla_on_status_change(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO anon;
-GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO authenticated;
-GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO service_role;
-
-
---
--- Name: FUNCTION record_scrap_disposal(p_header jsonb, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
---
-
-REVOKE ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) TO anon;
-GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) TO authenticated;
-GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) TO service_role;
-
-
---
--- Name: FUNCTION record_scrap_writeoff(p_header jsonb, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
---
-
-REVOKE ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) TO anon;
-GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) TO authenticated;
-GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) TO service_role;
-
-
---
--- Name: FUNCTION restore_part_to_inventory(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO anon;
-GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO authenticated;
-GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
-
-
---
--- Name: FUNCTION reverse_part_inventory_on_delete(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO anon;
-GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO authenticated;
-GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
-
-
---
--- Name: FUNCTION set_updated_at(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.set_updated_at() TO anon;
-GRANT ALL ON FUNCTION public.set_updated_at() TO authenticated;
-GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
-
-
---
--- Name: FUNCTION stamp_rejected_at_and_evaluate_acceptance_sla(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO anon;
-GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO authenticated;
-GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO service_role;
-
-
---
--- Name: FUNCTION trg_set_acceptance_sla_on_first_issue(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.trg_set_acceptance_sla_on_first_issue() TO anon;
-GRANT ALL ON FUNCTION public.trg_set_acceptance_sla_on_first_issue() TO authenticated;
-GRANT ALL ON FUNCTION public.trg_set_acceptance_sla_on_first_issue() TO service_role;
-
-
---
--- Name: FUNCTION update_ticket_sla(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.update_ticket_sla() TO anon;
-GRANT ALL ON FUNCTION public.update_ticket_sla() TO authenticated;
-GRANT ALL ON FUNCTION public.update_ticket_sla() TO service_role;
-
-
---
--- Name: FUNCTION update_ticket_status_on_issue_change(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO anon;
-GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO authenticated;
-GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO service_role;
-
-
---
--- Name: TABLE job; Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT SELECT ON TABLE cron.job TO postgres WITH GRANT OPTION;
-
-
---
--- Name: TABLE job_run_details; Type: ACL; Schema: cron; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE cron.job_run_details TO postgres WITH GRANT OPTION;
-
-
---
--- Name: TABLE audit_logs; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.audit_logs TO anon;
-GRANT ALL ON TABLE public.audit_logs TO authenticated;
-GRANT ALL ON TABLE public.audit_logs TO service_role;
-
-
---
--- Name: TABLE finance_entries; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.finance_entries TO anon;
-GRANT ALL ON TABLE public.finance_entries TO authenticated;
-GRANT ALL ON TABLE public.finance_entries TO service_role;
-
-
---
--- Name: TABLE holidays; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.holidays TO anon;
-GRANT ALL ON TABLE public.holidays TO authenticated;
-GRANT ALL ON TABLE public.holidays TO service_role;
-
-
---
--- Name: TABLE issue_parts; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.issue_parts TO anon;
-GRANT ALL ON TABLE public.issue_parts TO authenticated;
-GRANT ALL ON TABLE public.issue_parts TO service_role;
-
-
---
--- Name: TABLE issues; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.issues TO anon;
-GRANT ALL ON TABLE public.issues TO authenticated;
-GRANT ALL ON TABLE public.issues TO service_role;
-
-
---
--- Name: TABLE job_cards; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.job_cards TO anon;
-GRANT ALL ON TABLE public.job_cards TO authenticated;
-GRANT ALL ON TABLE public.job_cards TO service_role;
-
-
---
--- Name: SEQUENCE job_cards_job_card_number_seq; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON SEQUENCE public.job_cards_job_card_number_seq TO anon;
-GRANT ALL ON SEQUENCE public.job_cards_job_card_number_seq TO authenticated;
-GRANT ALL ON SEQUENCE public.job_cards_job_card_number_seq TO service_role;
-
-
---
--- Name: TABLE tickets; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.tickets TO anon;
-GRANT ALL ON TABLE public.tickets TO authenticated;
-GRANT ALL ON TABLE public.tickets TO service_role;
-
-
---
--- Name: TABLE maintenance_dashboard_stats; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.maintenance_dashboard_stats TO anon;
-GRANT ALL ON TABLE public.maintenance_dashboard_stats TO authenticated;
-GRANT ALL ON TABLE public.maintenance_dashboard_stats TO service_role;
-
-
---
--- Name: TABLE outsource_invoice_payments; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.outsource_invoice_payments TO anon;
-GRANT ALL ON TABLE public.outsource_invoice_payments TO authenticated;
-GRANT ALL ON TABLE public.outsource_invoice_payments TO service_role;
-
-
---
--- Name: TABLE outsource_invoices; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.outsource_invoices TO anon;
-GRANT ALL ON TABLE public.outsource_invoices TO authenticated;
-GRANT ALL ON TABLE public.outsource_invoices TO service_role;
-
-
---
--- Name: TABLE part_units; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.part_units TO anon;
-GRANT ALL ON TABLE public.part_units TO authenticated;
-GRANT ALL ON TABLE public.part_units TO service_role;
-
-
---
--- Name: TABLE parts; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.parts TO anon;
-GRANT ALL ON TABLE public.parts TO authenticated;
-GRANT ALL ON TABLE public.parts TO service_role;
-
-
---
--- Name: TABLE purchase_invoice_items; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.purchase_invoice_items TO anon;
-GRANT ALL ON TABLE public.purchase_invoice_items TO authenticated;
-GRANT ALL ON TABLE public.purchase_invoice_items TO service_role;
-
-
---
--- Name: TABLE purchase_invoices; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.purchase_invoices TO anon;
-GRANT ALL ON TABLE public.purchase_invoices TO authenticated;
-GRANT ALL ON TABLE public.purchase_invoices TO service_role;
-
-
---
--- Name: TABLE scrap_disposal; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.scrap_disposal TO anon;
-GRANT ALL ON TABLE public.scrap_disposal TO authenticated;
-GRANT ALL ON TABLE public.scrap_disposal TO service_role;
-
-
---
--- Name: TABLE scrap_disposal_items; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.scrap_disposal_items TO anon;
-GRANT ALL ON TABLE public.scrap_disposal_items TO authenticated;
-GRANT ALL ON TABLE public.scrap_disposal_items TO service_role;
-
-
---
--- Name: TABLE scrap_excluded_parts; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.scrap_excluded_parts TO anon;
-GRANT ALL ON TABLE public.scrap_excluded_parts TO authenticated;
-GRANT ALL ON TABLE public.scrap_excluded_parts TO service_role;
-
-
---
--- Name: TABLE scrap_inventory; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.scrap_inventory TO anon;
-GRANT ALL ON TABLE public.scrap_inventory TO authenticated;
-GRANT ALL ON TABLE public.scrap_inventory TO service_role;
-
-
---
--- Name: TABLE scrap_writeoff; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.scrap_writeoff TO anon;
-GRANT ALL ON TABLE public.scrap_writeoff TO authenticated;
-GRANT ALL ON TABLE public.scrap_writeoff TO service_role;
-
-
---
--- Name: TABLE scrap_writeoff_items; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.scrap_writeoff_items TO anon;
-GRANT ALL ON TABLE public.scrap_writeoff_items TO authenticated;
-GRANT ALL ON TABLE public.scrap_writeoff_items TO service_role;
-
-
---
--- Name: TABLE sites; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.sites TO anon;
-GRANT ALL ON TABLE public.sites TO authenticated;
-GRANT ALL ON TABLE public.sites TO service_role;
-
-
---
--- Name: TABLE sla_events; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.sla_events TO anon;
-GRANT ALL ON TABLE public.sla_events TO authenticated;
-GRANT ALL ON TABLE public.sla_events TO service_role;
-
-
---
--- Name: TABLE sla_rules; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.sla_rules TO anon;
-GRANT ALL ON TABLE public.sla_rules TO authenticated;
-GRANT ALL ON TABLE public.sla_rules TO service_role;
-
-
---
--- Name: TABLE sla_rules_config; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.sla_rules_config TO anon;
-GRANT ALL ON TABLE public.sla_rules_config TO authenticated;
-GRANT ALL ON TABLE public.sla_rules_config TO service_role;
-
-
---
--- Name: TABLE supervisor_dashboard_stats; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.supervisor_dashboard_stats TO anon;
-GRANT ALL ON TABLE public.supervisor_dashboard_stats TO authenticated;
-GRANT ALL ON TABLE public.supervisor_dashboard_stats TO service_role;
-
-
---
--- Name: TABLE suppliers; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.suppliers TO anon;
-GRANT ALL ON TABLE public.suppliers TO authenticated;
-GRANT ALL ON TABLE public.suppliers TO service_role;
-
-
---
--- Name: TABLE system_settings; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.system_settings TO anon;
-GRANT ALL ON TABLE public.system_settings TO authenticated;
-GRANT ALL ON TABLE public.system_settings TO service_role;
-
-
---
--- Name: SEQUENCE tickets_ticket_number_seq; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON SEQUENCE public.tickets_ticket_number_seq TO anon;
-GRANT ALL ON SEQUENCE public.tickets_ticket_number_seq TO authenticated;
-GRANT ALL ON SEQUENCE public.tickets_ticket_number_seq TO service_role;
-
-
---
--- Name: TABLE user_settings; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.user_settings TO anon;
-GRANT ALL ON TABLE public.user_settings TO authenticated;
-GRANT ALL ON TABLE public.user_settings TO service_role;
-
-
---
--- Name: TABLE user_sites; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.user_sites TO anon;
-GRANT ALL ON TABLE public.user_sites TO authenticated;
-GRANT ALL ON TABLE public.user_sites TO service_role;
-
-
---
--- Name: TABLE users; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.users TO anon;
-GRANT ALL ON TABLE public.users TO authenticated;
-GRANT ALL ON TABLE public.users TO service_role;
-
-
---
--- Name: TABLE vehicle_sites; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.vehicle_sites TO anon;
-GRANT ALL ON TABLE public.vehicle_sites TO authenticated;
-GRANT ALL ON TABLE public.vehicle_sites TO service_role;
-
-
---
--- Name: TABLE vehicles; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.vehicles TO anon;
-GRANT ALL ON TABLE public.vehicles TO authenticated;
-GRANT ALL ON TABLE public.vehicles TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: cron; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA cron GRANT ALL ON SEQUENCES TO postgres WITH GRANT OPTION;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: cron; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA cron GRANT ALL ON FUNCTIONS TO postgres WITH GRANT OPTION;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: cron; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA cron GRANT ALL ON TABLES TO postgres WITH GRANT OPTION;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-
-
---
--- Name: issue_graphql_placeholder; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
---
-
-CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
-         WHEN TAG IN ('DROP EXTENSION')
-   EXECUTE FUNCTION extensions.set_graphql_placeholder();
-
-
-ALTER EVENT TRIGGER issue_graphql_placeholder OWNER TO supabase_admin;
-
---
--- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
---
-
-CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
-         WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION extensions.grant_pg_cron_access();
-
-
-ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO supabase_admin;
-
---
--- Name: issue_pg_graphql_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
---
-
-CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
-         WHEN TAG IN ('CREATE FUNCTION')
-   EXECUTE FUNCTION extensions.grant_pg_graphql_access();
-
-
-ALTER EVENT TRIGGER issue_pg_graphql_access OWNER TO supabase_admin;
-
---
--- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
---
-
-CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
-         WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION extensions.grant_pg_net_access();
-
-
-ALTER EVENT TRIGGER issue_pg_net_access OWNER TO supabase_admin;
-
---
--- Name: pgrst_ddl_watch; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
---
-
-CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
-   EXECUTE FUNCTION extensions.pgrst_ddl_watch();
-
-
-ALTER EVENT TRIGGER pgrst_ddl_watch OWNER TO supabase_admin;
-
---
--- Name: pgrst_drop_watch; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
---
-
-CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
-   EXECUTE FUNCTION extensions.pgrst_drop_watch();
-
-
-ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
-
---
 -- PostgreSQL database dump complete
 --
 
+\unrestrict y5s7lrgOfn6f0jWlRqinZDWJqjLKjEVt3KJY4ov0IWsafDQ7daWeaeTbVqLq6qO
 
