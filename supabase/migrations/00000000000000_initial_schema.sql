@@ -22,7 +22,6 @@ SET row_security = off;
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA auth;
 
 
 ALTER SCHEMA auth OWNER TO supabase_admin;
@@ -45,7 +44,6 @@ COMMENT ON EXTENSION pg_cron IS 'Job scheduler for PostgreSQL';
 -- Name: extensions; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
-CREATE SCHEMA extensions;
 
 
 ALTER SCHEMA extensions OWNER TO postgres;
@@ -95,7 +93,6 @@ ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
 -- Name: realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA realtime;
 
 
 ALTER SCHEMA realtime OWNER TO supabase_admin;
@@ -104,7 +101,6 @@ ALTER SCHEMA realtime OWNER TO supabase_admin;
 -- Name: storage; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
