@@ -4316,5 +4316,3 @@ ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict y5s7lrgOfn6f0jWlRqinZDWJqjLKjEVt3KJY4ov0IWsafDQ7daWeaeTbVqLq6qO
-
