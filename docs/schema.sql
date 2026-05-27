@@ -69,6 +69,20 @@ CREATE SCHEMA graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
+-- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+
+
+--
+-- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pg_net IS 'Async HTTP';
+
+
+--
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 
@@ -9142,6 +9156,17 @@ GRANT USAGE ON SCHEMA extensions TO anon;
 GRANT USAGE ON SCHEMA extensions TO authenticated;
 GRANT USAGE ON SCHEMA extensions TO service_role;
 GRANT ALL ON SCHEMA extensions TO dashboard_user;
+
+
+--
+-- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
+--
+
+GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
+GRANT USAGE ON SCHEMA net TO postgres;
+GRANT USAGE ON SCHEMA net TO anon;
+GRANT USAGE ON SCHEMA net TO authenticated;
+GRANT USAGE ON SCHEMA net TO service_role;
 
 
 --
