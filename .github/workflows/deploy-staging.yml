@@ -16,12 +16,6 @@ jobs:
         with:
           version: latest
 
-      - name: Repair migration history
-        run: supabase db query --db-url "$STAGING_DB_URL" "TRUNCATE supabase_migrations.schema_migrations;"
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
-
       - name: Run migrations against staging
         run: supabase db push --db-url "$STAGING_DB_URL"
         env:
