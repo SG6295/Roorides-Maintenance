@@ -55,7 +55,7 @@ serve(async (req) => {
 
     // Step 3: normalise to our vehicles table shape.
     // Field mapping confirmed from Roorides API response:
-    //   registerNumber → registration_number
+    //   plateNo        → registration_number (falls back to skip if null)
     //   modelName      → model
     //   make           → make
     //   vehicleType    → type
@@ -64,7 +64,7 @@ serve(async (req) => {
     // raw_data stores the full payload so future features can access any field.
     const vehicles = (Array.isArray(raw) ? raw : [])
       .map((v: Record<string, unknown>) => ({
-        registration_number: (v.registerNumber ?? '') as string,
+        registration_number: (v.plateNo ?? '') as string,
         make: (v.make ?? null) as string | null,
         model: (v.modelName ?? null) as string | null,
         type: (v.vehicleType ?? null) as string | null,

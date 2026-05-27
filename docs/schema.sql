@@ -69,20 +69,6 @@ CREATE SCHEMA graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
--- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA public;
-
-
---
--- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION pg_net IS 'Async HTTP';
-
-
---
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 
@@ -710,54 +696,43 @@ COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cr
 CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $_$
-DECLARE
-    func_is_graphql_resolve bool;
-BEGIN
-    func_is_graphql_resolve = (
-        SELECT n.proname = 'resolve'
-        FROM pg_event_trigger_ddl_commands() AS ev
-        LEFT JOIN pg_catalog.pg_proc AS n
-        ON ev.objid = n.oid
-    );
+begin
+    if not exists (
+        select 1
+        from pg_event_trigger_ddl_commands() ev
+        join pg_catalog.pg_extension e on ev.objid = e.oid
+        where e.extname = 'pg_graphql'
+    ) then
+        return;
+    end if;
 
-    IF func_is_graphql_resolve
-    THEN
-        -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
-        DROP FUNCTION IF EXISTS graphql_public.graphql;
-        create or replace function graphql_public.graphql(
-            "operationName" text default null,
-            query text default null,
-            variables jsonb default null,
-            extensions jsonb default null
-        )
-            returns jsonb
-            language sql
-        as $$
-            select graphql.resolve(
-                query := query,
-                variables := coalesce(variables, '{}'),
-                "operationName" := "operationName",
-                extensions := extensions
-            );
-        $$;
+    drop function if exists graphql_public.graphql;
+    create or replace function graphql_public.graphql(
+        "operationName" text default null,
+        query text default null,
+        variables jsonb default null,
+        extensions jsonb default null
+    )
+        returns jsonb
+        language sql
+    as $$
+        select graphql.resolve(
+            query := query,
+            variables := coalesce(variables, '{}'),
+            "operationName" := "operationName",
+            extensions := extensions
+        );
+    $$;
 
-        -- This hook executes when `graphql.resolve` is created. That is not necessarily the last
-        -- function in the extension so we need to grant permissions on existing entities AND
-        -- update default permissions to any others that are created after `graphql.resolve`
-        grant usage on schema graphql to postgres, anon, authenticated, service_role;
-        grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
-        grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
-        grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
+    -- Attach the wrapper to the extension so DROP EXTENSION cascades to it,
+    -- which in turn triggers set_graphql_placeholder to reinstall the "not enabled" stub.
+    alter extension pg_graphql add function graphql_public.graphql(text, text, jsonb, jsonb);
 
-        -- Allow postgres role to allow granting usage on graphql and graphql_public schemas to custom roles
-        grant usage on schema graphql_public to postgres with grant option;
-        grant usage on schema graphql to postgres with grant option;
-    END IF;
-
-END;
+    grant usage on schema graphql to postgres, anon, authenticated, service_role;
+    grant execute on function graphql.resolve to postgres, anon, authenticated, service_role;
+    grant usage on schema graphql to postgres with grant option;
+    grant usage on schema graphql_public to postgres with grant option;
+end;
 $_$;
 
 
@@ -5920,10 +5895,7 @@ ALTER TABLE storage.vector_indexes OWNER TO supabase_storage_admin;
 CREATE TABLE supabase_migrations.schema_migrations (
     version text NOT NULL,
     statements text[],
-    name text,
-    created_by text,
-    idempotency_key text,
-    rollback text[]
+    name text
 );
 
 
@@ -6633,14 +6605,6 @@ ALTER TABLE ONLY storage.vector_indexes
 
 
 --
--- Name: schema_migrations schema_migrations_idempotency_key_key; Type: CONSTRAINT; Schema: supabase_migrations; Owner: postgres
---
-
-ALTER TABLE ONLY supabase_migrations.schema_migrations
-    ADD CONSTRAINT schema_migrations_idempotency_key_key UNIQUE (idempotency_key);
-
-
---
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: supabase_migrations; Owner: postgres
 --
 
@@ -6758,6 +6722,34 @@ CREATE INDEX idx_oauth_client_states_created_at ON auth.oauth_client_states USIN
 --
 
 CREATE INDEX idx_user_id_auth_method ON auth.flow_state USING btree (user_id, authentication_method);
+
+
+--
+-- Name: idx_users_created_at_desc; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX idx_users_created_at_desc ON auth.users USING btree (created_at DESC);
+
+
+--
+-- Name: idx_users_email; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX idx_users_email ON auth.users USING btree (email);
+
+
+--
+-- Name: idx_users_last_sign_in_at_desc; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX idx_users_last_sign_in_at_desc ON auth.users USING btree (last_sign_in_at DESC);
+
+
+--
+-- Name: idx_users_name; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX idx_users_name ON auth.users USING btree (((raw_user_meta_data ->> 'name'::text))) WHERE ((raw_user_meta_data ->> 'name'::text) IS NOT NULL);
 
 
 --
@@ -9163,17 +9155,6 @@ GRANT USAGE ON SCHEMA public TO service_role;
 
 
 --
--- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
---
-
-GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
-GRANT USAGE ON SCHEMA net TO postgres;
-GRANT USAGE ON SCHEMA net TO anon;
-GRANT USAGE ON SCHEMA net TO authenticated;
-GRANT USAGE ON SCHEMA net TO service_role;
-
-
---
 -- Name: SCHEMA realtime; Type: ACL; Schema: -; Owner: supabase_admin
 --
 
@@ -9861,7 +9842,6 @@ GRANT ALL ON FUNCTION public.check_pan_exists(p_pan text) TO service_role;
 -- Name: FUNCTION close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO anon;
 GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) TO service_role;
@@ -9880,7 +9860,6 @@ GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO service_role;
 -- Name: FUNCTION delete_issue_part_with_scrap_check(p_issue_part_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO service_role;
@@ -9953,7 +9932,6 @@ GRANT ALL ON FUNCTION public.is_super_admin() TO service_role;
 -- Name: FUNCTION job_card_site_accessible_to_user(p_job_card_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO service_role;
@@ -9972,7 +9950,6 @@ GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO servic
 -- Name: FUNCTION record_scrap_disposal(p_header jsonb, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) TO anon;
 GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb) TO service_role;
@@ -9982,7 +9959,6 @@ GRANT ALL ON FUNCTION public.record_scrap_disposal(p_header jsonb, p_items jsonb
 -- Name: FUNCTION record_scrap_writeoff(p_header jsonb, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) TO anon;
 GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb) TO service_role;
@@ -11146,7 +11122,7 @@ ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO supabase_admin;
 --
 
 CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
-         WHEN TAG IN ('CREATE FUNCTION')
+         WHEN TAG IN ('CREATE EXTENSION')
    EXECUTE FUNCTION extensions.grant_pg_graphql_access();
 
 
