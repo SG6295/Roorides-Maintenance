@@ -2372,6 +2372,73 @@ $$;
 ALTER FUNCTION public.reverse_part_inventory_on_delete() OWNER TO postgres;
 
 --
+-- Name: seed_get_fk_deps(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_get_fk_deps() RETURNS TABLE(child_table text, parent_table text)
+    LANGUAGE sql SECURITY DEFINER
+    AS $$
+  SELECT
+    kcu.table_name::text  AS child_table,
+    ccu.table_name::text  AS parent_table
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+   AND tc.constraint_schema = kcu.constraint_schema
+  JOIN information_schema.constraint_column_usage ccu
+    ON tc.constraint_name = ccu.constraint_name
+   AND tc.constraint_schema = ccu.constraint_schema
+  WHERE tc.constraint_type = 'FOREIGN KEY'
+    AND tc.constraint_schema = 'public'
+    AND kcu.table_name <> ccu.table_name;
+$$;
+
+
+ALTER FUNCTION public.seed_get_fk_deps() OWNER TO postgres;
+
+--
+-- Name: seed_get_table_columns(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_get_table_columns() RETURNS TABLE(table_name text, column_name text)
+    LANGUAGE sql SECURITY DEFINER
+    AS $$
+  SELECT c.table_name::text, c.column_name::text
+  FROM information_schema.columns c
+  JOIN pg_tables t ON t.schemaname = 'public' AND t.tablename = c.table_name
+  WHERE c.table_schema = 'public'
+    AND c.is_generated = 'NEVER'
+    AND NOT (c.is_identity = 'YES' AND c.identity_generation = 'ALWAYS')
+  ORDER BY c.table_name, c.ordinal_position;
+$$;
+
+
+ALTER FUNCTION public.seed_get_table_columns() OWNER TO postgres;
+
+--
+-- Name: seed_truncate_public_tables(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_truncate_public_tables() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN
+    SELECT tablename
+    FROM pg_tables
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('TRUNCATE TABLE public.%I CASCADE', tbl);
+  END LOOP;
+END;
+$$;
+
+
+ALTER FUNCTION public.seed_truncate_public_tables() OWNER TO postgres;
+
+--
 -- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5909,7 +5976,10 @@ ALTER TABLE storage.vector_indexes OWNER TO supabase_storage_admin;
 CREATE TABLE supabase_migrations.schema_migrations (
     version text NOT NULL,
     statements text[],
-    name text
+    name text,
+    created_by text,
+    idempotency_key text,
+    rollback text[]
 );
 
 
@@ -6616,6 +6686,14 @@ ALTER TABLE ONLY storage.s3_multipart_uploads
 
 ALTER TABLE ONLY storage.vector_indexes
     ADD CONSTRAINT vector_indexes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_migrations schema_migrations_idempotency_key_key; Type: CONSTRAINT; Schema: supabase_migrations; Owner: postgres
+--
+
+ALTER TABLE ONLY supabase_migrations.schema_migrations
+    ADD CONSTRAINT schema_migrations_idempotency_key_key UNIQUE (idempotency_key);
 
 
 --
@@ -10005,6 +10083,33 @@ GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO anon;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO authenticated;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_get_fk_deps(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO anon;
+GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO authenticated;
+GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_get_table_columns(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.seed_get_table_columns() TO anon;
+GRANT ALL ON FUNCTION public.seed_get_table_columns() TO authenticated;
+GRANT ALL ON FUNCTION public.seed_get_table_columns() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_truncate_public_tables(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO anon;
+GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO authenticated;
+GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO service_role;
 
 
 --

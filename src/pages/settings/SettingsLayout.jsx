@@ -1,7 +1,7 @@
 
 import { useState } from 'react'
 import { Link, useLocation, Outlet } from 'react-router-dom'
-import { BellIcon, UsersIcon, ClockIcon, CubeIcon } from '@heroicons/react/24/outline'
+import { BellIcon, UsersIcon, ClockIcon, CubeIcon, CircleStackIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../../hooks/useAuth'
 
 const tabs = [
@@ -9,6 +9,9 @@ const tabs = [
     { name: 'User Management', href: '/settings/users', icon: UsersIcon, roles: ['maintenance_exec', 'super_admin'] },
     { name: 'SLA Automation', href: '/settings/sla', icon: ClockIcon, roles: ['maintenance_exec', 'super_admin'] },
     { name: 'Part Units', href: '/settings/units', icon: CubeIcon, roles: ['maintenance_exec', 'super_admin'] },
+    ...(import.meta.env.VITE_ENABLE_DANGER_ZONE === 'true'
+        ? [{ name: 'Seed Staging from Production', href: '/settings/seed-staging', icon: CircleStackIcon, roles: ['super_admin'] }]
+        : []),
 ]
 
 function classNames(...classes) {
