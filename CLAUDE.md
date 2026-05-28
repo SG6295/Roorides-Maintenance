@@ -14,22 +14,13 @@ npm run preview    # Preview production build locally
 npm run schema:dump  # Regenerate docs/schema.sql and src/types/database.types.ts
 ```
 
-### Schema change rule
-After every migration, run `npm run schema:dump` to regenerate `docs/schema.sql` and `src/types/database.types.ts`.
+### DB change workflow (follow this every time, in order)
+1. **Write the migration file** in `supabase/migrations/` — this is the source of truth and goes to git.
+2. **Preview via MCP `execute_sql`** using a `BEGIN; ...; ROLLBACK;` wrapper — Claude verifies the output before anything is permanently applied. Raise it with the user only if something looks risky.
+3. **Apply via MCP `apply_migration`** with the clean SQL (no BEGIN/ROLLBACK) — recorded in migration history, atomic.
+4. **Regenerate** with `npm run schema:dump` — keeps `docs/schema.sql` and `src/types/database.types.ts` in sync.
 
-### Migration safety rule
-**Every migration file must be wrapped in a transaction with ROLLBACK by default.** The user pastes into the Supabase SQL editor, verifies the output, then swaps `ROLLBACK` to `COMMIT` and re-runs. Template:
-
-```sql
-BEGIN;
-
-  -- migration SQL here
-
-  -- verification query (runs inside transaction so you see the effect before committing)
-  SELECT ...;
-
-ROLLBACK; -- change to COMMIT once output looks correct
-```
+> **`execute_sql` is never used to make schema changes directly** — always go through `apply_migration` so the change is tracked. `execute_sql` is for queries, data fixes, and previews only.
 
 ### Edge Functions
 ```bash
