@@ -1,5 +1,3 @@
-BEGIN;
-
 -- Helper functions used by the seed-staging-from-prod edge function.
 -- Safe to have in prod — they are never called from there.
 
@@ -60,5 +58,3 @@ AS $$
 $$;
 
 SELECT 'seed helper functions created' AS result;
-
-ROLLBACK; -- change to COMMIT once output looks correct
