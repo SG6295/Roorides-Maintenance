@@ -164,7 +164,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
         }
     }
 
-    const canEdit = isMechanic && jobCardStatus !== 'Completed'
+    const canEdit = isMechanic && jobCardStatus === 'Open'
 
     return (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">

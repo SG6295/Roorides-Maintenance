@@ -14,22 +14,13 @@ npm run preview    # Preview production build locally
 npm run schema:dump  # Regenerate docs/schema.sql and src/types/database.types.ts
 ```
 
-### Schema change rule
-After every migration, run `npm run schema:dump` to regenerate `docs/schema.sql` and `src/types/database.types.ts`.
+### DB change workflow (follow this every time, in order)
+1. **Write the migration file** in `supabase/migrations/` — this is the source of truth and goes to git.
+2. **Preview via MCP `execute_sql`** using a `BEGIN; ...; ROLLBACK;` wrapper — Claude verifies the output before anything is permanently applied. Raise it with the user only if something looks risky.
+3. **Apply via MCP `apply_migration`** with the clean SQL (no BEGIN/ROLLBACK) — recorded in migration history, atomic.
+4. **Regenerate** with `npm run schema:dump` — keeps `docs/schema.sql` and `src/types/database.types.ts` in sync.
 
-### Migration safety rule
-**Every migration file must be wrapped in a transaction with ROLLBACK by default.** The user pastes into the Supabase SQL editor, verifies the output, then swaps `ROLLBACK` to `COMMIT` and re-runs. Template:
-
-```sql
-BEGIN;
-
-  -- migration SQL here
-
-  -- verification query (runs inside transaction so you see the effect before committing)
-  SELECT ...;
-
-ROLLBACK; -- change to COMMIT once output looks correct
-```
+> **`execute_sql` is never used to make schema changes directly** — always go through `apply_migration` so the change is tracked. `execute_sql` is for queries, data fixes, and previews only.
 
 ### Edge Functions
 ```bash
@@ -87,6 +78,7 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 | `upload-to-drive` | Uploads images to a specific Google Drive folder via service account JWT |
 | `get-roorides-vehicles` | (Superseded) Early prototype — fetches vehicles from Roorides and returns them without persisting. No longer used by the app. |
 | `sync-roorides-vehicles` | Authenticates with Roorides, fetches all vehicles for org 126 (via `ROORIDES_ORG_ID` secret), and upserts them into the local `vehicles` table. Never overwrites the `site` column. Called by pg_cron at midnight UTC daily and also manually via the "Refresh vehicle list" button on the ticket form. Credentials: `ROORIDES_USERNAME`, `ROORIDES_PASSWORD`, `ROORIDES_ORG_ID` secrets. |
+| `seed-staging-from-prod` | **Staging only.** Nukes all staging auth users and public table data, then reseeds from production. Requires `super_admin` role. All staging users are recreated with password `NVSStaging2025!`. Triggered via the "Seed Staging from Production" page under Settings (only visible when `VITE_ENABLE_DANGER_ZONE=true`). Secrets required in staging: `PROD_SUPABASE_URL`, `PROD_SUPABASE_SERVICE_ROLE_KEY`. |
 | `backup-to-drive` | Dumps all tables to JSON and uploads to Google Drive via service account JWT. Deletes backups older than 7 days from the Drive folder. Scheduled hourly 10 AM–7 PM IST (`30 4-13 * * *` UTC) via pg_cron (`nvs-hourly-backup` job). Secrets: `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `BACKUP_DRIVE_FOLDER_ID`. |
 
 ### Key Data Model Relationships

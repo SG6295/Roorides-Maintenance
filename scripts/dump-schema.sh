@@ -27,6 +27,6 @@ echo "→ Dumping schema to docs/schema.sql…"
   > docs/schema.sql
 
 echo "→ Generating TypeScript types to src/types/database.types.ts…"
-supabase gen types typescript --project-id awbovpblaxwpsuclpiyh > src/types/database.types.ts
+supabase gen types typescript --project-id bhzvnsnavfujfjimiesh > src/types/database.types.ts
 
 echo "✓ Done."

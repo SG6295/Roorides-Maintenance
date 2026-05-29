@@ -69,6 +69,20 @@ CREATE SCHEMA graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
+-- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+
+
+--
+-- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pg_net IS 'Async HTTP';
+
+
+--
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 
@@ -332,7 +346,8 @@ ALTER TYPE public.issue_status OWNER TO postgres;
 
 CREATE TYPE public.job_card_status AS ENUM (
     'Open',
-    'Completed'
+    'Completed',
+    'Completed - Invoice Pending'
 );
 
 
@@ -1467,6 +1482,278 @@ $$;
 ALTER FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb) OWNER TO postgres;
 
 --
+-- Name: close_job_card_with_scrap(uuid, text, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean DEFAULT false) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_job_card              job_cards%ROWTYPE;
+    v_decision              jsonb;
+    v_issue_part_id         uuid;
+    v_action                text;
+    v_scrap_ids             uuid[] := '{}';
+    v_exclusion_ids         uuid[] := '{}';
+    v_reversed_scrap_ids    uuid[] := '{}';
+    v_reversed_id           uuid;
+    v_new_id                uuid;
+    v_issue_part_ids        uuid[];
+    v_group_a_ids           uuid[];
+    v_required_part_ids     uuid[];
+    v_decision_part_ids     uuid[];
+    v_missing_ids           uuid[];
+    v_extra_ids             uuid[];
+    v_extra_permanent_ids   uuid[];
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'UNAUTHORIZED',
+            'error_message', 'Only maintenance executives can close job cards.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT * INTO v_job_card
+    FROM   public.job_cards
+    WHERE  id = p_job_card_id AND status = 'Open';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'JOB_CARD_NOT_FOUND_OR_NOT_OPEN',
+            'error_message', 'Job card not found or is not currently Open.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF NOT p_invoice_pending AND v_job_card.type = 'Outsource' AND v_job_card.invoice_url IS NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_REQUIRED',
+            'error_message', 'Outsource job cards require an invoice before closure.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.issues
+        WHERE  job_card_id = p_job_card_id
+          AND  status <> 'Done'::issue_status
+    ) THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'ISSUES_NOT_DONE',
+            'error_message', 'All issues must be marked Done before closing the job card.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT coalesce(array_agg(ip.id), '{}')
+    INTO   v_issue_part_ids
+    FROM   public.issue_parts ip
+    JOIN   public.issues      i  ON i.id = ip.issue_id
+    WHERE  i.job_card_id = p_job_card_id;
+
+    SELECT coalesce(array_agg(ip.id), '{}')
+    INTO   v_group_a_ids
+    FROM   public.issue_parts ip
+    JOIN   public.issues      i  ON i.id = ip.issue_id
+    WHERE  i.job_card_id = p_job_card_id
+      AND  public.get_blocking_scrap_for_issue_part(ip.id) IS NOT NULL;
+
+    SELECT coalesce(array_agg(id), '{}')
+    INTO   v_required_part_ids
+    FROM   unnest(v_issue_part_ids) AS id
+    WHERE  id != ALL(v_group_a_ids);
+
+    SELECT coalesce(array_agg((d->>'issue_part_id')::uuid), '{}')
+    INTO   v_decision_part_ids
+    FROM   jsonb_array_elements(coalesce(p_scrap_decisions, '[]'::jsonb)) AS d;
+
+    SELECT array_agg(id)
+    INTO   v_extra_permanent_ids
+    FROM   unnest(v_decision_part_ids) AS id
+    WHERE  id = ANY(v_group_a_ids);
+
+    IF v_extra_permanent_ids IS NOT NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'DECISIONS_EXTRA_PART_PERMANENT_SCRAP',
+            'error_message', 'A decision was provided for a part whose scrap has already been permanently recorded. Remove it from the decisions array.',
+            'details',       json_build_object('extra_part_ids', v_extra_permanent_ids)
+        )::text;
+    END IF;
+
+    SELECT array_agg(id)
+    INTO   v_missing_ids
+    FROM   unnest(v_required_part_ids) AS id
+    WHERE  id != ALL(v_decision_part_ids);
+
+    IF v_missing_ids IS NOT NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'DECISIONS_MISSING_PART',
+            'error_message', 'A part was added to this job card while you were entering decisions. The card will refresh — please review and re-submit.',
+            'details',       json_build_object('missing_part_ids', v_missing_ids)
+        )::text;
+    END IF;
+
+    SELECT array_agg(id)
+    INTO   v_extra_ids
+    FROM   unnest(v_decision_part_ids) AS id
+    WHERE  id != ALL(v_issue_part_ids);
+
+    IF v_extra_ids IS NOT NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'DECISIONS_EXTRA_PART',
+            'error_message', 'A part was removed from this job card while you were entering decisions. The card will refresh — please review and re-submit.',
+            'details',       json_build_object('extra_part_ids', v_extra_ids)
+        )::text;
+    END IF;
+
+    FOR v_decision IN
+        SELECT * FROM jsonb_array_elements(coalesce(p_scrap_decisions, '[]'::jsonb))
+    LOOP
+        v_action        := v_decision->>'action';
+        v_issue_part_id := (v_decision->>'issue_part_id')::uuid;
+
+        IF v_action = 'exclude' AND (v_decision->>'exclusion_reason') IS NULL THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'MISSING_EXCLUSION_REASON',
+                'error_message', 'Exclusion reason is required for excluded parts.',
+                'details',       json_build_object('issue_part_id', v_issue_part_id)
+            )::text;
+        END IF;
+
+        IF v_action = 'scrap'
+           AND v_job_card.type = 'Outsource'
+           AND (v_decision->>'outsource_disposition') IS NULL
+        THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'MISSING_DISPOSITION',
+                'error_message', 'Outsource disposition is required for scrapped parts on Outsource job cards.',
+                'details',       json_build_object('issue_part_id', v_issue_part_id)
+            )::text;
+        END IF;
+
+        IF (v_decision->>'outsource_disposition') = 'retained_by_vendor_with_credit' THEN
+            IF (v_decision->>'outsource_credit_amount') IS NULL
+               OR (v_decision->>'outsource_credit_amount')::numeric <= 0
+            THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'INVALID_CREDIT_AMOUNT',
+                    'error_message', 'Credit amount must be a positive number when disposition is "retained by vendor with credit".',
+                    'details',       json_build_object('issue_part_id', v_issue_part_id)
+                )::text;
+            END IF;
+        END IF;
+    END LOOP;
+
+    UPDATE public.job_cards
+    SET    status       = CASE WHEN p_invoice_pending
+                               THEN 'Completed - Invoice Pending'::public.job_card_status
+                               ELSE 'Completed'::public.job_card_status
+                          END,
+           completed_at = now(),
+           remarks      = p_remarks
+    WHERE  id = p_job_card_id;
+
+    FOR v_decision IN
+        SELECT * FROM jsonb_array_elements(coalesce(p_scrap_decisions, '[]'::jsonb))
+    LOOP
+        v_action        := v_decision->>'action';
+        v_issue_part_id := (v_decision->>'issue_part_id')::uuid;
+
+        FOR v_reversed_id IN
+            UPDATE public.scrap_inventory
+            SET    status     = 'reversed',
+                   updated_at = now(),
+                   updated_by = auth.uid()
+            WHERE  source_issue_part_id = v_issue_part_id
+              AND  status = 'in_storage'
+            RETURNING id
+        LOOP
+            v_reversed_scrap_ids := v_reversed_scrap_ids || v_reversed_id;
+        END LOOP;
+
+        IF v_action = 'scrap' THEN
+
+            IF v_job_card.type = 'Outsource' THEN
+                UPDATE public.issue_parts
+                SET    outsource_part_disposition     = (v_decision->>'outsource_disposition')::outsource_part_disposition,
+                       outsource_vendor_credit_amount =
+                           CASE
+                               WHEN (v_decision->>'outsource_disposition') = 'retained_by_vendor_with_credit'
+                               THEN (v_decision->>'outsource_credit_amount')::numeric
+                               ELSE NULL
+                           END
+                WHERE  id = v_issue_part_id;
+            END IF;
+
+            INSERT INTO public.scrap_inventory (
+                source_ticket_id, source_job_card_id, source_issue_id,
+                source_issue_part_id, source_vehicle_number,
+                part_id_snapshot, part_name_snapshot, part_number_snapshot,
+                quantity_snapshot, unit_snapshot, status,
+                outsource_part_disposition_snapshot,
+                outsource_vendor_credit_amount_snapshot, created_by
+            )
+            SELECT
+                i.ticket_id, jc.id, ip.issue_id, ip.id, jc.vehicle_number,
+                p.id, p.name, p.part_number, ip.quantity_used, p.unit,
+                'in_storage'::scrap_item_status,
+                CASE WHEN jc.type = 'Outsource'
+                     THEN (v_decision->>'outsource_disposition')::outsource_part_disposition
+                     ELSE NULL END,
+                CASE WHEN jc.type = 'Outsource'
+                          AND (v_decision->>'outsource_disposition') = 'retained_by_vendor_with_credit'
+                     THEN (v_decision->>'outsource_credit_amount')::numeric
+                     ELSE NULL END,
+                auth.uid()
+            FROM  public.issue_parts ip
+            JOIN  public.issues      i  ON i.id  = ip.issue_id
+            JOIN  public.job_cards   jc ON jc.id = i.job_card_id
+            JOIN  public.parts       p  ON p.id  = ip.part_id
+            WHERE ip.id = v_issue_part_id
+            RETURNING id INTO v_new_id;
+
+            v_scrap_ids := v_scrap_ids || v_new_id;
+
+        ELSIF v_action = 'exclude' THEN
+
+            INSERT INTO public.scrap_excluded_parts (
+                source_job_card_id, source_issue_id, source_issue_part_id,
+                part_id_snapshot, part_name_snapshot, quantity_snapshot,
+                reason, notes, excluded_by
+            )
+            SELECT
+                jc.id, ip.issue_id, ip.id, p.id, p.name, ip.quantity_used,
+                (v_decision->>'exclusion_reason')::scrap_exclusion_reason,
+                v_decision->>'exclusion_notes',
+                auth.uid()
+            FROM  public.issue_parts ip
+            JOIN  public.issues      i  ON i.id  = ip.issue_id
+            JOIN  public.job_cards   jc ON jc.id = i.job_card_id
+            JOIN  public.parts       p  ON p.id  = ip.part_id
+            WHERE ip.id = v_issue_part_id
+            RETURNING id INTO v_new_id;
+
+            v_exclusion_ids := v_exclusion_ids || v_new_id;
+
+        END IF;
+    END LOOP;
+
+    RETURN json_build_object(
+        'success',            true,
+        'job_card_id',        p_job_card_id,
+        'scrap_entry_ids',    v_scrap_ids,
+        'exclusion_ids',      v_exclusion_ids,
+        'reversed_scrap_ids', v_reversed_scrap_ids
+    );
+END;
+$$;
+
+
+ALTER FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) OWNER TO postgres;
+
+--
 -- Name: deduct_part_from_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1587,6 +1874,84 @@ $$;
 
 
 ALTER FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) OWNER TO postgres;
+
+--
+-- Name: finalize_outsource_invoice(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.finalize_outsource_invoice(p_job_card_id uuid, p_remarks text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_job_card job_cards%ROWTYPE;
+    v_invoice  outsource_invoices%ROWTYPE;
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'UNAUTHORIZED',
+            'error_message', 'Only maintenance executives can finalize outsource invoices.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT * INTO v_job_card
+    FROM   public.job_cards
+    WHERE  id     = p_job_card_id
+      AND  status = 'Completed - Invoice Pending'
+      AND  type   = 'Outsource';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'JOB_CARD_NOT_ELIGIBLE',
+            'error_message', 'Job card not found or is not an Outsource card with status "Completed - Invoice Pending".',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF v_job_card.invoice_url IS NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_FILE_REQUIRED',
+            'error_message', 'An invoice file must be uploaded before finalizing.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT * INTO v_invoice
+    FROM   public.outsource_invoices
+    WHERE  job_card_id = p_job_card_id;
+
+    IF NOT FOUND
+       OR v_invoice.invoice_no       IS NULL
+       OR v_invoice.invoice_value    IS NULL
+       OR v_invoice.approved_amount  IS NULL
+       OR v_invoice.advance_amount   IS NULL
+       OR v_invoice.date_of_activity IS NULL
+       OR v_invoice.payby_date       IS NULL
+       OR v_invoice.payment_status   IS NULL
+       OR v_invoice.paid_by          IS NULL
+    THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_DETAILS_INCOMPLETE',
+            'error_message', 'Invoice details are incomplete. Please fill in all required fields before finalizing.',
+            'details',       null
+        )::text;
+    END IF;
+
+    UPDATE public.job_cards
+    SET    status  = 'Completed',
+           remarks = coalesce(p_remarks, remarks)
+    WHERE  id = p_job_card_id;
+
+    RETURN json_build_object(
+        'success',     true,
+        'job_card_id', p_job_card_id
+    );
+END;
+$$;
+
+
+ALTER FUNCTION public.finalize_outsource_invoice(p_job_card_id uuid, p_remarks text) OWNER TO postgres;
 
 --
 -- Name: generate_issue_number(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2356,6 +2721,73 @@ $$;
 
 
 ALTER FUNCTION public.reverse_part_inventory_on_delete() OWNER TO postgres;
+
+--
+-- Name: seed_get_fk_deps(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_get_fk_deps() RETURNS TABLE(child_table text, parent_table text)
+    LANGUAGE sql SECURITY DEFINER
+    AS $$
+  SELECT
+    kcu.table_name::text  AS child_table,
+    ccu.table_name::text  AS parent_table
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+   AND tc.constraint_schema = kcu.constraint_schema
+  JOIN information_schema.constraint_column_usage ccu
+    ON tc.constraint_name = ccu.constraint_name
+   AND tc.constraint_schema = ccu.constraint_schema
+  WHERE tc.constraint_type = 'FOREIGN KEY'
+    AND tc.constraint_schema = 'public'
+    AND kcu.table_name <> ccu.table_name;
+$$;
+
+
+ALTER FUNCTION public.seed_get_fk_deps() OWNER TO postgres;
+
+--
+-- Name: seed_get_table_columns(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_get_table_columns() RETURNS TABLE(table_name text, column_name text)
+    LANGUAGE sql SECURITY DEFINER
+    AS $$
+  SELECT c.table_name::text, c.column_name::text
+  FROM information_schema.columns c
+  JOIN pg_tables t ON t.schemaname = 'public' AND t.tablename = c.table_name
+  WHERE c.table_schema = 'public'
+    AND c.is_generated = 'NEVER'
+    AND NOT (c.is_identity = 'YES' AND c.identity_generation = 'ALWAYS')
+  ORDER BY c.table_name, c.ordinal_position;
+$$;
+
+
+ALTER FUNCTION public.seed_get_table_columns() OWNER TO postgres;
+
+--
+-- Name: seed_truncate_public_tables(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_truncate_public_tables() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN
+    SELECT tablename
+    FROM pg_tables
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('TRUNCATE TABLE public.%I CASCADE', tbl);
+  END LOOP;
+END;
+$$;
+
+
+ALTER FUNCTION public.seed_truncate_public_tables() OWNER TO postgres;
 
 --
 -- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -5895,7 +6327,10 @@ ALTER TABLE storage.vector_indexes OWNER TO supabase_storage_admin;
 CREATE TABLE supabase_migrations.schema_migrations (
     version text NOT NULL,
     statements text[],
-    name text
+    name text,
+    created_by text,
+    idempotency_key text,
+    rollback text[]
 );
 
 
@@ -6602,6 +7037,14 @@ ALTER TABLE ONLY storage.s3_multipart_uploads
 
 ALTER TABLE ONLY storage.vector_indexes
     ADD CONSTRAINT vector_indexes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_migrations schema_migrations_idempotency_key_key; Type: CONSTRAINT; Schema: supabase_migrations; Owner: postgres
+--
+
+ALTER TABLE ONLY supabase_migrations.schema_migrations
+    ADD CONSTRAINT schema_migrations_idempotency_key_key UNIQUE (idempotency_key);
 
 
 --
@@ -9145,6 +9588,17 @@ GRANT ALL ON SCHEMA extensions TO dashboard_user;
 
 
 --
+-- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
+--
+
+GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
+GRANT USAGE ON SCHEMA net TO postgres;
+GRANT USAGE ON SCHEMA net TO anon;
+GRANT USAGE ON SCHEMA net TO authenticated;
+GRANT USAGE ON SCHEMA net TO service_role;
+
+
+--
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
 --
 
@@ -9848,6 +10302,15 @@ GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_rem
 
 
 --
+-- Name: FUNCTION close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) TO anon;
+GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) TO authenticated;
+GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) TO service_role;
+
+
+--
 -- Name: FUNCTION deduct_part_from_inventory(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -9872,6 +10335,15 @@ GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id 
 GRANT ALL ON FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) TO anon;
 GRANT ALL ON FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) TO authenticated;
 GRANT ALL ON FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone) TO service_role;
+
+
+--
+-- Name: FUNCTION finalize_outsource_invoice(p_job_card_id uuid, p_remarks text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.finalize_outsource_invoice(p_job_card_id uuid, p_remarks text) TO anon;
+GRANT ALL ON FUNCTION public.finalize_outsource_invoice(p_job_card_id uuid, p_remarks text) TO authenticated;
+GRANT ALL ON FUNCTION public.finalize_outsource_invoice(p_job_card_id uuid, p_remarks text) TO service_role;
 
 
 --
@@ -9980,6 +10452,33 @@ GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO anon;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO authenticated;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_get_fk_deps(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO anon;
+GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO authenticated;
+GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_get_table_columns(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.seed_get_table_columns() TO anon;
+GRANT ALL ON FUNCTION public.seed_get_table_columns() TO authenticated;
+GRANT ALL ON FUNCTION public.seed_get_table_columns() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_truncate_public_tables(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO anon;
+GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO authenticated;
+GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO service_role;
 
 
 --

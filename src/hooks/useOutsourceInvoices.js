@@ -131,6 +131,29 @@ export function useOutsourceInvoiceSummary(filters = {}) {
 }
 
 /**
+ * Transitions a 'Completed - Invoice Pending' job card to 'Completed' once the
+ * invoice file and all required details have been provided.
+ */
+export function useFinalizeOutsourceInvoice() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async ({ jobCardId, remarks }) => {
+            const { data, error } = await supabase.rpc('finalize_outsource_invoice', {
+                p_job_card_id: jobCardId,
+                p_remarks:     remarks || null,
+            })
+            if (error) throw error
+            return data
+        },
+        onSuccess: (_, { jobCardId }) => {
+            queryClient.invalidateQueries({ queryKey: ['job_card'] })
+            queryClient.invalidateQueries({ queryKey: ['job_cards'] })
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoice', jobCardId] })
+        },
+    })
+}
+
+/**
  * Records a payment against an outsource invoice.
  */
 export function useRecordInvoicePayment() {

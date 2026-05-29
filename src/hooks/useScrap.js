@@ -14,11 +14,12 @@ export function useCloseJobCardWithScrap() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ jobCardId, remarks, scrapDecisions }) => {
+        mutationFn: async ({ jobCardId, remarks, scrapDecisions, invoicePending = false }) => {
             const { data, error } = await supabase.rpc('close_job_card_with_scrap', {
                 p_job_card_id:     jobCardId,
                 p_remarks:         remarks || null,
                 p_scrap_decisions: scrapDecisions,
+                p_invoice_pending: invoicePending,
             })
 
             if (error) {
