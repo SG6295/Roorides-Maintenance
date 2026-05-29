@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from '@headlessui/react'
 import { useAuth } from '../hooks/useAuth'
 import { useJobCard, useUpdateJobCard } from '../hooks/useJobCards'
-import { useOutsourceInvoice, useUpsertOutsourceInvoice } from '../hooks/useOutsourceInvoices'
+import { useOutsourceInvoice, useUpsertOutsourceInvoice, useFinalizeOutsourceInvoice } from '../hooks/useOutsourceInvoices'
 import { useApprovedSuppliers } from '../hooks/useSuppliers'
 import { useParts } from '../hooks/useParts'
 import Navigation from '../components/shared/Navigation'
@@ -84,6 +84,7 @@ export default function JobCardDetail() {
     const [selectedSupplierId, setSelectedSupplierId] = useState('')
     const [showQuickAddModal, setShowQuickAddModal] = useState(false)
     const [showScrapModal, setShowScrapModal] = useState(false)
+    const [invoicePendingMode, setInvoicePendingMode] = useState(false)
     const [scrapRaceError, setScrapRaceError] = useState(null)
 
     const [invoiceForm, setInvoiceForm] = useState({
@@ -128,6 +129,7 @@ export default function JobCardDetail() {
         jobCard?.type === 'Outsource' ? jobCard?.id : null
     )
     const upsertInvoice = useUpsertOutsourceInvoice()
+    const finalizeInvoice = useFinalizeOutsourceInvoice()
 
     useEffect(() => {
         if (!existingInvoice) return
@@ -252,6 +254,43 @@ export default function JobCardDetail() {
         setShowScrapModal(true)
     }
 
+    const handleCloseInvoicePending = () => {
+        setInvoicePendingMode(true)
+        setShowScrapModal(true)
+    }
+
+    const handleFinalizeInvoice = async () => {
+        const errors = validateInvoiceForm(invoiceForm, todayStr)
+        if (Object.keys(errors).length > 0) {
+            setShowInvoiceErrors(true)
+            return
+        }
+        try {
+            await upsertInvoice.mutateAsync({
+                jobCardId: jobCard.id,
+                userId: userProfile?.id,
+                data: {
+                    date_of_activity: invoiceForm.dateOfActivity,
+                    invoice_no:       invoiceForm.invoiceNo.trim(),
+                    paid_by:          invoiceForm.paidBy,
+                    invoice_value:    parseFloat(invoiceForm.invoiceValue),
+                    approved_amount:  parseFloat(invoiceForm.approvedAmount),
+                    advance_amount:   parseFloat(invoiceForm.advanceAmount),
+                    payment_status:   invoiceForm.paymentStatus,
+                    payby_date:       invoiceForm.paybyDate,
+                },
+            })
+        } catch (e) {
+            alert('Failed to save invoice details: ' + e.message)
+            return
+        }
+        try {
+            await finalizeInvoice.mutateAsync({ jobCardId: jobCard.id })
+        } catch (e) {
+            alert('Failed to finalize invoice: ' + e.message)
+        }
+    }
+
     const handleReopenJobCard = async () => {
         if (!window.confirm('Reopen this Job Card? This will allow parts and labour to be updated.')) return
         try {
@@ -302,6 +341,9 @@ export default function JobCardDetail() {
         return !isNaN(aa) && !isNaN(adv) ? aa - adv : null
     })()
     const canComplete = isAllDone && !needsInvoiceFile && invoiceValid && hasSupplier
+    const canCloseInvoicePending = isOutsource && isAllDone && hasSupplier
+    const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
+    const canFinalize = isInvoicePending && !needsInvoiceFile && invoiceValid
 
     const jobLocationLabel = jobCard.type === 'InHouse' ? 'In-house' : 'Outsource'
 
@@ -341,9 +383,11 @@ export default function JobCardDetail() {
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                 jobCard.status === 'Completed'
                                     ? 'bg-green-100 text-green-800'
+                                    : jobCard.status === 'Completed - Invoice Pending'
+                                    ? 'bg-amber-100 text-amber-800'
                                     : 'bg-blue-100 text-blue-800'
                             }`}>
-                                {jobCard.status}
+                                {jobCard.status === 'Completed - Invoice Pending' ? 'Invoice Pending' : jobCard.status}
                             </span>
                         </div>
                         <span className="text-xs text-gray-500">
@@ -419,7 +463,7 @@ export default function JobCardDetail() {
                                     }`}>
                                         {jobLocationLabel}
                                     </span>
-                                    {isExec && jobCard.status !== 'Completed' && (
+                                    {isExec && jobCard.status === 'Open' && (
                                         <button
                                             onClick={() => { setPendingType(jobCard.type); setEditingJobLocation(true) }}
                                             className="text-gray-500 hover:text-blue-600"
@@ -493,7 +537,7 @@ export default function JobCardDetail() {
                                 ) : (
                                     <span className="flex items-center gap-1">
                                         {jobCard.mechanic?.name || 'Unassigned'}
-                                        {isExec && jobCard.status !== 'Completed' && (
+                                        {isExec && jobCard.status === 'Open' && (
                                             <button
                                                 onClick={() => setAssigningMechanic(true)}
                                                 className="ml-1 text-gray-500 hover:text-blue-600"
@@ -537,7 +581,7 @@ export default function JobCardDetail() {
                                 ) : (
                                     <span className="flex items-center gap-1">
                                         {jobCard.supplier?.entity_name || 'No supplier'}
-                                        {isExec && jobCard.status !== 'Completed' && (
+                                        {isExec && jobCard.status === 'Open' && (
                                             <button
                                                 onClick={() => setEditingSupplier(true)}
                                                 className="ml-1 text-gray-500 hover:text-blue-600"
@@ -588,7 +632,7 @@ export default function JobCardDetail() {
                                 <span className="text-gray-900">
                                     {jobCard.odometer != null ? `${jobCard.odometer.toLocaleString('en-IN')} km` : <span className="text-gray-400 italic">Not recorded</span>}
                                 </span>
-                                {isMechanic && jobCard.status !== 'Completed' && (
+                                {isMechanic && jobCard.status === 'Open' && (
                                     <button
                                         onClick={() => setEditingOdometer(true)}
                                         className="text-gray-500 hover:text-blue-600"
@@ -651,7 +695,7 @@ export default function JobCardDetail() {
                         </h2>
 
                         {jobCard.status === 'Completed' ? (
-                            /* Read-only display after closure */
+                            /* Read-only display after full closure */
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                                 {[
                                     ['Date of Activity', existingInvoice?.date_of_activity
@@ -683,7 +727,7 @@ export default function JobCardDetail() {
                                 ))}
                             </div>
                         ) : (
-                            /* Editable form — shown while job card is Open */
+                            /* Editable form — shown while Open or Completed - Invoice Pending */
                             <div className="space-y-3">
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
@@ -886,7 +930,9 @@ export default function JobCardDetail() {
                                 />
                                 {!jobCard.invoice_url && (
                                     <p className="mt-2 text-xs text-amber-600 font-medium">
-                                        Invoice upload required before completing this job card.
+                                        {jobCard.status === 'Completed - Invoice Pending'
+                                            ? 'Invoice upload required to finalize this job card.'
+                                            : 'Invoice upload required before completing this job card.'}
                                     </p>
                                 )}
                             </>
@@ -899,7 +945,7 @@ export default function JobCardDetail() {
                     <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-3">
                         Execution Remarks
                     </h2>
-                    {isMechanic && jobCard.status !== 'Completed' ? (
+                    {isMechanic && jobCard.status === 'Open' ? (
                         <>
                             <textarea
                                 value={remarks}
@@ -920,8 +966,8 @@ export default function JobCardDetail() {
                     )}
                 </div>
 
-                {/* ── Complete Job Card — exec only ────────────────────────── */}
-                {isExec && jobCard.status !== 'Completed' && (
+                {/* ── Complete Job Card — exec only, Open status only ──────── */}
+                {isExec && jobCard.status === 'Open' && (
                     <button
                         onClick={handleCompleteJobCard}
                         disabled={!canComplete || updateJobCard.isPending || upsertInvoice.isPending}
@@ -946,17 +992,69 @@ export default function JobCardDetail() {
                     </button>
                 )}
 
-                {/* ── Reopen Job Card — exec only ──────────────────────────── */}
-                {isExec && jobCard.status === 'Completed' && (
+                {/* ── Close — Invoice Pending — outsource Open cards only ───── */}
+                {isExec && jobCard.status === 'Open' && isOutsource && (
+                    <button
+                        onClick={handleCloseInvoicePending}
+                        disabled={!canCloseInvoicePending || updateJobCard.isPending}
+                        title={
+                            !isAllDone
+                                ? 'Mark all issues as Done first'
+                                : !hasSupplier
+                                ? 'Assign a supplier before closing'
+                                : ''
+                        }
+                        className={`w-full py-4 rounded-xl text-base font-semibold shadow-sm transition-colors ${
+                            canCloseInvoicePending
+                                ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                : 'bg-gray-300 text-white cursor-not-allowed'
+                        }`}
+                    >
+                        Close — Invoice Pending
+                    </button>
+                )}
+
+                {/* ── Invoice Pending banner + Finalize button ─────────────── */}
+                {isExec && isInvoicePending && (
                     <>
-                        {isOutsource && hasPayments && (
+                        <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+                            <p className="text-sm text-amber-800 font-medium">Invoice not yet received</p>
+                            <p className="text-xs text-amber-700 mt-0.5">
+                                Upload the invoice file and fill in the invoice details above, then click Finalize Invoice to fully close this job card.
+                            </p>
+                        </div>
+                        <button
+                            onClick={handleFinalizeInvoice}
+                            disabled={!canFinalize || upsertInvoice.isPending || finalizeInvoice.isPending}
+                            title={
+                                needsInvoiceFile
+                                    ? 'Upload the invoice file first'
+                                    : !invoiceValid
+                                    ? 'Fill in all required invoice details'
+                                    : ''
+                            }
+                            className={`w-full py-4 rounded-xl text-base font-semibold text-white shadow-sm transition-colors ${
+                                canFinalize
+                                    ? 'bg-green-600 hover:bg-green-700'
+                                    : 'bg-gray-300 cursor-not-allowed'
+                            }`}
+                        >
+                            {upsertInvoice.isPending || finalizeInvoice.isPending ? 'Saving…' : 'Finalize Invoice'}
+                        </button>
+                    </>
+                )}
+
+                {/* ── Reopen Job Card — exec only ──────────────────────────── */}
+                {isExec && (jobCard.status === 'Completed' || isInvoicePending) && (
+                    <>
+                        {isOutsource && hasPayments && jobCard.status === 'Completed' && (
                             <p className="text-sm text-red-600 text-center px-4">
                                 Cannot revert — payments have been recorded for this invoice. Contact finance to handle this manually.
                             </p>
                         )}
                         <button
                             onClick={handleReopenJobCard}
-                            disabled={updateJobCard.isPending || (isOutsource && hasPayments)}
+                            disabled={updateJobCard.isPending || (isOutsource && hasPayments && jobCard.status === 'Completed')}
                             className="w-full py-4 rounded-xl text-base font-semibold text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Reopen Job Card
@@ -977,9 +1075,10 @@ export default function JobCardDetail() {
             {showScrapModal && (
                 <ScrapDecisionModal
                     jobCard={jobCard}
-                    onClose={() => setShowScrapModal(false)}
-                    onSuccess={() => setShowScrapModal(false)}
-                    onRaceError={msg => { setShowScrapModal(false); setScrapRaceError(msg) }}
+                    invoicePending={invoicePendingMode}
+                    onClose={() => { setShowScrapModal(false); setInvoicePendingMode(false) }}
+                    onSuccess={() => { setShowScrapModal(false); setInvoicePendingMode(false) }}
+                    onRaceError={msg => { setShowScrapModal(false); setInvoicePendingMode(false); setScrapRaceError(msg) }}
                 />
             )}
         </div>

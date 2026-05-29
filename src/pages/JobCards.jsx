@@ -75,6 +75,7 @@ export default function JobCards() {
                             placeholder="All Statuses"
                             options={[
                                 { value: 'Open', label: 'Open' },
+                                { value: 'Completed - Invoice Pending', label: 'Invoice Pending' },
                                 { value: 'Completed', label: 'Completed' },
                             ]}
                         />
@@ -140,9 +141,14 @@ export default function JobCards() {
                                             {format(new Date(jc.created_at), 'MMM d, yyyy')}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${jc.status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
-                                                }`}>
-                                                {jc.status}
+                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                jc.status === 'Completed'
+                                                    ? 'bg-green-100 text-green-800'
+                                                    : jc.status === 'Completed - Invoice Pending'
+                                                    ? 'bg-amber-100 text-amber-800'
+                                                    : 'bg-blue-100 text-blue-800'
+                                            }`}>
+                                                {jc.status === 'Completed - Invoice Pending' ? 'Invoice Pending' : jc.status}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">

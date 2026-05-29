@@ -40,7 +40,7 @@ function buildInitialDecisions(jobCard) {
     return decisions
 }
 
-export default function ScrapDecisionModal({ jobCard, onClose, onSuccess, onRaceError }) {
+export default function ScrapDecisionModal({ jobCard, invoicePending = false, onClose, onSuccess, onRaceError }) {
     const { userProfile } = useAuth()
     const queryClient = useQueryClient()
     const closeJobCard = useCloseJobCardWithScrap()
@@ -101,12 +101,14 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess, onRace
                 jobCardId:      jobCard.id,
                 remarks:        remarks.trim() || null,
                 scrapDecisions,
+                invoicePending,
             })
 
+            const newStatus = invoicePending ? 'Completed - Invoice Pending' : 'Completed'
             // Audit: job card closure
             await logAuditEvent(jobCard.id, 'job_cards', 'UPDATE', userProfile.id, {
                 oldData:       { status: 'Open', completed_at: null, remarks: jobCard.remarks },
-                newData:       { status: 'Completed', completed_at: new Date().toISOString(), remarks: remarks.trim() || null },
+                newData:       { status: newStatus, completed_at: new Date().toISOString(), remarks: remarks.trim() || null },
                 changedFields: ['status', 'completed_at', 'remarks'],
             })
 
@@ -164,9 +166,13 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess, onRace
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
                     <div>
-                        <h2 className="text-base font-semibold text-gray-900">Complete Job Card</h2>
+                        <h2 className="text-base font-semibold text-gray-900">
+                            {invoicePending ? 'Close Job Card — Invoice Pending' : 'Complete Job Card'}
+                        </h2>
                         <p className="text-xs text-gray-500 mt-0.5">
-                            Set scrap disposition for each part before closing.
+                            {invoicePending
+                                ? 'Work is done. Set scrap disposition for each part — invoice can be added later.'
+                                : 'Set scrap disposition for each part before closing.'}
                         </p>
                     </div>
                     <button
@@ -345,7 +351,9 @@ export default function ScrapDecisionModal({ jobCard, onClose, onSuccess, onRace
                         disabled={!isValid || closeJobCard.isPending}
                         className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
                     >
-                        {closeJobCard.isPending ? 'Completing…' : 'Confirm and Complete'}
+                        {closeJobCard.isPending
+                            ? (invoicePending ? 'Closing…' : 'Completing…')
+                            : (invoicePending ? 'Confirm and Close' : 'Confirm and Complete')}
                     </button>
                 </div>
             </div>

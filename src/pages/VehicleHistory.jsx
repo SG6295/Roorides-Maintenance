@@ -113,7 +113,7 @@ export default function VehicleHistory() {
     const { data: jobCards = [], isLoading } = useVehicleHistory(decoded)
 
     const totalJobCards = jobCards.length
-    const openJobCards = jobCards.filter(jc => jc.status !== 'Completed').length
+    const openJobCards = jobCards.filter(jc => jc.status === 'Open').length
     const totalLabourHours = jobCards.reduce((s, jc) =>
         s + (jc.issues?.reduce((is, i) => is + (parseFloat(i.labour_hours) || 0), 0) ?? 0), 0
     )
