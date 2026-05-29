@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -1667,14 +1667,24 @@ export type Database = {
         Returns: number
       }
       check_pan_exists: { Args: { p_pan: string }; Returns: boolean }
-      close_job_card_with_scrap: {
-        Args: {
-          p_job_card_id: string
-          p_remarks: string
-          p_scrap_decisions: Json
-        }
-        Returns: Json
-      }
+      close_job_card_with_scrap:
+        | {
+            Args: {
+              p_job_card_id: string
+              p_remarks: string
+              p_scrap_decisions: Json
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_invoice_pending?: boolean
+              p_job_card_id: string
+              p_remarks: string
+              p_scrap_decisions: Json
+            }
+            Returns: Json
+          }
       delete_issue_part_with_scrap_check: {
         Args: { p_issue_part_id: string }
         Returns: Json
@@ -1682,6 +1692,10 @@ export type Database = {
       evaluate_acceptance_sla: {
         Args: { p_first_issue_created: string; p_ticket_id: string }
         Returns: Database["public"]["Enums"]["sla_status_enum"]
+      }
+      finalize_outsource_invoice: {
+        Args: { p_job_card_id: string; p_remarks?: string }
+        Returns: Json
       }
       get_blocking_scrap_for_issue_part: {
         Args: { p_issue_part_id: string }
@@ -1760,6 +1774,21 @@ export type Database = {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
       }
+      seed_get_fk_deps: {
+        Args: never
+        Returns: {
+          child_table: string
+          parent_table: string
+        }[]
+      }
+      seed_get_table_columns: {
+        Args: never
+        Returns: {
+          column_name: string
+          table_name: string
+        }[]
+      }
+      seed_truncate_public_tables: { Args: never; Returns: undefined }
     }
     Enums: {
       issue_category:
@@ -1772,7 +1801,7 @@ export type Database = {
         | "Other"
       issue_severity: "Minor" | "Major"
       issue_status: "Open" | "Done" | "Blocked"
-      job_card_status: "Open" | "Completed"
+      job_card_status: "Open" | "Completed" | "Completed - Invoice Pending"
       outsource_part_disposition:
         | "returned_to_nvs"
         | "retained_by_vendor"
@@ -1945,7 +1974,7 @@ export const Constants = {
       ],
       issue_severity: ["Minor", "Major"],
       issue_status: ["Open", "Done", "Blocked"],
-      job_card_status: ["Open", "Completed"],
+      job_card_status: ["Open", "Completed", "Completed - Invoice Pending"],
       outsource_part_disposition: [
         "returned_to_nvs",
         "retained_by_vendor",
