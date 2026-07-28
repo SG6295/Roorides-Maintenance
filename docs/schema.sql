@@ -5883,7 +5883,10 @@ CREATE TABLE public.purchase_invoice_items (
     quantity numeric(10,2) NOT NULL,
     unit_price numeric(12,2) NOT NULL,
     gst_rate numeric(5,2) DEFAULT 0 NOT NULL,
-    line_total numeric(12,2) GENERATED ALWAYS AS (round(((quantity * unit_price) * ((1)::numeric + (gst_rate / 100.0))), 2)) STORED,
+    discount_amount numeric(12,2) DEFAULT 0 NOT NULL,
+    line_total numeric(12,2) GENERATED ALWAYS AS (round((((quantity * unit_price) - discount_amount) * ((1)::numeric + (gst_rate / 100.0))), 2)) STORED,
+    CONSTRAINT purchase_invoice_items_discount_max CHECK ((discount_amount <= (quantity * unit_price))),
+    CONSTRAINT purchase_invoice_items_discount_nonneg CHECK ((discount_amount >= (0)::numeric)),
     CONSTRAINT purchase_invoice_items_quantity_check CHECK ((quantity > (0)::numeric)),
     CONSTRAINT purchase_invoice_items_unit_price_check CHECK ((unit_price >= (0)::numeric))
 );

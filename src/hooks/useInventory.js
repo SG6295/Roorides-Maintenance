@@ -87,7 +87,7 @@ export function usePurchaseInvoiceItems(invoiceId) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('purchase_invoice_items')
-                .select('id, part_id, quantity, unit_price, gst_rate, line_total, part:parts(id, name, part_number, unit)')
+                .select('id, part_id, quantity, unit_price, gst_rate, discount_amount, line_total, part:parts(id, name, part_number, unit)')
                 .eq('invoice_id', invoiceId)
             if (error) throw error
             return data || []
@@ -143,6 +143,7 @@ export function useUpdatePurchaseInvoice() {
                         quantity: parseFloat(item.quantity),
                         unit_price: parseFloat(item.unit_price),
                         gst_rate: parseFloat(item.gst_rate) || 0,
+                        discount_amount: parseFloat(item.discount_amount) || 0,
                     })
                     .eq('id', item.id)
                 if (error) throw error
@@ -158,15 +159,22 @@ export function useUpdatePurchaseInvoice() {
                         quantity: parseFloat(item.quantity),
                         unit_price: parseFloat(item.unit_price),
                         gst_rate: parseFloat(item.gst_rate) || 0,
+                        discount_amount: parseFloat(item.discount_amount) || 0,
                     })))
                 if (error) throw error
             }
 
-            // 5. Recalculate and persist total_amount
-            const newTotal = [...toUpdate, ...toInsert].reduce(
-                (sum, i) => sum + parseFloat(i.quantity) * parseFloat(i.unit_price),
-                0
-            )
+            // 5. Recalculate and persist total_amount as the sum of line totals
+            //    (GST- and discount-inclusive), matching the DB generated line_total.
+            //    Also fixes MAIN-25: the old recompute dropped GST from the total.
+            const newTotal = [...toUpdate, ...toInsert].reduce((sum, i) => {
+                const qty = parseFloat(i.quantity) || 0
+                const price = parseFloat(i.unit_price) || 0
+                const gst = parseFloat(i.gst_rate) || 0
+                const discount = parseFloat(i.discount_amount) || 0
+                const lineTotal = Math.round((qty * price - discount) * (1 + gst / 100) * 100) / 100
+                return sum + lineTotal
+            }, 0)
             const { error: totalErr } = await supabase
                 .from('purchase_invoices')
                 .update({ total_amount: newTotal })
@@ -205,6 +213,7 @@ export function useRecordPurchase() {
                 quantity: item.quantity,
                 unit_price: item.unit_price,
                 gst_rate: item.gst_rate ?? 0,
+                discount_amount: item.discount_amount ?? 0,
             }))
 
             const { error: itemsErr } = await supabase
