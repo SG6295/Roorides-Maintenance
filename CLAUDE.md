@@ -115,6 +115,12 @@ All supplier hooks in `src/hooks/useSuppliers.js`: `useSuppliers`, `useSupplierB
 ### Vehicles Page
 `src/pages/Vehicles.jsx` — CRUD for the `vehicles` table (accessible to `maintenance_exec`, `super_admin`, `finance`). Inline add/edit modal, site-filter via `vehicle_sites` join. Uses `useVehicles`, `useCreateVehicle`, `useUpdateVehicle` from `src/hooks/useVehicles.js`. Vehicles are also synced nightly from the Roorides API via the `sync-roorides-vehicles` edge function.
 
+### Scrap / Salvage Module
+`src/pages/Scrap.jsx` (`/scrap`, accessible to `maintenance_exec`, `super_admin`, `finance`) — tracks scrap/salvage parts and their disposal. Three tabs via local state: **Scrap Inventory**, **Sale History**, **Write-off History**. The record actions (`RecordSaleModal`, `RecordWriteoffModal`) are hidden for the `finance` role, which is view-only here (`isExec = role !== 'finance'`). Sales are recorded against the `scrap_disposal` table (buyer, payment mode/reference, total value, receipt photos). Tab + modal components live in `src/components/scrap/` (`ScrapInventoryTab`, `SaleHistoryTab`, `WriteoffHistoryTab`, `RecordSaleModal`, `RecordWriteoffModal`).
+
+### Outsource Invoices
+`src/pages/OutsourceInvoices.jsx` (`/outsource-invoices`, accessible to `maintenance_exec`, `super_admin`, `finance`, `supervisor`) — payment tracking for outsourced-repair invoices. **This is a separate domain from the purchase invoices in the Inventory module** (no parts/line-items). Surfaces a per-invoice payment status (`Approved`/`Hold`/`Reject`), a derived payment state (`Paid`/`Partially Paid`/`Unpaid`, computed from `approved_amount − advance_amount` vs the sum of `payments`), and a "paid by" field (Accounts/Nithin/Manjunath). Filters + pagination are URL-param driven. Uses `useOutsourceInvoices` + `useOutsourceInvoiceSummary` from `src/hooks/useOutsourceInvoices.js`.
+
 ### Feedback / Report
 `src/pages/FeedbackReport.jsx` (`/feedback`) — supervisors rate resolved issues with a smiley scale (Good/Ok/Bad) stored in `issues.rating`. Accessible to all authenticated roles; only the ticket's creator supervisor can submit a rating. Uses `useUpdateIssue` from `src/hooks/useIssues.js`.
 
