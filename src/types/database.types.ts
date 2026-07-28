@@ -557,6 +557,7 @@ export type Database = {
       }
       purchase_invoice_items: {
         Row: {
+          discount_amount: number
           gst_rate: number
           id: string
           invoice_id: string
@@ -566,6 +567,7 @@ export type Database = {
           unit_price: number
         }
         Insert: {
+          discount_amount?: number
           gst_rate?: number
           id?: string
           invoice_id: string
@@ -575,6 +577,7 @@ export type Database = {
           unit_price: number
         }
         Update: {
+          discount_amount?: number
           gst_rate?: number
           id?: string
           invoice_id?: string

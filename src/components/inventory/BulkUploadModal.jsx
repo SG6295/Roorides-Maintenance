@@ -13,6 +13,10 @@ import {
 } from '@heroicons/react/24/outline'
 
 // ─── Template ────────────────────────────────────────────────────────────────
+// gst_rate must be one of these slabs; discount_amount is a ₹ value applied to the
+// taxable value BEFORE GST (mirrors the manual Record Purchase flow — MAIN-21).
+const ALLOWED_GST = [0, 5, 12, 18, 28]
+
 const TEMPLATE_COLUMNS = [
     'invoice_number',
     'invoice_date',
@@ -22,20 +26,22 @@ const TEMPLATE_COLUMNS = [
     'unit',
     'quantity',
     'unit_price',
+    'gst_rate',
+    'discount_amount',
     'notes',
 ]
 
 const TEMPLATE_EXAMPLE = [
-    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'OIL-5W40', 'Engine Oil 5W40', 'L', 20, 85.00, 'Bulk purchase'],
-    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'FLT-OIL-01', 'Oil Filter', 'pcs', 10, 45.00, ''],
-    ['INV-002', '2024-01-16', 'Brake Masters', 'BRK-PAD-R', 'Rear Brake Pads', 'set', 5, 320.00, ''],
+    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'OIL-5W40', 'Engine Oil 5W40', 'L', 20, 85.00, 18, 0, 'Bulk purchase'],
+    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'FLT-OIL-01', 'Oil Filter', 'pcs', 10, 45.00, 18, 50, ''],
+    ['INV-002', '2024-01-16', 'Brake Masters', 'BRK-PAD-R', 'Rear Brake Pads', 'set', 5, 320.00, 28, 0, ''],
 ]
 
 function downloadTemplate() {
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, ...TEMPLATE_EXAMPLE])
     // Column widths
-    ws['!cols'] = [16, 14, 20, 16, 24, 8, 10, 12, 24].map(w => ({ wch: w }))
+    ws['!cols'] = [16, 14, 20, 16, 24, 8, 10, 12, 10, 16, 24].map(w => ({ wch: w }))
     XLSX.utils.book_append_sheet(wb, ws, 'Inventory Upload')
     XLSX.writeFile(wb, 'nvs_inventory_upload_template.xlsx')
 }
@@ -87,6 +93,25 @@ function validateRecords(records, partsMap) {
         const price = parseFloat(rec.unit_price)
         if (rec.unit_price === '' || isNaN(price) || price < 0) errors.push('Invalid unit_price')
 
+        // GST rate — optional, defaults to 0, must be a known slab
+        const gstEmpty = rec.gst_rate === '' || rec.gst_rate == null
+        let gst = gstEmpty ? 0 : parseFloat(rec.gst_rate)
+        if (!gstEmpty && (isNaN(gst) || !ALLOWED_GST.includes(gst))) {
+            errors.push('Invalid gst_rate (use 0, 5, 12, 18, or 28)')
+            gst = 0
+        }
+
+        // Discount amount — optional ₹ value, defaults to 0, cannot exceed the subtotal
+        const discEmpty = rec.discount_amount === '' || rec.discount_amount == null
+        const discount = discEmpty ? 0 : parseFloat(rec.discount_amount)
+        if (!discEmpty) {
+            if (isNaN(discount) || discount < 0) {
+                errors.push('Invalid discount_amount')
+            } else if (!isNaN(qty) && !isNaN(price) && discount > qty * price + 1e-9) {
+                errors.push('Discount exceeds line subtotal')
+            }
+        }
+
         // Normalise date
         let dateStr = ''
         if (rec.invoice_date instanceof Date) {
@@ -123,6 +148,8 @@ function validateRecords(records, partsMap) {
             _errors: errors,
             _qty: isNaN(qty) ? null : qty,
             _price: isNaN(price) ? null : price,
+            _gst: isNaN(gst) ? 0 : gst,
+            _discount: isNaN(discount) ? 0 : discount,
         }
     })
 }
@@ -247,6 +274,8 @@ export default function BulkUploadModal({ onClose }) {
                         part_id: part.id,
                         quantity: rec._qty,
                         unit_price: rec._price,
+                        gst_rate: rec._gst,
+                        discount_amount: rec._discount,
                     })
                 }
 
@@ -258,7 +287,12 @@ export default function BulkUploadModal({ onClose }) {
                         invoice_date: group.invoice_date,
                         supplier_name: group.supplier_name,
                         notes: group.notes || null,
-                        total_amount: lineItems.reduce((s, l) => s + l.quantity * l.unit_price, 0),
+                        total_amount: lineItems.reduce((s, l) => {
+                            const lineTotal = Math.round(
+                                (l.quantity * l.unit_price - (l.discount_amount || 0)) * (1 + (l.gst_rate || 0) / 100) * 100
+                            ) / 100
+                            return s + lineTotal
+                        }, 0),
                         created_by: group.created_by,
                     }])
                     .select()
@@ -315,7 +349,7 @@ export default function BulkUploadModal({ onClose }) {
                                 <div>
                                     <p className="text-sm font-medium text-blue-800">Download the template first</p>
                                     <p className="text-xs text-blue-600 mt-0.5">
-                                        Fill in your data using the exact column headers. Multiple rows with the same invoice_number will be grouped as one invoice.
+                                        Fill in your data using the exact column headers. Multiple rows with the same invoice_number will be grouped as one invoice. gst_rate (0/5/12/18/28) and discount_amount are optional and default to 0.
                                     </p>
                                 </div>
                                 <button
@@ -409,6 +443,8 @@ export default function BulkUploadModal({ onClose }) {
                                             <th className="px-3 py-2 font-medium">Unit</th>
                                             <th className="px-3 py-2 font-medium">Qty</th>
                                             <th className="px-3 py-2 font-medium">Unit Price</th>
+                                            <th className="px-3 py-2 font-medium">GST</th>
+                                            <th className="px-3 py-2 font-medium">Discount</th>
                                             <th className="px-3 py-2 font-medium min-w-48">Status</th>
                                         </tr>
                                     </thead>
@@ -471,6 +507,32 @@ export default function BulkUploadModal({ onClose }) {
                                                             }`}
                                                             value={rec.unit_price ?? ''}
                                                             onChange={e => updateRecord(rec._rowIndex, 'unit_price', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td className="px-1 py-1">
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="1"
+                                                            className={`w-16 px-2 py-1 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                                                hasErr ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                                                            }`}
+                                                            placeholder="0"
+                                                            value={rec.gst_rate ?? ''}
+                                                            onChange={e => updateRecord(rec._rowIndex, 'gst_rate', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td className="px-1 py-1">
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            className={`w-20 px-2 py-1 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                                                hasErr ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                                                            }`}
+                                                            placeholder="0.00"
+                                                            value={rec.discount_amount ?? ''}
+                                                            onChange={e => updateRecord(rec._rowIndex, 'discount_amount', e.target.value)}
                                                         />
                                                     </td>
                                                     <td className="px-3 py-1.5">

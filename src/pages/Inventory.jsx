@@ -172,6 +172,7 @@ function InvoiceRow({ invoice, onEdit }) {
                                         <th className="text-right pb-1 font-medium">Qty</th>
                                         <th className="text-right pb-1 font-medium">Unit</th>
                                         <th className="text-right pb-1 font-medium">Unit Price</th>
+                                        <th className="text-right pb-1 font-medium">Discount</th>
                                         <th className="text-right pb-1 font-medium">GST</th>
                                         <th className="text-right pb-1 font-medium">Line Total</th>
                                     </tr>
@@ -184,6 +185,9 @@ function InvoiceRow({ invoice, onEdit }) {
                                             <td className="py-1.5 text-right text-gray-700">{item.quantity}</td>
                                             <td className="py-1.5 text-right text-gray-500">{item.part?.unit}</td>
                                             <td className="py-1.5 text-right text-gray-700">{Number(item.unit_price).toFixed(2)}</td>
+                                            <td className="py-1.5 text-right text-gray-500">
+                                                {Number(item.discount_amount) > 0 ? Number(item.discount_amount).toFixed(2) : '—'}
+                                            </td>
                                             <td className="py-1.5 text-right text-gray-500">
                                                 {item.gst_rate > 0 ? `${item.gst_rate}%` : '—'}
                                             </td>
@@ -228,15 +232,17 @@ function PurchaseHistory() {
             const invoiceIds = invoices.map(inv => inv.id)
             const { data: items, error } = await supabase
                 .from('purchase_invoice_items')
-                .select('invoice_id, quantity, unit_price, line_total, part:parts(name, part_number, unit)')
+                .select('invoice_id, quantity, unit_price, gst_rate, discount_amount, line_total, part:parts(name, part_number, unit)')
                 .in('invoice_id', invoiceIds)
             if (error) throw error
 
             const invoiceMap = Object.fromEntries(invoices.map(inv => [inv.id, inv]))
             const exportRows = (items || []).map(item => {
+                const subtotal = Number(item.quantity) * Number(item.unit_price)
+                const discount = Number(item.discount_amount) || 0
+                const taxable = subtotal - discount
+                const gstAmount = taxable * (Number(item.gst_rate) / 100)
                 const inv = invoiceMap[item.invoice_id]
-                const baseAmount = Number(item.quantity) * Number(item.unit_price)
-                const gstAmount = baseAmount * (Number(item.gst_rate) / 100)
                 return {
                     'Invoice #': inv?.invoice_number ?? '',
                     'Date': inv?.invoice_date ? format(parseISO(inv.invoice_date), 'dd MMM yyyy') : '',
@@ -246,6 +252,9 @@ function PurchaseHistory() {
                     'Unit': item.part?.unit ?? '',
                     'Quantity': item.quantity,
                     'Unit Price': item.unit_price,
+                    'Subtotal': Number(subtotal.toFixed(2)),
+                    'Discount': Number(discount.toFixed(2)),
+                    'Taxable Value': Number(taxable.toFixed(2)),
                     'GST Rate (%)': item.gst_rate ?? 0,
                     'GST Amount': Number(gstAmount.toFixed(2)),
                     'Line Total (incl. GST)': item.line_total,

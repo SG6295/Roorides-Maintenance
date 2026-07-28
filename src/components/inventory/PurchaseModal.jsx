@@ -5,6 +5,15 @@ import { PlusIcon, TrashIcon, XMarkIcon, CheckIcon, PaperClipIcon, ArrowUpTrayIc
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import { supabase } from '../../lib/supabase'
+import {
+    lineSubtotal,
+    lineDiscount,
+    lineTotal as calcLineTotal,
+    invoiceTotal as calcInvoiceTotal,
+    totalDiscount as calcTotalDiscount,
+    syncLineDiscount,
+    distributeTotalDiscount,
+} from '../../lib/invoiceDiscount'
 
 const NEW_PART_SENTINEL = '__NEW__'
 const GST_RATES = [
@@ -14,7 +23,7 @@ const GST_RATES = [
     { label: '18%', value: 18 },
     { label: '28%', value: 28 },
 ]
-const emptyLine = () => ({ part_id: '', quantity: '', unit_price: '', gst_rate: 0 })
+const emptyLine = () => ({ part_id: '', quantity: '', unit_price: '', gst_rate: 0, discount_amount: '', discount_pct: '', discount_mode: 'amount' })
 const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
 export default function PurchaseModal({ onClose }) {
@@ -76,15 +85,22 @@ export default function PurchaseModal({ onClose }) {
         e.target.value = ''
     }
 
-    const invoiceTotal = lines.reduce((sum, l) => {
-        const qty = parseFloat(l.quantity) || 0
-        const price = parseFloat(l.unit_price) || 0
-        const gst = parseFloat(l.gst_rate) || 0
-        return sum + qty * price * (1 + gst / 100)
-    }, 0)
+    const invoiceTotal = calcInvoiceTotal(lines)
+    const totalDiscount = calcTotalDiscount(lines)
 
     function updateLine(index, field, value) {
         setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
+    }
+
+    // Setter that keeps the discount %/amount pair in sync after an edit.
+    function setLineField(index, field, value) {
+        setLines(prev => prev.map((l, i) =>
+            i === index ? syncLineDiscount({ ...l, [field]: value }, field) : l
+        ))
+    }
+
+    function handleTotalDiscountChange(value) {
+        setLines(prev => distributeTotalDiscount(prev, value === '' ? 0 : value))
     }
 
     function handlePartSelect(index, value) {
@@ -148,6 +164,10 @@ export default function PurchaseModal({ onClose }) {
             setError('All line items must have a quantity and unit price.')
             return
         }
+        if (validLines.some(l => (parseFloat(l.discount_amount) || 0) > lineSubtotal(l) + 1e-9)) {
+            setError('A line discount cannot exceed its item subtotal (qty × unit price).')
+            return
+        }
 
         try {
             await recordPurchase.mutateAsync({
@@ -162,6 +182,7 @@ export default function PurchaseModal({ onClose }) {
                     quantity: parseFloat(l.quantity),
                     unit_price: parseFloat(l.unit_price),
                     gst_rate: parseFloat(l.gst_rate) || 0,
+                    discount_amount: lineDiscount(l),
                 })),
             })
             onClose()
@@ -172,7 +193,7 @@ export default function PurchaseModal({ onClose }) {
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b">
                     <h2 className="text-lg font-semibold text-gray-900">Record Purchase</h2>
@@ -281,24 +302,25 @@ export default function PurchaseModal({ onClose }) {
                             <div className="space-y-2">
                                 {/* Column headers */}
                                 <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-gray-500">
-                                    <div className="col-span-4">Part</div>
-                                    <div className="col-span-2">Qty</div>
+                                    <div className="col-span-3">Part</div>
+                                    <div className="col-span-1">Qty</div>
                                     <div className="col-span-2">Unit Price</div>
-                                    <div className="col-span-2">GST</div>
-                                    <div className="col-span-1">Line Total</div>
+                                    <div className="col-span-1">Disc %</div>
+                                    <div className="col-span-2">Discount</div>
+                                    <div className="col-span-1">GST</div>
+                                    <div className="col-span-1 text-right">Line Total</div>
                                     <div className="col-span-1"></div>
                                 </div>
 
                                 {lines.map((line, i) => {
-                                    const qty = parseFloat(line.quantity) || 0
-                                    const price = parseFloat(line.unit_price) || 0
-                                    const gst = parseFloat(line.gst_rate) || 0
-                                    const lineTotal = qty * price * (1 + gst / 100)
+                                    const sub = lineSubtotal(line)
+                                    const lineTotal = calcLineTotal(line)
                                     const npf = newPartForms[i]
                                     const selectedPart = parts.find(p => p.id === line.part_id)
+                                    const discountInvalid = (parseFloat(line.discount_amount) || 0) > sub + 1e-9
                                     return (
                                         <div key={i} className="grid grid-cols-12 gap-2 items-start">
-                                            <div className="col-span-4">
+                                            <div className="col-span-3">
                                                 {npf ? (
                                                     /* ── Inline new-part form ── */
                                                     <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
@@ -365,19 +387,19 @@ export default function PurchaseModal({ onClose }) {
                                                     />
                                                 )}
                                             </div>
-                                            <div className="col-span-2 pt-1">
+                                            <div className="col-span-1 pt-1">
                                                 <div className="relative">
                                                     <input
                                                         type="number"
                                                         min="0.01"
                                                         step="0.01"
-                                                        className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${selectedPart ? 'pr-10' : ''}`}
+                                                        className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${selectedPart ? 'pr-7' : ''}`}
                                                         placeholder="0"
                                                         value={line.quantity}
-                                                        onChange={e => updateLine(i, 'quantity', e.target.value)}
+                                                        onChange={e => setLineField(i, 'quantity', e.target.value)}
                                                     />
                                                     {selectedPart && (
-                                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 pointer-events-none">
                                                             {selectedPart.unit}
                                                         </span>
                                                     )}
@@ -391,12 +413,35 @@ export default function PurchaseModal({ onClose }) {
                                                     className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                                                     placeholder="0.00"
                                                     value={line.unit_price}
-                                                    onChange={e => updateLine(i, 'unit_price', e.target.value)}
+                                                    onChange={e => setLineField(i, 'unit_price', e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="col-span-1 pt-1">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max="100"
+                                                    step="0.01"
+                                                    className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                                    placeholder="0"
+                                                    value={line.discount_pct}
+                                                    onChange={e => setLineField(i, 'discount_pct', e.target.value)}
                                                 />
                                             </div>
                                             <div className="col-span-2 pt-1">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 ${discountInvalid ? 'border-red-400 focus:ring-red-500' : 'focus:ring-blue-500'}`}
+                                                    placeholder="0.00"
+                                                    value={line.discount_amount}
+                                                    onChange={e => setLineField(i, 'discount_amount', e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="col-span-1 pt-1">
                                                 <select
-                                                    className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                                    className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
                                                     value={line.gst_rate}
                                                     onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
                                                 >
@@ -441,8 +486,23 @@ export default function PurchaseModal({ onClose }) {
 
                     {/* Footer */}
                     <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50 rounded-b-xl">
-                        <div className="text-sm font-semibold text-gray-700">
-                            Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                        <div className="flex items-center gap-6">
+                            <div className="flex items-center gap-2">
+                                <label className="text-sm font-medium text-gray-600">Total discount</label>
+                                <span className="text-sm text-gray-400">₹</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
+                                    placeholder="0.00"
+                                    value={totalDiscount > 0 ? totalDiscount : ''}
+                                    onChange={e => handleTotalDiscountChange(e.target.value)}
+                                />
+                            </div>
+                            <div className="text-sm font-semibold text-gray-700">
+                                Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                            </div>
                         </div>
                         <div className="flex gap-3">
                             <button
