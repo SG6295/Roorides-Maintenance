@@ -17,6 +17,7 @@ export function useJobCards(filters = {}) {
           *,
           mechanic:assigned_mechanic_id(name, email),
           supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
+          location:workshop_locations!location_id(id, name, address),
           issues(*)
         `)
                 .order('created_at', { ascending: false })
@@ -26,6 +27,9 @@ export function useJobCards(filters = {}) {
             }
             if (filters.site) {
                 query = query.eq('site', filters.site)
+            }
+            if (filters.location_id) {
+                query = query.eq('location_id', filters.location_id)
             }
             if (filters.vehicle_number) {
                 query = query.eq('vehicle_number', filters.vehicle_number)
@@ -51,6 +55,7 @@ export function useJobCard(jobCardNumber) {
           *,
           mechanic:assigned_mechanic_id(name, email, contact),
           supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
+          location:workshop_locations!location_id(id, name, address),
           issues(*, ticket:ticket_id(ticket_number), issue_parts(*, part:part_id(name, unit)))
         `)
                 .eq('job_card_number', jobCardNumber)

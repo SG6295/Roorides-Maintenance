@@ -9,7 +9,17 @@ import PurchaseModal from '../components/inventory/PurchaseModal'
 import BulkUploadModal from '../components/inventory/BulkUploadModal'
 import EditPartModal from '../components/inventory/EditPartModal'
 import EditPurchaseModal from '../components/inventory/EditPurchaseModal'
-import { useParts, usePurchaseInvoices, usePurchaseInvoiceItems, usePartConsumption } from '../hooks/useInventory'
+import MoveStockModal from '../components/inventory/MoveStockModal'
+import {
+    useParts,
+    usePurchaseInvoices,
+    usePurchaseInvoiceItems,
+    usePartConsumption,
+    usePartStock,
+    useLocationStockSummary,
+} from '../hooks/useInventory'
+import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
+import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import {
     MagnifyingGlassIcon,
@@ -18,20 +28,269 @@ import {
     ArrowDownTrayIcon,
     ChevronDownIcon,
     ChevronUpIcon,
+    ChevronLeftIcon,
     PencilSquareIcon,
+    BuildingOffice2Icon,
+    Squares2X2Icon,
+    ArrowsRightLeftIcon,
 } from '@heroicons/react/24/outline'
 
+// Sentinel for the company-wide roll-up card, which is not a real location id.
+const ALL_LOCATIONS = '__all__'
+
 // ── Parts Tab ─────────────────────────────────────────────────────────────────
-function PartsTable() {
+
+function stockBadge(qty) {
+    if (qty <= 0) return <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Out of stock</span>
+    if (qty <= 5) return <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-700">Low ({qty})</span>
+    return <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">{qty}</span>
+}
+
+/**
+ * Level 1: pick a workshop (or the company-wide roll-up).
+ */
+function LocationPicker({ locations, onSelect }) {
+    const { data: summary = {} } = useLocationStockSummary()
+
+    const totals = Object.values(summary).reduce(
+        (acc, s) => ({ stocked: acc.stocked + s.stocked, low: acc.low + s.low }),
+        { stocked: 0, low: 0 }
+    )
+
+    return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {locations.map(location => {
+                const s = summary[location.id] || { stocked: 0, low: 0 }
+                return (
+                    <button
+                        key={location.id}
+                        onClick={() => onSelect(location.id)}
+                        className="text-left bg-white border rounded-lg shadow-sm p-5 hover:border-blue-400 hover:shadow transition-all"
+                    >
+                        <div className="flex items-start gap-2">
+                            <BuildingOffice2Icon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                                <div className="font-semibold text-gray-900 truncate">{location.name}</div>
+                                <div className="text-xs text-gray-400 truncate">
+                                    {location.address || 'No address recorded'}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex items-center gap-4 text-sm">
+                            <span className="text-gray-700">
+                                <span className="font-semibold">{s.stocked}</span> parts stocked
+                            </span>
+                            {s.low > 0 && (
+                                <span className="text-yellow-700">
+                                    <span className="font-semibold">{s.low}</span> low
+                                </span>
+                            )}
+                        </div>
+                    </button>
+                )
+            })}
+
+            <button
+                onClick={() => onSelect(ALL_LOCATIONS)}
+                className="text-left bg-white border rounded-lg shadow-sm p-5 hover:border-blue-400 hover:shadow transition-all"
+            >
+                <div className="flex items-start gap-2">
+                    <Squares2X2Icon className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                        <div className="font-semibold text-gray-900">All Locations</div>
+                        <div className="text-xs text-gray-400">Company-wide totals</div>
+                    </div>
+                </div>
+                <div className="mt-4 flex items-center gap-4 text-sm">
+                    <span className="text-gray-700">
+                        <span className="font-semibold">{totals.stocked}</span> parts stocked
+                    </span>
+                    {totals.low > 0 && (
+                        <span className="text-yellow-700">
+                            <span className="font-semibold">{totals.low}</span> low
+                        </span>
+                    )}
+                </div>
+            </button>
+        </div>
+    )
+}
+
+/**
+ * Level 2: one workshop's stock, with the checkbox selection that drives a move.
+ */
+function LocationPartsTable({ location, locations, canMove }) {
+    const [filters, setFilters] = useState({ search: '', stockStatus: '' })
+    const { data: parts = [], isLoading } = usePartStock(location.id, filters)
+    const [editingPart, setEditingPart] = useState(null)
+    const [selectedIds, setSelectedIds] = useState(new Set())
+    const [showMoveModal, setShowMoveModal] = useState(false)
+
+    // Only parts actually held here can be moved.
+    const movableParts = parts.filter(p => p.quantity_here > 0)
+    const allMovableSelected = movableParts.length > 0 && movableParts.every(p => selectedIds.has(p.id))
+    const selectedParts = parts.filter(p => selectedIds.has(p.id))
+
+    function toggleOne(id) {
+        setSelectedIds(prev => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+        })
+    }
+
+    function toggleAll() {
+        setSelectedIds(allMovableSelected ? new Set() : new Set(movableParts.map(p => p.id)))
+    }
+
+    return (
+        <div className="space-y-4">
+            {/* Filters */}
+            <div className="bg-white p-4 rounded-lg shadow-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="relative sm:col-span-2">
+                        <input
+                            type="text"
+                            placeholder="Search by part name or part number…"
+                            className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                            value={filters.search}
+                            onChange={e => setFilters(p => ({ ...p, search: e.target.value }))}
+                        />
+                        <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+                    </div>
+                    <FilterSelect
+                        value={filters.stockStatus}
+                        onChange={v => setFilters(p => ({ ...p, stockStatus: v }))}
+                        placeholder="All Stock Levels"
+                        options={[
+                            { value: 'low', label: 'Low / Out (≤ 5)' },
+                            { value: 'out', label: 'Out of Stock (0)' },
+                        ]}
+                    />
+                </div>
+            </div>
+
+            {/* Selection action bar */}
+            {canMove && selectedIds.size > 0 && (
+                <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+                    <span className="text-sm text-blue-900">
+                        {selectedIds.size} part{selectedIds.size !== 1 ? 's' : ''} selected
+                    </span>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setSelectedIds(new Set())}
+                            className="px-3 py-1.5 text-sm text-blue-700 hover:text-blue-900"
+                        >
+                            Clear
+                        </button>
+                        <button
+                            onClick={() => setShowMoveModal(true)}
+                            className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+                        >
+                            <ArrowsRightLeftIcon className="w-4 h-4" />
+                            Move Selected
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {isLoading ? (
+                <TicketListSkeleton />
+            ) : parts.length === 0 ? (
+                <div className="bg-white rounded-lg shadow-sm p-12 text-center text-gray-400 text-sm">
+                    No parts found. Record a purchase to add inventory.
+                </div>
+            ) : (
+                <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <table className="min-w-full divide-y divide-gray-100 text-sm">
+                        <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                            <tr>
+                                {canMove && (
+                                    <th className="px-4 py-3 w-10">
+                                        <input
+                                            type="checkbox"
+                                            checked={allMovableSelected}
+                                            onChange={toggleAll}
+                                            disabled={movableParts.length === 0}
+                                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                            title="Select all parts held here"
+                                        />
+                                    </th>
+                                )}
+                                <th className="px-4 py-3 text-left">Part Name</th>
+                                <th className="px-4 py-3 text-left">Part Number</th>
+                                <th className="px-4 py-3 text-left">Unit</th>
+                                <th className="px-4 py-3 text-right">At {location.name}</th>
+                                <th className="px-4 py-3 text-right">All Locations</th>
+                                <th className="px-4 py-3 w-10"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                            {parts.map(part => (
+                                <tr key={part.id} className="hover:bg-gray-50 group">
+                                    {canMove && (
+                                        <td className="px-4 py-3">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.has(part.id)}
+                                                onChange={() => toggleOne(part.id)}
+                                                disabled={part.quantity_here <= 0}
+                                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-30"
+                                                title={part.quantity_here <= 0 ? 'None held at this workshop' : undefined}
+                                            />
+                                        </td>
+                                    )}
+                                    <td className="px-4 py-3 font-medium text-gray-900">{part.name}</td>
+                                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{part.part_number || '—'}</td>
+                                    <td className="px-4 py-3 text-gray-500">{part.unit}</td>
+                                    <td className="px-4 py-3 text-right">{stockBadge(part.quantity_here)}</td>
+                                    <td className="px-4 py-3 text-right text-gray-400">{part.quantity_total}</td>
+                                    <td className="px-4 py-3 text-center">
+                                        <button
+                                            onClick={() => setEditingPart(part)}
+                                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition-opacity"
+                                            title="Edit part"
+                                        >
+                                            <PencilSquareIcon className="w-4 h-4" />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t">
+                        {parts.length} part{parts.length !== 1 ? 's' : ''}
+                    </div>
+                </div>
+            )}
+
+            {editingPart && (
+                <EditPartModal part={editingPart} onClose={() => setEditingPart(null)} />
+            )}
+
+            {showMoveModal && (
+                <MoveStockModal
+                    fromLocation={location}
+                    locations={locations}
+                    parts={selectedParts}
+                    onClose={() => {
+                        setShowMoveModal(false)
+                        setSelectedIds(new Set())
+                    }}
+                />
+            )}
+        </div>
+    )
+}
+
+/**
+ * The company-wide roll-up, unchanged from before locations existed.
+ */
+function AllLocationsTable() {
     const [filters, setFilters] = useState({ search: '', stockStatus: '' })
     const { data: parts = [], isLoading } = useParts(filters)
     const [editingPart, setEditingPart] = useState(null)
-
-    function stockBadge(qty) {
-        if (qty <= 0) return <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Out of stock</span>
-        if (qty <= 5) return <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-700">Low ({qty})</span>
-        return <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">{qty}</span>
-    }
 
     return (
         <div className="space-y-4">
@@ -114,6 +373,60 @@ function PartsTable() {
     )
 }
 
+/**
+ * Parts Catalog tab: pick a workshop, then work inside it.
+ */
+function PartsTab() {
+    const { userProfile } = useAuth()
+    const { data: locations = [], isLoading } = useWorkshopLocations()
+    const [selectedId, setSelectedId] = useState(null)
+
+    // Finance can see stock everywhere but does not move it.
+    const canMove = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+
+    if (isLoading) return <TicketListSkeleton />
+
+    // A single workshop means the drill-down is just an extra click.
+    const effectiveId = selectedId || (locations.length === 1 ? locations[0].id : null)
+
+    if (!effectiveId) {
+        return <LocationPicker locations={locations} onSelect={setSelectedId} />
+    }
+
+    const location = locations.find(l => l.id === effectiveId)
+
+    return (
+        <div className="space-y-4">
+            {locations.length > 1 && (
+                <button
+                    onClick={() => setSelectedId(null)}
+                    className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900"
+                >
+                    <ChevronLeftIcon className="w-4 h-4" />
+                    All workshops
+                </button>
+            )}
+
+            <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                    {effectiveId === ALL_LOCATIONS ? 'All Locations' : location?.name}
+                </h2>
+                <p className="text-xs text-gray-500">
+                    {effectiveId === ALL_LOCATIONS
+                        ? 'Company-wide totals across every workshop.'
+                        : location?.address || 'No address recorded'}
+                </p>
+            </div>
+
+            {effectiveId === ALL_LOCATIONS ? (
+                <AllLocationsTable />
+            ) : (
+                <LocationPartsTable location={location} locations={locations} canMove={canMove} />
+            )}
+        </div>
+    )
+}
+
 // ── Invoice row (expandable) ───────────────────────────────────────────────────
 function InvoiceRow({ invoice, onEdit }) {
     const [expanded, setExpanded] = useState(false)
@@ -136,6 +449,7 @@ function InvoiceRow({ invoice, onEdit }) {
                         : '—'}
                 </td>
                 <td className="px-4 py-3 text-gray-700">{invoice.supplier_name}</td>
+                <td className="px-4 py-3 text-gray-700">{invoice.location?.name || '—'}</td>
                 <td className="px-4 py-3 text-right text-gray-900 font-medium">{invoiceTotal}</td>
                 <td className="px-4 py-3 text-center text-gray-500">{invoice.item_count}</td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
@@ -160,7 +474,7 @@ function InvoiceRow({ invoice, onEdit }) {
             </tr>
             {expanded && (
                 <tr>
-                    <td colSpan={7} className="bg-gray-50 px-6 py-3">
+                    <td colSpan={8} className="bg-gray-50 px-6 py-3">
                         {isLoading ? (
                             <p className="text-xs text-gray-400">Loading…</p>
                         ) : (
@@ -247,6 +561,7 @@ function PurchaseHistory() {
                     'Invoice #': inv?.invoice_number ?? '',
                     'Date': inv?.invoice_date ? format(parseISO(inv.invoice_date), 'dd MMM yyyy') : '',
                     'Supplier': inv?.supplier_name ?? '',
+                    'Workshop': inv?.location?.name ?? '',
                     'Part Name': item.part?.name ?? '',
                     'Part Number': item.part?.part_number ?? '',
                     'Unit': item.part?.unit ?? '',
@@ -328,6 +643,7 @@ function PurchaseHistory() {
                                 <th className="px-4 py-3 text-left">Invoice #</th>
                                 <th className="px-4 py-3 text-left">Date</th>
                                 <th className="px-4 py-3 text-left">Supplier</th>
+                                <th className="px-4 py-3 text-left">Workshop</th>
                                 <th className="px-4 py-3 text-right">Total</th>
                                 <th className="px-4 py-3 text-center">Items</th>
                                 <th className="px-4 py-3 text-left">Recorded by</th>
@@ -377,6 +693,7 @@ function ConsumptionHistory() {
             'Qty Used': row.quantity_used,
             'Job Card #': row.job_card_number ? `JC-${row.job_card_number}` : '',
             'Vehicle': row.vehicle_number ?? '',
+            'Workshop': row.location_name ?? '',
             'Mechanic': row.mechanic_name ?? '',
             'JC Status': row.job_card_status ?? '',
         }))
@@ -443,6 +760,7 @@ function ConsumptionHistory() {
                                 <th className="px-4 py-3 text-right">Qty Used</th>
                                 <th className="px-4 py-3 text-left">Job Card</th>
                                 <th className="px-4 py-3 text-left">Vehicle</th>
+                                <th className="px-4 py-3 text-left">Workshop</th>
                                 <th className="px-4 py-3 text-left">Mechanic</th>
                                 <th className="px-4 py-3 text-left">JC Status</th>
                             </tr>
@@ -480,6 +798,7 @@ function ConsumptionHistory() {
                                             </Link>
                                         ) : '—'}
                                     </td>
+                                    <td className="px-4 py-3 text-gray-700">{row.location_name || '—'}</td>
                                     <td className="px-4 py-3">
                                         {row.mechanic_id ? (
                                             <Link
@@ -563,7 +882,7 @@ export default function Inventory() {
                     ))}
                 </div>
 
-                {tab === 'parts' && <PartsTable />}
+                {tab === 'parts' && <PartsTab />}
                 {tab === 'history' && <PurchaseHistory />}
                 {tab === 'consumption' && <ConsumptionHistory />}
             </div>

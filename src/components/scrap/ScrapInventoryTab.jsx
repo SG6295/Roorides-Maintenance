@@ -4,6 +4,7 @@ import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import FilterSelect from '../shared/FilterSelect'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
 import { useScrapInventory } from '../../hooks/useScrap'
+import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 
 const STATUS_BADGE = {
     in_storage:  'bg-green-100 text-green-700',
@@ -18,8 +19,9 @@ const STATUS_LABEL = {
 }
 
 export default function ScrapInventoryTab() {
-    const [filters, setFilters] = useState({ status: '', search: '', vehicle: '', dateFrom: '', dateTo: '' })
+    const [filters, setFilters] = useState({ status: '', search: '', vehicle: '', location_id: '', dateFrom: '', dateTo: '' })
     const { data: items = [], isLoading } = useScrapInventory(filters)
+    const { data: locations = [] } = useWorkshopLocations()
 
     return (
         <div className="space-y-4">
@@ -52,6 +54,14 @@ export default function ScrapInventoryTab() {
                         value={filters.vehicle}
                         onChange={e => setFilters(p => ({ ...p, vehicle: e.target.value }))}
                     />
+                    {locations.length > 1 && (
+                        <FilterSelect
+                            value={filters.location_id}
+                            onChange={v => setFilters(p => ({ ...p, location_id: v }))}
+                            placeholder="All Workshops"
+                            options={locations.map(l => ({ value: l.id, label: l.name }))}
+                        />
+                    )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
                     <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -92,6 +102,7 @@ export default function ScrapInventoryTab() {
                                 <th className="px-4 py-3 text-left">Unit</th>
                                 <th className="px-4 py-3 text-left">Source Vehicle</th>
                                 <th className="px-4 py-3 text-left">Source JC</th>
+                                <th className="px-4 py-3 text-left">Workshop</th>
                                 <th className="px-4 py-3 text-left">Status</th>
                                 <th className="px-4 py-3 text-left">Date Added</th>
                             </tr>
@@ -107,6 +118,7 @@ export default function ScrapInventoryTab() {
                                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">
                                         {item.job_card?.job_card_number || '—'}
                                     </td>
+                                    <td className="px-4 py-3 text-gray-700">{item.location?.name || '—'}</td>
                                     <td className="px-4 py-3">
                                         <span className={`px-2 py-0.5 text-xs rounded-full ${STATUS_BADGE[item.status] || 'bg-gray-100 text-gray-600'}`}>
                                             {STATUS_LABEL[item.status] || item.status}

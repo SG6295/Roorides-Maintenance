@@ -338,6 +338,7 @@ export type Database = {
           id: string
           invoice_url: string | null
           job_card_number: number
+          location_id: string
           odometer: number | null
           remarks: string | null
           site: string
@@ -353,6 +354,7 @@ export type Database = {
           id?: string
           invoice_url?: string | null
           job_card_number?: never
+          location_id?: string
           odometer?: number | null
           remarks?: string | null
           site: string
@@ -368,6 +370,7 @@ export type Database = {
           id?: string
           invoice_url?: string | null
           job_card_number?: never
+          location_id?: string
           odometer?: number | null
           remarks?: string | null
           site?: string
@@ -382,6 +385,13 @@ export type Database = {
             columns: ["assigned_mechanic_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_cards_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
             referencedColumns: ["id"]
           },
           {
@@ -504,6 +514,42 @@ export type Database = {
           },
         ]
       }
+      part_stock: {
+        Row: {
+          location_id: string
+          part_id: string
+          quantity: number
+          updated_at: string
+        }
+        Insert: {
+          location_id: string
+          part_id: string
+          quantity?: number
+          updated_at?: string
+        }
+        Update: {
+          location_id?: string
+          part_id?: string
+          quantity?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "part_stock_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "part_stock_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       part_units: {
         Row: {
           created_at: string | null
@@ -611,6 +657,7 @@ export type Database = {
           invoice_date: string
           invoice_file_url: string | null
           invoice_number: string
+          location_id: string
           notes: string | null
           supplier_name: string
           total_amount: number | null
@@ -622,6 +669,7 @@ export type Database = {
           invoice_date: string
           invoice_file_url?: string | null
           invoice_number: string
+          location_id?: string
           notes?: string | null
           supplier_name: string
           total_amount?: number | null
@@ -633,6 +681,7 @@ export type Database = {
           invoice_date?: string
           invoice_file_url?: string | null
           invoice_number?: string
+          location_id?: string
           notes?: string | null
           supplier_name?: string
           total_amount?: number | null
@@ -643,6 +692,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_invoices_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
             referencedColumns: ["id"]
           },
         ]
@@ -824,6 +880,7 @@ export type Database = {
           description: string | null
           estimated_value: number | null
           id: string
+          location_id: string
           notes: string | null
           outsource_part_disposition_snapshot:
             | Database["public"]["Enums"]["outsource_part_disposition"]
@@ -853,6 +910,7 @@ export type Database = {
           description?: string | null
           estimated_value?: number | null
           id?: string
+          location_id?: string
           notes?: string | null
           outsource_part_disposition_snapshot?:
             | Database["public"]["Enums"]["outsource_part_disposition"]
@@ -882,6 +940,7 @@ export type Database = {
           description?: string | null
           estimated_value?: number | null
           id?: string
+          location_id?: string
           notes?: string | null
           outsource_part_disposition_snapshot?:
             | Database["public"]["Enums"]["outsource_part_disposition"]
@@ -910,6 +969,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
             referencedColumns: ["id"]
           },
           {
@@ -1152,6 +1218,91 @@ export type Database = {
           sla_days?: number
         }
         Relationships: []
+      }
+      stock_transfer_items: {
+        Row: {
+          id: string
+          part_id: string
+          quantity: number
+          transfer_id: string
+        }
+        Insert: {
+          id?: string
+          part_id: string
+          quantity: number
+          transfer_id: string
+        }
+        Update: {
+          id?: string
+          part_id?: string
+          quantity?: number
+          transfer_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_transfer_items_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_transfer_items_transfer_id_fkey"
+            columns: ["transfer_id"]
+            isOneToOne: false
+            referencedRelation: "stock_transfers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stock_transfers: {
+        Row: {
+          from_location_id: string
+          id: string
+          notes: string | null
+          to_location_id: string
+          transferred_at: string
+          transferred_by: string | null
+        }
+        Insert: {
+          from_location_id: string
+          id?: string
+          notes?: string | null
+          to_location_id: string
+          transferred_at?: string
+          transferred_by?: string | null
+        }
+        Update: {
+          from_location_id?: string
+          id?: string
+          notes?: string | null
+          to_location_id?: string
+          transferred_at?: string
+          transferred_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_transfers_from_location_id_fkey"
+            columns: ["from_location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_transfers_to_location_id_fkey"
+            columns: ["to_location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_transfers_transferred_by_fkey"
+            columns: ["transferred_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       suppliers: {
         Row: {
@@ -1626,6 +1777,30 @@ export type Database = {
         }
         Relationships: []
       }
+      workshop_locations: {
+        Row: {
+          address: string | null
+          created_at: string | null
+          id: string
+          is_active: boolean
+          name: string
+        }
+        Insert: {
+          address?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+        }
+        Update: {
+          address?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       maintenance_dashboard_stats: {
@@ -1664,6 +1839,10 @@ export type Database = {
       add_working_days: {
         Args: { n_days: number; start_date: string }
         Returns: string
+      }
+      apply_part_stock_delta: {
+        Args: { p_delta: number; p_location_id: string; p_part_id: string }
+        Returns: undefined
       }
       calculate_sla_days: {
         Args: { p_category: string; p_impact: string }
@@ -1792,6 +1971,10 @@ export type Database = {
         }[]
       }
       seed_truncate_public_tables: { Args: never; Returns: undefined }
+      transfer_stock: {
+        Args: { p_from: string; p_items: Json; p_notes?: string; p_to: string }
+        Returns: string
+      }
     }
     Enums: {
       issue_category:

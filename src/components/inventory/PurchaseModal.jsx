@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useParts, useRecordPurchase, useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import { PlusIcon, TrashIcon, XMarkIcon, CheckIcon, PaperClipIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
@@ -30,6 +31,7 @@ export default function PurchaseModal({ onClose }) {
     const { userProfile } = useAuth()
     const { data: parts = [] } = useParts()
     const { data: partUnits = [] } = usePartUnits()
+    const { data: locations = [] } = useWorkshopLocations()
     const recordPurchase = useRecordPurchase()
     const createPart = useCreatePart()
     const fileInputRef = useRef(null)
@@ -42,6 +44,7 @@ export default function PurchaseModal({ onClose }) {
         supplier_name: '',
         invoice_date: '',
         notes: '',
+        location_id: '',
     })
     const [lines, setLines] = useState([emptyLine()])
     const [error, setError] = useState(null)
@@ -87,6 +90,9 @@ export default function PurchaseModal({ onClose }) {
 
     const invoiceTotal = calcInvoiceTotal(lines)
     const totalDiscount = calcTotalDiscount(lines)
+
+    // With a single workshop there is nothing to choose, so pick it for them.
+    const locationId = invoice.location_id || (locations.length === 1 ? locations[0].id : '')
 
     function updateLine(index, field, value) {
         setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
@@ -154,6 +160,11 @@ export default function PurchaseModal({ onClose }) {
         e.preventDefault()
         setError(null)
 
+        if (!locationId) {
+            setError('Choose which workshop this invoice is being inwarded to.')
+            return
+        }
+
         // Validate lines
         const validLines = lines.filter(l => l.part_id && l.quantity && l.unit_price)
         if (validLines.length === 0) {
@@ -173,6 +184,7 @@ export default function PurchaseModal({ onClose }) {
             await recordPurchase.mutateAsync({
                 invoice: {
                     ...invoice,
+                    location_id: locationId,
                     total_amount: invoiceTotal,
                     created_by: userProfile.id,
                     ...(invoiceFile?.url ? { invoice_file_url: invoiceFile.url } : {}),
@@ -255,6 +267,24 @@ export default function PurchaseModal({ onClose }) {
                                         onChange={e => setInvoice(p => ({ ...p, notes: e.target.value }))}
                                         placeholder="Optional"
                                     />
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Inward to Workshop <span className="text-red-500">*</span>
+                                    </label>
+                                    <CustomSelect
+                                        value={locationId}
+                                        onChange={v => setInvoice(p => ({ ...p, location_id: v }))}
+                                        options={locations.map(l => ({
+                                            value: l.id,
+                                            label: l.address ? `${l.name} — ${l.address}` : l.name,
+                                        }))}
+                                        placeholder="Select workshop"
+                                        compact
+                                    />
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        Every line on this invoice is received into this workshop's stock.
+                                    </p>
                                 </div>
                             </div>
                         </div>

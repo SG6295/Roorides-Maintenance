@@ -8,7 +8,8 @@ import { useAuth } from '../hooks/useAuth'
 import { useJobCard, useUpdateJobCard } from '../hooks/useJobCards'
 import { useOutsourceInvoice, useUpsertOutsourceInvoice, useFinalizeOutsourceInvoice } from '../hooks/useOutsourceInvoices'
 import { useApprovedSuppliers } from '../hooks/useSuppliers'
-import { useParts } from '../hooks/useParts'
+import { usePartStock } from '../hooks/useInventory'
+import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
@@ -23,6 +24,8 @@ import {
     TruckIcon,
     PencilIcon,
     ClipboardDocumentListIcon,
+    BuildingOffice2Icon,
+    LockClosedIcon,
 } from '@heroicons/react/24/outline'
 import { ChevronUpDownIcon, CheckIcon } from '@heroicons/react/20/solid'
 
@@ -60,8 +63,11 @@ export default function JobCardDetail() {
 
     const { data: jobCard, isLoading } = useJobCard(id)
     const updateJobCard = useUpdateJobCard()
-    const { data: parts = [] } = useParts()
+    // In-house work draws from this card's workshop, so the picker must show that
+    // workshop's stock rather than the company-wide total.
+    const { data: parts = [] } = usePartStock(jobCard?.location_id)
     const { data: approvedSuppliers = [] } = useApprovedSuppliers()
+    const { data: workshopLocations = [] } = useWorkshopLocations()
 
     const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
     const isMechanic = ['mechanic', 'electrician', 'maintenance_exec', 'super_admin'].includes(userProfile?.role)
@@ -78,6 +84,10 @@ export default function JobCardDetail() {
     // Job Location editing
     const [editingJobLocation, setEditingJobLocation] = useState(false)
     const [pendingType, setPendingType] = useState('')
+
+    // Workshop editing
+    const [editingWorkshop, setEditingWorkshop] = useState(false)
+    const [pendingWorkshopId, setPendingWorkshopId] = useState('')
 
     // Supplier assignment
     const [editingSupplier, setEditingSupplier] = useState(false)
@@ -189,6 +199,23 @@ export default function JobCardDetail() {
             setEditingJobLocation(false)
         } catch (e) {
             alert('Failed to update job location: ' + e.message)
+        }
+    }
+
+    const handleSaveWorkshop = async () => {
+        if (!pendingWorkshopId || pendingWorkshopId === jobCard.location_id) {
+            setEditingWorkshop(false)
+            return
+        }
+        try {
+            await updateJobCard.mutateAsync({
+                id: jobCard.id,
+                updates: { location_id: pendingWorkshopId },
+            })
+            setEditingWorkshop(false)
+        } catch (e) {
+            // The DB refuses the move once parts have been issued from the old workshop.
+            alert(e.message)
         }
     }
 
@@ -347,6 +374,12 @@ export default function JobCardDetail() {
 
     const jobLocationLabel = jobCard.type === 'InHouse' ? 'In-house' : 'Outsource'
 
+    // Once an in-house card has issued parts, its stock has already left the current
+    // workshop, so the DB refuses a move. Reflect that in the UI rather than letting
+    // the exec try and hit an error.
+    const workshopLocked =
+        !isOutsource && (jobCard.issues || []).some(i => (i.issue_parts || []).length > 0)
+
     return (
         <div className="min-h-screen bg-gray-50 pb-16">
             <Navigation
@@ -470,6 +503,82 @@ export default function JobCardDetail() {
                                         >
                                             <PencilIcon className="w-3.5 h-3.5" />
                                         </button>
+                                    )}
+                                </span>
+                            )}
+                        </span>
+
+                        {/* ── Workshop pill ──────────────────────────────────────
+                            The workshop decides which stock this card draws from, so
+                            once parts have been issued it is fixed — the deductions
+                            already happened at the current workshop. */}
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-700">
+                            <BuildingOffice2Icon className="w-4 h-4 text-gray-600" />
+                            {editingWorkshop ? (
+                                <span className="flex items-center gap-2">
+                                    <Listbox value={pendingWorkshopId} onChange={setPendingWorkshopId}>
+                                        <div className="relative">
+                                            <ListboxButton className="relative w-40 cursor-default rounded-md bg-white py-0.5 pl-2 pr-7 text-left text-sm border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                <span className="block truncate text-gray-900">
+                                                    {workshopLocations.find(l => l.id === pendingWorkshopId)?.name || 'Select'}
+                                                </span>
+                                                <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-1.5">
+                                                    <ChevronUpDownIcon className="h-4 w-4 text-gray-500" />
+                                                </span>
+                                            </ListboxButton>
+                                            <Transition as={Fragment} leave="transition ease-in duration-100" leaveFrom="opacity-100" leaveTo="opacity-0">
+                                                <ListboxOptions className="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                                                    {workshopLocations.map(loc => (
+                                                        <ListboxOption
+                                                            key={loc.id}
+                                                            value={loc.id}
+                                                            className={({ active }) => `relative cursor-default select-none py-2 pl-3 pr-9 ${active ? 'bg-blue-600 text-white' : 'text-gray-900'}`}
+                                                        >
+                                                            {({ selected, active }) => (<>
+                                                                <span className={selected ? 'font-semibold' : 'font-normal'}>{loc.name}</span>
+                                                                {selected && (
+                                                                    <span className={`absolute inset-y-0 right-0 flex items-center pr-3 ${active ? 'text-white' : 'text-blue-600'}`}>
+                                                                        <CheckIcon className="h-4 w-4" />
+                                                                    </span>
+                                                                )}
+                                                            </>)}
+                                                        </ListboxOption>
+                                                    ))}
+                                                </ListboxOptions>
+                                            </Transition>
+                                        </div>
+                                    </Listbox>
+                                    <button
+                                        onClick={handleSaveWorkshop}
+                                        disabled={updateJobCard.isPending}
+                                        className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                    >
+                                        Save
+                                    </button>
+                                    <button
+                                        onClick={() => setEditingWorkshop(false)}
+                                        className="text-xs px-2 py-0.5 bg-gray-200 text-gray-600 rounded hover:bg-gray-300"
+                                    >
+                                        Cancel
+                                    </button>
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-1.5">
+                                    {jobCard.location?.name || '—'}
+                                    {isExec && jobCard.status === 'Open' && workshopLocations.length > 1 && (
+                                        workshopLocked ? (
+                                            <LockClosedIcon
+                                                className="w-3.5 h-3.5 text-gray-400"
+                                                title="Parts have already been issued from this workshop, so the job card can no longer be moved."
+                                            />
+                                        ) : (
+                                            <button
+                                                onClick={() => { setPendingWorkshopId(jobCard.location_id); setEditingWorkshop(true) }}
+                                                className="text-gray-500 hover:text-blue-600"
+                                            >
+                                                <PencilIcon className="w-3.5 h-3.5" />
+                                            </button>
+                                        )
                                     )}
                                 </span>
                             )}

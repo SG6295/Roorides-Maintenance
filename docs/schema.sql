@@ -1028,11 +1028,16 @@ ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO supabase_admin;
 
 CREATE FUNCTION public.add_part_to_inventory() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
     AS $$
+DECLARE
+    v_location_id uuid;
 BEGIN
-    UPDATE parts
-    SET quantity_in_stock = quantity_in_stock + NEW.quantity
-    WHERE id = NEW.part_id;
+    SELECT pi.location_id INTO v_location_id
+    FROM   public.purchase_invoices pi
+    WHERE  pi.id = NEW.invoice_id;
+
+    PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, NEW.quantity);
     RETURN NEW;
 END;
 $$;
@@ -1085,24 +1090,71 @@ ALTER FUNCTION public.add_working_days(start_date date, n_days integer) OWNER TO
 
 CREATE FUNCTION public.adjust_part_inventory_on_update() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
     AS $$
+DECLARE
+    v_location_id uuid;
 BEGIN
+    SELECT pi.location_id INTO v_location_id
+    FROM   public.purchase_invoices pi
+    WHERE  pi.id = NEW.invoice_id;
+
     IF NEW.part_id = OLD.part_id THEN
-        -- Same part: apply the quantity delta
-        UPDATE parts
-        SET quantity_in_stock = quantity_in_stock + (NEW.quantity - OLD.quantity)
-        WHERE id = NEW.part_id;
+        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, NEW.quantity - OLD.quantity);
     ELSE
-        -- Part changed: reverse old part stock, add to new part stock
-        UPDATE parts SET quantity_in_stock = quantity_in_stock - OLD.quantity WHERE id = OLD.part_id;
-        UPDATE parts SET quantity_in_stock = quantity_in_stock + NEW.quantity WHERE id = NEW.part_id;
+        PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, -OLD.quantity);
+        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, NEW.quantity);
     END IF;
+
     RETURN NEW;
 END;
 $$;
 
 
 ALTER FUNCTION public.adjust_part_inventory_on_update() OWNER TO postgres;
+
+--
+-- Name: apply_part_stock_delta(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_available numeric;
+    v_part      text;
+    v_location  text;
+BEGIN
+    IF p_location_id IS NULL THEN
+        RAISE EXCEPTION 'Cannot change stock without a workshop location.';
+    END IF;
+
+    INSERT INTO public.part_stock (part_id, location_id, quantity)
+    VALUES (p_part_id, p_location_id, 0)
+    ON CONFLICT (part_id, location_id) DO NOTHING;
+
+    SELECT quantity INTO v_available
+    FROM   public.part_stock
+    WHERE  part_id = p_part_id AND location_id = p_location_id
+    FOR UPDATE;
+
+    IF v_available + p_delta < 0 THEN
+        SELECT name INTO v_part     FROM public.parts              WHERE id = p_part_id;
+        SELECT name INTO v_location FROM public.workshop_locations WHERE id = p_location_id;
+        RAISE EXCEPTION 'Not enough stock: % has % available at %, needed %.',
+            COALESCE(v_part, 'part'), v_available, COALESCE(v_location, 'this location'), abs(p_delta);
+    END IF;
+
+    UPDATE public.part_stock
+    SET    quantity = quantity + p_delta,
+           updated_at = now()
+    WHERE  part_id = p_part_id AND location_id = p_location_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) OWNER TO postgres;
 
 --
 -- Name: calculate_issue_sla_dynamic(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -1770,8 +1822,9 @@ CREATE FUNCTION public.deduct_part_from_inventory() RETURNS trigger
     AS $$
 DECLARE
     v_job_card_type text;
+    v_location_id   uuid;
 BEGIN
-    SELECT jc.type INTO v_job_card_type
+    SELECT jc.type, jc.location_id INTO v_job_card_type, v_location_id
     FROM   public.issues    i
     JOIN   public.job_cards jc ON jc.id = i.job_card_id
     WHERE  i.id = NEW.issue_id;
@@ -1780,16 +1833,30 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    UPDATE public.parts
-    SET    quantity_in_stock = quantity_in_stock - NEW.quantity_used
-    WHERE  id = NEW.part_id;
-
+    PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, -NEW.quantity_used);
     RETURN NEW;
 END;
 $$;
 
 
 ALTER FUNCTION public.deduct_part_from_inventory() OWNER TO postgres;
+
+--
+-- Name: delete_invoice_items_first(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.delete_invoice_items_first() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    DELETE FROM public.purchase_invoice_items WHERE invoice_id = OLD.id;
+    RETURN OLD;
+END;
+$$;
+
+
+ALTER FUNCTION public.delete_invoice_items_first() OWNER TO postgres;
 
 --
 -- Name: delete_issue_part_with_scrap_check(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2186,6 +2253,43 @@ $$;
 ALTER FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) OWNER TO postgres;
 
 --
+-- Name: guard_job_card_location_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_job_card_location_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_consumed integer;
+BEGIN
+    IF NEW.location_id IS NOT DISTINCT FROM OLD.location_id THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW.type = 'Outsource' THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT count(*) INTO v_consumed
+    FROM   public.issue_parts ip
+    JOIN   public.issues      i ON i.id = ip.issue_id
+    WHERE  i.job_card_id = NEW.id;
+
+    IF v_consumed > 0 THEN
+        RAISE EXCEPTION
+            'This job card cannot be moved to another workshop: % part(s) have already been issued from the current one. Remove the parts first, or leave the card where it is.',
+            v_consumed;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_job_card_location_change() OWNER TO postgres;
+
+--
 -- Name: is_maintenance_exec(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2239,6 +2343,35 @@ $$;
 
 
 ALTER FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) OWNER TO postgres;
+
+--
+-- Name: move_invoice_stock_on_location_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.move_invoice_stock_on_location_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    r RECORD;
+BEGIN
+    IF NEW.location_id IS NOT DISTINCT FROM OLD.location_id THEN
+        RETURN NEW;
+    END IF;
+
+    FOR r IN
+        SELECT part_id, quantity FROM public.purchase_invoice_items WHERE invoice_id = NEW.id
+    LOOP
+        PERFORM public.apply_part_stock_delta(r.part_id, OLD.location_id, -r.quantity);
+        PERFORM public.apply_part_stock_delta(r.part_id, NEW.location_id,  r.quantity);
+    END LOOP;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.move_invoice_stock_on_location_change() OWNER TO postgres;
 
 --
 -- Name: recalculate_ticket_sla_on_status_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2690,8 +2823,9 @@ CREATE FUNCTION public.restore_part_to_inventory() RETURNS trigger
     AS $$
 DECLARE
     v_job_card_type text;
+    v_location_id   uuid;
 BEGIN
-    SELECT jc.type INTO v_job_card_type
+    SELECT jc.type, jc.location_id INTO v_job_card_type, v_location_id
     FROM   public.issues    i
     JOIN   public.job_cards jc ON jc.id = i.job_card_id
     WHERE  i.id = OLD.issue_id;
@@ -2700,10 +2834,11 @@ BEGIN
         RETURN OLD;
     END IF;
 
-    UPDATE public.parts
-    SET    quantity_in_stock = quantity_in_stock + OLD.quantity_used
-    WHERE  id = OLD.part_id;
+    IF v_location_id IS NULL THEN
+        RETURN OLD;
+    END IF;
 
+    PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, OLD.quantity_used);
     RETURN OLD;
 END;
 $$;
@@ -2717,11 +2852,20 @@ ALTER FUNCTION public.restore_part_to_inventory() OWNER TO postgres;
 
 CREATE FUNCTION public.reverse_part_inventory_on_delete() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
     AS $$
+DECLARE
+    v_location_id uuid;
 BEGIN
-    UPDATE parts
-    SET quantity_in_stock = quantity_in_stock - OLD.quantity
-    WHERE id = OLD.part_id;
+    SELECT pi.location_id INTO v_location_id
+    FROM   public.purchase_invoices pi
+    WHERE  pi.id = OLD.invoice_id;
+
+    IF v_location_id IS NULL THEN
+        RETURN OLD;
+    END IF;
+
+    PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, -OLD.quantity);
     RETURN OLD;
 END;
 $$;
@@ -2795,6 +2939,30 @@ $$;
 
 
 ALTER FUNCTION public.seed_truncate_public_tables() OWNER TO postgres;
+
+--
+-- Name: set_scrap_location_from_job_card(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.set_scrap_location_from_job_card() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    SELECT jc.location_id INTO NEW.location_id
+    FROM   public.job_cards jc
+    WHERE  jc.id = NEW.source_job_card_id;
+
+    IF NEW.location_id IS NULL THEN
+        NEW.location_id := 'a1e1d4c0-0000-4000-8000-000000000001';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.set_scrap_location_from_job_card() OWNER TO postgres;
 
 --
 -- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2871,6 +3039,94 @@ $$;
 
 
 ALTER FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() OWNER TO postgres;
+
+--
+-- Name: sync_part_total_stock(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sync_part_total_stock() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_part_id uuid := COALESCE(NEW.part_id, OLD.part_id);
+BEGIN
+    UPDATE public.parts p
+    SET    quantity_in_stock = COALESCE(
+               (SELECT SUM(ps.quantity) FROM public.part_stock ps WHERE ps.part_id = v_part_id),
+               0)
+    WHERE  p.id = v_part_id;
+
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION public.sync_part_total_stock() OWNER TO postgres;
+
+--
+-- Name: transfer_stock(uuid, uuid, jsonb, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text DEFAULT NULL::text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_transfer_id uuid;
+    v_role        text;
+    r             RECORD;
+    v_count       integer := 0;
+BEGIN
+    SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('maintenance_exec', 'super_admin') THEN
+        RAISE EXCEPTION 'Only a maintenance executive or super admin can move stock between workshops.';
+    END IF;
+
+    IF p_from = p_to THEN
+        RAISE EXCEPTION 'Source and destination workshop must be different.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.workshop_locations WHERE id = p_from AND is_active) THEN
+        RAISE EXCEPTION 'The source workshop is not an active location.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.workshop_locations WHERE id = p_to AND is_active) THEN
+        RAISE EXCEPTION 'The destination workshop is not an active location.';
+    END IF;
+
+    INSERT INTO public.stock_transfers (from_location_id, to_location_id, notes, transferred_by)
+    VALUES (p_from, p_to, NULLIF(btrim(COALESCE(p_notes, '')), ''), auth.uid())
+    RETURNING id INTO v_transfer_id;
+
+    FOR r IN
+        SELECT (elem->>'part_id')::uuid  AS part_id,
+               (elem->>'quantity')::numeric AS quantity
+        FROM   jsonb_array_elements(p_items) AS elem
+    LOOP
+        IF r.part_id IS NULL OR r.quantity IS NULL OR r.quantity <= 0 THEN
+            RAISE EXCEPTION 'Every line needs a part and a quantity greater than zero.';
+        END IF;
+
+        PERFORM public.apply_part_stock_delta(r.part_id, p_from, -r.quantity);
+        PERFORM public.apply_part_stock_delta(r.part_id, p_to,    r.quantity);
+
+        INSERT INTO public.stock_transfer_items (transfer_id, part_id, quantity)
+        VALUES (v_transfer_id, r.part_id, r.quantity);
+
+        v_count := v_count + 1;
+    END LOOP;
+
+    IF v_count = 0 THEN
+        RAISE EXCEPTION 'Select at least one part to move.';
+    END IF;
+
+    RETURN v_transfer_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) OWNER TO postgres;
 
 --
 -- Name: trg_set_acceptance_sla_on_first_issue(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -5713,6 +5969,7 @@ CREATE TABLE public.job_cards (
     supplier_id uuid,
     invoice_url text,
     odometer integer,
+    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
     CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at))),
     CONSTRAINT job_cards_odometer_check CHECK (((odometer IS NULL) OR (odometer >= 0))),
     CONSTRAINT outsource_completion_requires_invoice CHECK (((status <> 'Completed'::public.job_card_status) OR (type <> 'Outsource'::public.work_type_enum) OR (invoice_url IS NOT NULL)))
@@ -5720,6 +5977,13 @@ CREATE TABLE public.job_cards (
 
 
 ALTER TABLE public.job_cards OWNER TO postgres;
+
+--
+-- Name: COLUMN job_cards.location_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.job_cards.location_id IS 'Workshop where the repair happens. InHouse cards consume stock from this location. Distinct from job_cards.site, which is the customer site the vehicle runs at.';
+
 
 --
 -- Name: job_cards_job_card_number_seq; Type: SEQUENCE; Schema: public; Owner: postgres
@@ -5841,6 +6105,28 @@ CREATE TABLE public.outsource_invoices (
 ALTER TABLE public.outsource_invoices OWNER TO postgres;
 
 --
+-- Name: part_stock; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.part_stock (
+    part_id uuid NOT NULL,
+    location_id uuid NOT NULL,
+    quantity numeric(10,2) DEFAULT 0 NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    CONSTRAINT part_stock_quantity_nonneg CHECK ((quantity >= (0)::numeric))
+);
+
+
+ALTER TABLE public.part_stock OWNER TO postgres;
+
+--
+-- Name: TABLE part_stock; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.part_stock IS 'Authoritative stock per part per workshop location. parts.quantity_in_stock is the derived total.';
+
+
+--
 -- Name: part_units; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -5907,11 +6193,19 @@ CREATE TABLE public.purchase_invoices (
     notes text,
     created_by uuid,
     created_at timestamp without time zone DEFAULT now(),
-    invoice_file_url text
+    invoice_file_url text,
+    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL
 );
 
 
 ALTER TABLE public.purchase_invoices OWNER TO postgres;
+
+--
+-- Name: COLUMN purchase_invoices.location_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.purchase_invoices.location_id IS 'Workshop all line items on this invoice are inwarded to. One invoice cannot span two locations.';
+
 
 --
 -- Name: scrap_disposal; Type: TABLE; Schema: public; Owner: postgres
@@ -6004,11 +6298,19 @@ CREATE TABLE public.scrap_inventory (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_by uuid
+    updated_by uuid,
+    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL
 );
 
 
 ALTER TABLE public.scrap_inventory OWNER TO postgres;
+
+--
+-- Name: COLUMN scrap_inventory.location_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.scrap_inventory.location_id IS 'Workshop holding this salvage item, inherited from the source job card. Supersedes the unused free-text current_location column.';
+
 
 --
 -- Name: scrap_writeoff; Type: TABLE; Schema: public; Owner: postgres
@@ -6105,6 +6407,45 @@ CREATE TABLE public.sla_rules_config (
 
 
 ALTER TABLE public.sla_rules_config OWNER TO postgres;
+
+--
+-- Name: stock_transfer_items; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.stock_transfer_items (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    transfer_id uuid NOT NULL,
+    part_id uuid NOT NULL,
+    quantity numeric(10,2) NOT NULL,
+    CONSTRAINT stock_transfer_items_quantity_positive CHECK ((quantity > (0)::numeric))
+);
+
+
+ALTER TABLE public.stock_transfer_items OWNER TO postgres;
+
+--
+-- Name: stock_transfers; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.stock_transfers (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    from_location_id uuid NOT NULL,
+    to_location_id uuid NOT NULL,
+    notes text,
+    transferred_by uuid,
+    transferred_at timestamp without time zone DEFAULT now() NOT NULL,
+    CONSTRAINT stock_transfers_distinct_locations CHECK ((from_location_id <> to_location_id))
+);
+
+
+ALTER TABLE public.stock_transfers OWNER TO postgres;
+
+--
+-- Name: TABLE stock_transfers; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.stock_transfers IS 'Audit trail of parts moved between workshops. Immutable: correct a mistake with a transfer in the opposite direction.';
+
 
 --
 -- Name: supervisor_dashboard_stats; Type: VIEW; Schema: public; Owner: postgres
@@ -6298,6 +6639,28 @@ CREATE TABLE public.vehicles (
 
 
 ALTER TABLE public.vehicles OWNER TO postgres;
+
+--
+-- Name: workshop_locations; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.workshop_locations (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    name text NOT NULL,
+    address text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.workshop_locations OWNER TO postgres;
+
+--
+-- Name: TABLE workshop_locations; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.workshop_locations IS 'Physical workshops. Parts stock, job cards and scrap are located at one of these. Not the same as public.sites.';
+
 
 --
 -- Name: messages; Type: TABLE; Schema: realtime; Owner: supabase_realtime_admin
@@ -6894,6 +7257,14 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
+-- Name: part_stock part_stock_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.part_stock
+    ADD CONSTRAINT part_stock_pkey PRIMARY KEY (part_id, location_id);
+
+
+--
 -- Name: part_units part_units_name_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -7054,6 +7425,22 @@ ALTER TABLE ONLY public.sla_rules
 
 
 --
+-- Name: stock_transfer_items stock_transfer_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfer_items
+    ADD CONSTRAINT stock_transfer_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_transfers stock_transfers_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfers
+    ADD CONSTRAINT stock_transfers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: suppliers suppliers_pan_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -7147,6 +7534,14 @@ ALTER TABLE ONLY public.vehicles
 
 ALTER TABLE ONLY public.vehicles
     ADD CONSTRAINT vehicles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workshop_locations workshop_locations_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.workshop_locations
+    ADD CONSTRAINT workshop_locations_pkey PRIMARY KEY (id);
 
 
 --
@@ -7907,6 +8302,13 @@ CREATE INDEX idx_tickets_vehicle_number ON public.tickets USING btree (vehicle_n
 
 
 --
+-- Name: job_cards_location_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX job_cards_location_idx ON public.job_cards USING btree (location_id);
+
+
+--
 -- Name: outsource_invoice_payments_invoice_id_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -7939,6 +8341,69 @@ CREATE INDEX outsource_invoices_payby_date_idx ON public.outsource_invoices USIN
 --
 
 CREATE INDEX outsource_invoices_payment_status_idx ON public.outsource_invoices USING btree (payment_status);
+
+
+--
+-- Name: part_stock_location_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX part_stock_location_idx ON public.part_stock USING btree (location_id);
+
+
+--
+-- Name: purchase_invoices_location_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX purchase_invoices_location_idx ON public.purchase_invoices USING btree (location_id);
+
+
+--
+-- Name: scrap_inventory_location_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX scrap_inventory_location_idx ON public.scrap_inventory USING btree (location_id);
+
+
+--
+-- Name: stock_transfer_items_part_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_transfer_items_part_idx ON public.stock_transfer_items USING btree (part_id);
+
+
+--
+-- Name: stock_transfer_items_transfer_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_transfer_items_transfer_idx ON public.stock_transfer_items USING btree (transfer_id);
+
+
+--
+-- Name: stock_transfers_date_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_transfers_date_idx ON public.stock_transfers USING btree (transferred_at DESC);
+
+
+--
+-- Name: stock_transfers_from_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_transfers_from_idx ON public.stock_transfers USING btree (from_location_id);
+
+
+--
+-- Name: stock_transfers_to_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_transfers_to_idx ON public.stock_transfers USING btree (to_location_id);
+
+
+--
+-- Name: workshop_locations_name_lower_key; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX workshop_locations_name_lower_key ON public.workshop_locations USING btree (lower(name));
 
 
 --
@@ -8047,10 +8512,24 @@ CREATE TRIGGER trg_issue_sla_dynamic BEFORE INSERT OR UPDATE ON public.issues FO
 
 
 --
+-- Name: scrap_inventory trg_set_scrap_location; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_set_scrap_location BEFORE INSERT ON public.scrap_inventory FOR EACH ROW EXECUTE FUNCTION public.set_scrap_location_from_job_card();
+
+
+--
 -- Name: tickets trg_stamp_rejected_at_and_acceptance_sla; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_stamp_rejected_at_and_acceptance_sla BEFORE UPDATE ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla();
+
+
+--
+-- Name: part_stock trg_sync_part_total_stock; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_sync_part_total_stock AFTER INSERT OR DELETE OR UPDATE ON public.part_stock FOR EACH ROW EXECUTE FUNCTION public.sync_part_total_stock();
 
 
 --
@@ -8086,6 +8565,27 @@ CREATE TRIGGER trigger_adjust_part_inventory_on_update AFTER UPDATE ON public.pu
 --
 
 CREATE TRIGGER trigger_deduct_part_inventory AFTER INSERT ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.deduct_part_from_inventory();
+
+
+--
+-- Name: purchase_invoices trigger_delete_invoice_items_first; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_delete_invoice_items_first BEFORE DELETE ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.delete_invoice_items_first();
+
+
+--
+-- Name: job_cards trigger_guard_job_card_location_change; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_job_card_location_change BEFORE UPDATE OF location_id ON public.job_cards FOR EACH ROW EXECUTE FUNCTION public.guard_job_card_location_change();
+
+
+--
+-- Name: purchase_invoices trigger_move_invoice_stock_on_location_change; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_move_invoice_stock_on_location_change AFTER UPDATE OF location_id ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.move_invoice_stock_on_location_change();
 
 
 --
@@ -8369,6 +8869,14 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
+-- Name: job_cards job_cards_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.job_cards
+    ADD CONSTRAINT job_cards_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
+
+
+--
 -- Name: job_cards job_cards_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -8409,6 +8917,22 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
+-- Name: part_stock part_stock_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.part_stock
+    ADD CONSTRAINT part_stock_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
+
+
+--
+-- Name: part_stock part_stock_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.part_stock
+    ADD CONSTRAINT part_stock_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: purchase_invoice_items purchase_invoice_items_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -8430,6 +8954,14 @@ ALTER TABLE ONLY public.purchase_invoice_items
 
 ALTER TABLE ONLY public.purchase_invoices
     ADD CONSTRAINT purchase_invoices_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: purchase_invoices purchase_invoices_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.purchase_invoices
+    ADD CONSTRAINT purchase_invoices_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
 
 
 --
@@ -8494,6 +9026,14 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 ALTER TABLE ONLY public.scrap_inventory
     ADD CONSTRAINT scrap_inventory_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: scrap_inventory scrap_inventory_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
 
 
 --
@@ -8582,6 +9122,46 @@ ALTER TABLE ONLY public.sla_events
 
 ALTER TABLE ONLY public.sla_events
     ADD CONSTRAINT sla_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_transfer_items stock_transfer_items_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfer_items
+    ADD CONSTRAINT stock_transfer_items_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id);
+
+
+--
+-- Name: stock_transfer_items stock_transfer_items_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfer_items
+    ADD CONSTRAINT stock_transfer_items_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.stock_transfers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_transfers stock_transfers_from_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfers
+    ADD CONSTRAINT stock_transfers_from_location_id_fkey FOREIGN KEY (from_location_id) REFERENCES public.workshop_locations(id);
+
+
+--
+-- Name: stock_transfers stock_transfers_to_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfers
+    ADD CONSTRAINT stock_transfers_to_location_id_fkey FOREIGN KEY (to_location_id) REFERENCES public.workshop_locations(id);
+
+
+--
+-- Name: stock_transfers stock_transfers_transferred_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_transfers
+    ADD CONSTRAINT stock_transfers_transferred_by_fkey FOREIGN KEY (transferred_by) REFERENCES public.users(id);
 
 
 --
@@ -8830,10 +9410,24 @@ CREATE POLICY "Authenticated read part_units" ON public.part_units FOR SELECT US
 
 
 --
+-- Name: workshop_locations Authenticated read workshop_locations; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Authenticated read workshop_locations" ON public.workshop_locations FOR SELECT USING ((auth.role() = 'authenticated'::text));
+
+
+--
 -- Name: vehicle_sites Authenticated users can read vehicle_sites; Type: POLICY; Schema: public; Owner: postgres
 --
 
 CREATE POLICY "Authenticated users can read vehicle_sites" ON public.vehicle_sites FOR SELECT USING ((auth.role() = 'authenticated'::text));
+
+
+--
+-- Name: part_stock Authenticated users view part_stock; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Authenticated users view part_stock" ON public.part_stock FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
@@ -8920,6 +9514,15 @@ CREATE POLICY "Exec and finance insert invoices" ON public.purchase_invoices FOR
 
 
 --
+-- Name: part_stock Exec and finance manage part_stock; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance manage part_stock" ON public.part_stock USING ((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['maintenance_exec'::text, 'super_admin'::text, 'finance'::text]))))));
+
+
+--
 -- Name: parts Exec and finance manage parts; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -8971,6 +9574,24 @@ CREATE POLICY "Exec and finance view invoice items" ON public.purchase_invoice_i
 CREATE POLICY "Exec and finance view invoices" ON public.purchase_invoices FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
+
+
+--
+-- Name: stock_transfer_items Exec and finance view stock_transfer_items; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view stock_transfer_items" ON public.stock_transfer_items FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['maintenance_exec'::text, 'super_admin'::text, 'finance'::text]))))));
+
+
+--
+-- Name: stock_transfers Exec and finance view stock_transfers; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view stock_transfers" ON public.stock_transfers FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['maintenance_exec'::text, 'super_admin'::text, 'finance'::text]))))));
 
 
 --
@@ -9296,6 +9917,20 @@ CREATE POLICY "Super admins can update settings" ON public.system_settings FOR U
 
 
 --
+-- Name: workshop_locations Super admins insert workshop_locations; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Super admins insert workshop_locations" ON public.workshop_locations FOR INSERT WITH CHECK (public.is_super_admin());
+
+
+--
+-- Name: workshop_locations Super admins update workshop_locations; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Super admins update workshop_locations" ON public.workshop_locations FOR UPDATE USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+
+--
 -- Name: tickets Supervisors and execs create tickets; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -9538,6 +10173,12 @@ ALTER TABLE public.outsource_invoice_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.outsource_invoices ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: part_stock; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.part_stock ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: part_units; Type: ROW SECURITY; Schema: public; Owner: postgres
 --
 
@@ -9614,6 +10255,18 @@ ALTER TABLE public.sla_events ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.sla_rules ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: stock_transfer_items; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.stock_transfer_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: stock_transfers; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.stock_transfers ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: suppliers; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -9708,6 +10361,12 @@ ALTER TABLE public.vehicle_sites ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: workshop_locations; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.workshop_locations ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: messages; Type: ROW SECURITY; Schema: realtime; Owner: supabase_realtime_admin
@@ -10471,6 +11130,15 @@ GRANT ALL ON FUNCTION public.adjust_part_inventory_on_update() TO service_role;
 
 
 --
+-- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO anon;
+GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO authenticated;
+GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO service_role;
+
+
+--
 -- Name: FUNCTION calculate_issue_sla_dynamic(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -10531,6 +11199,15 @@ GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_rem
 GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO anon;
 GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO authenticated;
 GRANT ALL ON FUNCTION public.deduct_part_from_inventory() TO service_role;
+
+
+--
+-- Name: FUNCTION delete_invoice_items_first(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.delete_invoice_items_first() TO anon;
+GRANT ALL ON FUNCTION public.delete_invoice_items_first() TO authenticated;
+GRANT ALL ON FUNCTION public.delete_invoice_items_first() TO service_role;
 
 
 --
@@ -10597,6 +11274,15 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text
 
 
 --
+-- Name: FUNCTION guard_job_card_location_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO anon;
+GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO service_role;
+
+
+--
 -- Name: FUNCTION is_maintenance_exec(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -10621,6 +11307,15 @@ GRANT ALL ON FUNCTION public.is_super_admin() TO service_role;
 GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION move_invoice_stock_on_location_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.move_invoice_stock_on_location_change() TO anon;
+GRANT ALL ON FUNCTION public.move_invoice_stock_on_location_change() TO authenticated;
+GRANT ALL ON FUNCTION public.move_invoice_stock_on_location_change() TO service_role;
 
 
 --
@@ -10696,6 +11391,15 @@ GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO service_role;
 
 
 --
+-- Name: FUNCTION set_scrap_location_from_job_card(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.set_scrap_location_from_job_card() TO anon;
+GRANT ALL ON FUNCTION public.set_scrap_location_from_job_card() TO authenticated;
+GRANT ALL ON FUNCTION public.set_scrap_location_from_job_card() TO service_role;
+
+
+--
 -- Name: FUNCTION set_updated_at(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -10711,6 +11415,24 @@ GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO anon;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO authenticated;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO service_role;
+
+
+--
+-- Name: FUNCTION sync_part_total_stock(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sync_part_total_stock() TO anon;
+GRANT ALL ON FUNCTION public.sync_part_total_stock() TO authenticated;
+GRANT ALL ON FUNCTION public.sync_part_total_stock() TO service_role;
+
+
+--
+-- Name: FUNCTION transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) TO anon;
+GRANT ALL ON FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) TO authenticated;
+GRANT ALL ON FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) TO service_role;
 
 
 --
@@ -11249,6 +11971,15 @@ GRANT ALL ON TABLE public.outsource_invoices TO service_role;
 
 
 --
+-- Name: TABLE part_stock; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.part_stock TO anon;
+GRANT ALL ON TABLE public.part_stock TO authenticated;
+GRANT ALL ON TABLE public.part_stock TO service_role;
+
+
+--
 -- Name: TABLE part_units; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -11375,6 +12106,24 @@ GRANT ALL ON TABLE public.sla_rules_config TO service_role;
 
 
 --
+-- Name: TABLE stock_transfer_items; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.stock_transfer_items TO anon;
+GRANT ALL ON TABLE public.stock_transfer_items TO authenticated;
+GRANT ALL ON TABLE public.stock_transfer_items TO service_role;
+
+
+--
+-- Name: TABLE stock_transfers; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.stock_transfers TO anon;
+GRANT ALL ON TABLE public.stock_transfers TO authenticated;
+GRANT ALL ON TABLE public.stock_transfers TO service_role;
+
+
+--
 -- Name: TABLE supervisor_dashboard_stats; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -11453,6 +12202,15 @@ GRANT ALL ON TABLE public.vehicle_sites TO service_role;
 GRANT ALL ON TABLE public.vehicles TO anon;
 GRANT ALL ON TABLE public.vehicles TO authenticated;
 GRANT ALL ON TABLE public.vehicles TO service_role;
+
+
+--
+-- Name: TABLE workshop_locations; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.workshop_locations TO anon;
+GRANT ALL ON TABLE public.workshop_locations TO authenticated;
+GRANT ALL ON TABLE public.workshop_locations TO service_role;
 
 
 --

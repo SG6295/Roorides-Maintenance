@@ -44,6 +44,7 @@ export function useCreatePart() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
         },
     })
 }
@@ -69,6 +70,7 @@ export function useAddIssuePart(jobCardId) {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['job_card', jobCardId] })
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
         },
     })
 }
@@ -96,6 +98,7 @@ export function useDeleteIssuePart(jobCardId) {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['job_card', jobCardId] })
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['scrap_inventory'] })
         },
     })

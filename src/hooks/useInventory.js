@@ -49,6 +49,8 @@ export function usePurchaseInvoices(filters = {}) {
                     notes,
                     invoice_file_url,
                     created_at,
+                    location_id,
+                    location:workshop_locations!location_id(id, name, address),
                     created_by_user:users!created_by(name),
                     purchase_invoice_items(id)
                 `)
@@ -274,6 +276,7 @@ export function usePartConsumption(filters = {}) {
                             job_card_number,
                             vehicle_number,
                             status,
+                            location:workshop_locations!location_id(id, name),
                             mechanic:users!job_cards_assigned_mechanic_id_fkey(id, name)
                         )
                     )
@@ -302,6 +305,8 @@ export function usePartConsumption(filters = {}) {
                 job_card_number: row.issue?.job_card?.job_card_number,
                 vehicle_number: row.issue?.job_card?.vehicle_number,
                 job_card_status: row.issue?.job_card?.status,
+                location_id: row.issue?.job_card?.location?.id,
+                location_name: row.issue?.job_card?.location?.name,
                 mechanic_id: row.issue?.job_card?.mechanic?.id,
                 mechanic_name: row.issue?.job_card?.mechanic?.name,
             }))
@@ -489,5 +494,107 @@ export function useDeletePartUnit() {
             if (error) throw error
         },
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['part_units'] }),
+    })
+}
+
+// ─── Per-location stock ───────────────────────────────────────────────────────
+
+/**
+ * Parts with their stock at one workshop location.
+ *
+ * Deliberately a left join: every part is returned, with 0 where it has no stock at
+ * this location. If we filtered to parts that have a part_stock row, a newly created
+ * part would silently vanish from the list until its first purchase, which reads as
+ * a bug rather than as "none here yet".
+ */
+export function usePartStock(locationId, filters = {}) {
+    return useQuery({
+        queryKey: ['part_stock', locationId, filters],
+        enabled: !!locationId,
+        queryFn: async () => {
+            let query = supabase
+                .from('parts')
+                .select('id, name, part_number, unit, quantity_in_stock, part_stock(location_id, quantity)')
+                .eq('part_stock.location_id', locationId)
+                .order('name')
+
+            if (filters.search) {
+                query = query.or(
+                    `name.ilike.%${filters.search}%,part_number.ilike.%${filters.search}%`
+                )
+            }
+
+            const { data, error } = await query
+            if (error) throw error
+
+            const rows = (data || []).map(part => ({
+                ...part,
+                quantity_here: Number(part.part_stock?.[0]?.quantity ?? 0),
+                quantity_total: Number(part.quantity_in_stock ?? 0),
+            }))
+
+            // Stock level filters apply to this location, not the company-wide total.
+            if (filters.stockStatus === 'low') return rows.filter(r => r.quantity_here <= 5)
+            if (filters.stockStatus === 'out') return rows.filter(r => r.quantity_here <= 0)
+            return rows
+        },
+    })
+}
+
+/**
+ * Headline numbers per location for the inventory landing cards.
+ */
+export function useLocationStockSummary() {
+    return useQuery({
+        queryKey: ['part_stock', 'summary'],
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('part_stock')
+                .select('location_id, quantity')
+            if (error) throw error
+
+            return (data || []).reduce((acc, row) => {
+                const qty = Number(row.quantity ?? 0)
+                const bucket = acc[row.location_id] || { stocked: 0, low: 0, units: 0 }
+                if (qty > 0) {
+                    bucket.stocked += 1
+                    bucket.units += qty
+                    if (qty <= 5) bucket.low += 1
+                }
+                acc[row.location_id] = bucket
+                return acc
+            }, {})
+        },
+    })
+}
+
+/**
+ * Move parts between workshops. All lines move together — if the source is short of
+ * any one part the whole transfer is rejected and nothing moves.
+ *
+ * @param {object} args
+ * @param {string} args.fromLocationId
+ * @param {string} args.toLocationId
+ * @param {Array<{part_id: string, quantity: number}>} args.items
+ * @param {string} [args.notes]
+ */
+export function useTransferStock() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async ({ fromLocationId, toLocationId, items, notes }) => {
+            const { data, error } = await supabase.rpc('transfer_stock', {
+                p_from: fromLocationId,
+                p_to: toLocationId,
+                p_items: items.map(i => ({ part_id: i.part_id, quantity: Number(i.quantity) })),
+                p_notes: notes || null,
+            })
+            if (error) throw error
+            return data
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
+            queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['stock_transfers'] })
+        },
     })
 }

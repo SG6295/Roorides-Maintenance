@@ -113,7 +113,9 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             })
             setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
         } catch (e) {
-            alert('Failed to add part: ' + e.message)
+            // The database refuses to issue more than this workshop holds, and its
+            // message already names the part, the quantity and the workshop.
+            alert(e.message)
         }
     }
 
@@ -285,7 +287,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                 value: p.id,
                                 label: isOutsource
                                     ? `${p.name}${p.part_number ? ` (${p.part_number})` : ''}`
-                                    : `${p.name}${p.part_number ? ` (${p.part_number})` : ''} — ${p.quantity_in_stock} ${p.unit} in stock`,
+                                    : `${p.name}${p.part_number ? ` (${p.part_number})` : ''} — ${p.quantity_here ?? 0} ${p.unit} here`,
                             }))}
                             pinnedOption={isOutsource ? { value: CREATE_PART_SENTINEL, label: '+ Create new part' } : null}
                             placeholder="Select a part..."

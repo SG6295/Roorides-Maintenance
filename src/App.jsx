@@ -30,6 +30,7 @@ import UpdatePassword from './pages/auth/UpdatePassword'
 import SettingsLayout from './pages/settings/SettingsLayout'
 import NotificationSettings from './pages/settings/NotificationSettings'
 import PartUnitsSettings from './pages/settings/PartUnitsSettings'
+import WorkshopLocationSettings from './pages/settings/WorkshopLocationSettings'
 import SeedStaging from './pages/settings/SeedStaging'
 
 import { sendEmail } from './lib/email'
@@ -263,6 +264,7 @@ function App() {
               <Route path="users" element={<Users embedded={true} />} />
               <Route path="sla" element={<SLASettings embedded={true} />} />
               <Route path="units" element={<PartUnitsSettings />} />
+              <Route path="workshops" element={<WorkshopLocationSettings />} />
               {import.meta.env.VITE_ENABLE_DANGER_ZONE === 'true' && (
                 <Route path="seed-staging" element={<SeedStaging />} />
               )}
