@@ -6,6 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTicket, useUpdateTicket } from '../hooks/useTickets'
 import { useIssues, useCreateIssue, useUpdateIssue, useDeleteIssue } from '../hooks/useIssues'
 import { useJobCards, useCreateJobCard, useLinkIssuesToJobCard } from '../hooks/useJobCards'
+import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import { getDriveThumbnailUrl } from '../lib/googleDrive'
 import Navigation from '../components/shared/Navigation'
 import SLATimer from '../components/shared/SLATimer'
@@ -454,6 +455,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
   const updateIssue = useUpdateIssue()
   const deleteIssue = useDeleteIssue()
   const createJobCard = useCreateJobCard()
+  const { data: workshopLocations = [] } = useWorkshopLocations()
   const linkIssues = useLinkIssuesToJobCard()
   const { data: jobCards } = useJobCards({ vehicle_number: ticket.vehicle_number })
 
@@ -531,7 +533,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
   }
 
   // Handle Create Job Card
-  const handleCreateJobCard = async () => {
+  const handleCreateJobCard = async (locationId) => {
     if (selectedIssueIds.size === 0) return
 
     // Default to InHouse, user can change later
@@ -539,7 +541,8 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       type: 'InHouse',
       site: ticket.site,
       vehicle_number: ticket.vehicle_number,
-      status: 'Open'
+      status: 'Open',
+      location_id: locationId,
     }
 
     try {
@@ -714,17 +717,27 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                       </MenuItem>
                     ))}
                     {openJobCards.length > 0 && <div className="border-t border-gray-200 my-1"></div>}
-                    <MenuItem>
-                      {({ active }) => (
-                        <button
-                          onClick={handleCreateJobCard}
-                          className={`${active ? 'bg-blue-50 text-blue-700' : 'text-blue-600'
-                            } block w-full px-4 py-2 text-left text-sm font-medium flex items-center gap-2`}
-                        >
-                          <PlusIcon className="w-4 h-4" /> Create New Job Card
-                        </button>
-                      )}
-                    </MenuItem>
+                    {/* A job card is worked at one workshop and draws its parts from
+                        that workshop's stock, so the workshop is picked up front. */}
+                    {workshopLocations.length > 1 && (
+                      <div className="px-4 pt-2 pb-1 text-xs font-medium text-gray-400 uppercase tracking-wide">
+                        Create new job card at
+                      </div>
+                    )}
+                    {workshopLocations.map((location) => (
+                      <MenuItem key={location.id}>
+                        {({ active }) => (
+                          <button
+                            onClick={() => handleCreateJobCard(location.id)}
+                            className={`${active ? 'bg-blue-50 text-blue-700' : 'text-blue-600'
+                              } block w-full px-4 py-2 text-left text-sm font-medium flex items-center gap-2`}
+                          >
+                            <PlusIcon className="w-4 h-4" />
+                            {workshopLocations.length > 1 ? location.name : 'Create New Job Card'}
+                          </button>
+                        )}
+                      </MenuItem>
+                    ))}
                   </div>
                 </MenuItems>
               </Transition>

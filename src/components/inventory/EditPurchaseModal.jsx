@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { usePurchaseInvoiceItems, useUpdatePurchaseInvoice, useParts, useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import {
     PlusIcon, TrashIcon, XMarkIcon, CheckIcon,
-    PaperClipIcon, ArrowUpTrayIcon,
+    PaperClipIcon, ArrowUpTrayIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
@@ -32,6 +33,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const { data: existingItems, isLoading: itemsLoading } = usePurchaseInvoiceItems(invoice.id)
     const { data: parts = [] } = useParts()
     const { data: partUnits = [] } = usePartUnits()
+    const { data: locations = [] } = useWorkshopLocations()
     const updateInvoice = useUpdatePurchaseInvoice()
     const createPart = useCreatePart()
     const fileInputRef = useRef(null)
@@ -41,6 +43,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
         supplier_name: invoice.supplier_name,
         invoice_date: invoice.invoice_date,
         notes: invoice.notes || '',
+        location_id: invoice.location_id,
     })
 
     // lines = mix of existing items (have id) and new items (id: null)
@@ -186,10 +189,26 @@ export default function EditPurchaseModal({ invoice, onClose }) {
         setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
     }
 
+    // Changing an invoice's workshop moves every quantity it inwarded, so say so first.
+    const locationChanged = invoiceData.location_id !== invoice.location_id
+    const locationName = id => locations.find(l => l.id === id)?.name || 'the previous workshop'
+    const originalLocationName = locationName(invoice.location_id)
+    const newLocationName = locationName(invoiceData.location_id)
+
     // ── Submit ─────────────────────────────────────────────────────────────────
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
+
+        if (!invoiceData.location_id) {
+            setError('Choose which workshop this invoice is being inwarded to.')
+            return
+        }
+        if (locationChanged && !window.confirm(
+            `Move everything on this invoice from ${originalLocationName} to ${newLocationName}?`
+        )) {
+            return
+        }
 
         const activeLines = lines || []
         if (activeLines.length === 0) {
@@ -297,6 +316,31 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             onChange={e => setInvoiceData(p => ({ ...p, notes: e.target.value }))}
                                             placeholder="Optional"
                                         />
+                                    </div>
+                                    <div className="sm:col-span-2">
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                            Inward to Workshop <span className="text-red-500">*</span>
+                                        </label>
+                                        <CustomSelect
+                                            value={invoiceData.location_id}
+                                            onChange={v => setInvoiceData(p => ({ ...p, location_id: v }))}
+                                            options={locations.map(l => ({
+                                                value: l.id,
+                                                label: l.address ? `${l.name} — ${l.address}` : l.name,
+                                            }))}
+                                            placeholder="Select workshop"
+                                            compact
+                                        />
+                                        {locationChanged && (
+                                            <p className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                                                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-px" />
+                                                <span>
+                                                    Saving will move everything this invoice inwarded from{' '}
+                                                    <strong>{originalLocationName}</strong> to <strong>{newLocationName}</strong>.
+                                                    If any of it has already been used, the move will be refused.
+                                                </span>
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             </div>

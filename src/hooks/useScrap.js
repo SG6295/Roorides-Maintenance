@@ -112,12 +112,17 @@ export function useScrapInventory(filters = {}) {
                     source_job_card_id,
                     status,
                     created_at,
+                    location_id,
+                    location:workshop_locations!location_id(id, name),
                     job_card:job_cards!source_job_card_id(job_card_number)
                 `)
                 .order('created_at', { ascending: false })
 
             if (filters.status) {
                 query = query.eq('status', filters.status)
+            }
+            if (filters.location_id) {
+                query = query.eq('location_id', filters.location_id)
             }
             if (filters.search) {
                 query = query.ilike('part_name_snapshot', `%${filters.search}%`)

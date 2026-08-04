@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useJobCards } from '../hooks/useJobCards'
+import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
@@ -17,11 +18,13 @@ export default function JobCards() {
     const [filters, setFilters] = useState({
         status: '',
         site: '',
+        location_id: '',
         search: ''
     })
 
     // Hook handles basic filtering, client side search could be added
     const { data: jobCards, isLoading } = useJobCards(filters)
+    const { data: locations = [] } = useWorkshopLocations()
 
     // Client-side search for vehicle number or mechanic name if backend filter not implemented
     const filteredJobCards = jobCards?.filter(jc => {
@@ -79,6 +82,15 @@ export default function JobCards() {
                                 { value: 'Completed', label: 'Completed' },
                             ]}
                         />
+
+                        {locations.length > 1 && (
+                            <FilterSelect
+                                value={filters.location_id}
+                                onChange={v => setFilters(prev => ({ ...prev, location_id: v }))}
+                                placeholder="All Workshops"
+                                options={locations.map(l => ({ value: l.id, label: l.name }))}
+                            />
+                        )}
                     </div>
                 </div>
 
@@ -95,6 +107,9 @@ export default function JobCards() {
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Type / Assignee
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                                    Workshop
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Created
@@ -136,6 +151,9 @@ export default function JobCards() {
                                                     {jc.type === 'InHouse' ? jc.mechanic?.name || 'Unassigned' : jc.vendor_name}
                                                 </span>
                                             </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                                            {jc.location?.name || '—'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                             {format(new Date(jc.created_at), 'MMM d, yyyy')}

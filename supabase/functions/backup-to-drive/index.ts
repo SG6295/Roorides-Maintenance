@@ -1,5 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+// Keep this in sync when a module adds tables. It had already drifted eight tables
+// behind (the whole scrap module plus outsource invoices) before this was noticed —
+// MAIN-33 replaces it with dynamic discovery so it cannot silently fall behind again.
 const TABLES = [
   'sites', 'users', 'user_sites', 'user_settings',
   'vehicles', 'vehicle_sites',
@@ -7,6 +10,13 @@ const TABLES = [
   'parts', 'part_units', 'purchase_invoices', 'purchase_invoice_items',
   'finance_entries', 'sla_rules', 'sla_rules_config', 'sla_events',
   'holidays', 'system_settings', 'suppliers', 'audit_logs',
+  // Scrap / salvage
+  'scrap_inventory', 'scrap_disposal', 'scrap_disposal_items',
+  'scrap_writeoff', 'scrap_writeoff_items', 'scrap_excluded_parts',
+  // Outsource invoice payments
+  'outsource_invoices', 'outsource_invoice_payments',
+  // Workshop locations
+  'workshop_locations', 'part_stock', 'stock_transfers', 'stock_transfer_items',
 ]
 
 const RETENTION_DAYS = 7
