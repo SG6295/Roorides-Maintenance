@@ -1,38 +1,20 @@
 
 import { useState, Fragment } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { XMarkIcon, EyeIcon, EyeSlashIcon, ArrowPathIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
+import SiteCheckboxList from './SiteCheckboxList'
 import { supabase } from '../../lib/supabase'
 import { useSites } from '../../hooks/useSites'
 import { useAuth } from '../../hooks/useAuth'
-
-// What each creator role is allowed to create
-const CREATABLE_ROLES = {
-    super_admin: [
-        { id: 'super_admin', name: 'Super Admin', value: 'super_admin' },
-        { id: 'maintenance_exec', name: 'Maintenance Exec', value: 'maintenance_exec' },
-        { id: 'finance', name: 'Finance', value: 'finance' },
-        { id: 'supervisor', name: 'Supervisor', value: 'supervisor' },
-        { id: 'mechanic', name: 'Mechanic', value: 'mechanic' },
-        { id: 'electrician', name: 'Electrician', value: 'electrician' },
-    ],
-    maintenance_exec: [
-        { id: 'supervisor', name: 'Supervisor', value: 'supervisor' },
-        { id: 'mechanic', name: 'Mechanic', value: 'mechanic' },
-        { id: 'electrician', name: 'Electrician', value: 'electrician' },
-    ],
-}
-
-function generatePassword() {
-    return Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-2).toUpperCase()
-}
+import { roleOptions, generatePassword } from '../../constants/userRoles'
 
 export default function AddUserModal({ isOpen, onClose, onSuccess }) {
     const { userProfile } = useAuth()
     const { data: sites = [], isLoading: sitesLoading } = useSites()
 
-    const availableRoles = CREATABLE_ROLES[userProfile?.role] || []
+    const availableRoles = roleOptions(userProfile?.role)
     const defaultRole = availableRoles[0]?.value || 'supervisor'
 
     const [formData, setFormData] = useState({
@@ -90,7 +72,14 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                 body: formData
             })
 
-            if (error) throw error
+            // invoke() returns data = null and a FunctionsHttpError for any non-2xx,
+            // so the real message has to be read off the response body.
+            if (error) {
+                const body = error instanceof FunctionsHttpError
+                    ? await error.context.json().catch(() => null)
+                    : null
+                throw new Error(body?.error || error.message)
+            }
             if (data?.error) throw new Error(data.error)
 
             onSuccess()
@@ -189,33 +178,12 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                             <label className="block text-sm font-medium text-gray-700 mb-2">
                                                 Assigned Sites <span className="text-red-500">*</span>
                                             </label>
-                                            {sitesLoading ? (
-                                                <p className="text-sm text-gray-500">Loading sites...</p>
-                                            ) : sites.length === 0 ? (
-                                                <p className="text-sm text-gray-500">No sites available.</p>
-                                            ) : (
-                                                <div className="max-h-40 overflow-y-auto border border-gray-300 rounded-lg divide-y divide-gray-100">
-                                                    {sites.map(site => (
-                                                        <label
-                                                            key={site.id}
-                                                            className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer"
-                                                        >
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={formData.sites.includes(site.id)}
-                                                                onChange={() => toggleSite(site.id)}
-                                                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                                            />
-                                                            <span className="text-sm text-gray-700">{site.name}</span>
-                                                        </label>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            {formData.sites.length > 0 && (
-                                                <p className="mt-1 text-xs text-gray-500">
-                                                    {formData.sites.length} site{formData.sites.length > 1 ? 's' : ''} selected
-                                                </p>
-                                            )}
+                                            <SiteCheckboxList
+                                                sites={sites}
+                                                selected={formData.sites}
+                                                onToggle={toggleSite}
+                                                loading={sitesLoading}
+                                            />
                                         </div>
                                     )}
 

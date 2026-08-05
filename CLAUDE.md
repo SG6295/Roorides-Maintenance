@@ -25,7 +25,7 @@ npm run schema:dump  # Regenerate docs/schema.sql and src/types/database.types.t
 ### Edge Functions
 ```bash
 supabase functions deploy <function-name> --no-verify-jwt   # Deploy an edge function
-# Functions: create-user, send-email, daily-digest, upload-to-drive, sync-roorides-vehicles, backup-to-drive
+# Functions: create-user, update-user, send-email, daily-digest, upload-to-drive, sync-roorides-vehicles, backup-to-drive
 ```
 
 > All edge functions must be deployed with `--no-verify-jwt` — this project uses caller-identity checks inside the function code instead of gateway-level JWT verification.
@@ -61,7 +61,12 @@ Roles:
 | `electrician` | Same scope as `mechanic` (job cards only) |
 | `finance` | Finance entries, inventory, purchase invoices, vehicles |
 
-**When adding a new role**, update: (1) `users_role_check` constraint in a migration, (2) relevant RLS policies / DB helper functions, (3) `ProtectedRoute allowedRoles` arrays in `src/App.jsx`, (4) role dropdown in `src/pages/Users.jsx`, (5) any role-conditional UI in pages/components.
+**When adding a new role**, update: (1) `users_role_check` constraint in a migration, (2) relevant RLS policies / DB helper functions, (3) `ProtectedRoute allowedRoles` arrays in `src/App.jsx`, (4) `MANAGEABLE_BY` + `ROLE_LABELS` + `ROLE_COLORS` in `src/constants/userRoles.js`, (5) the role matrices in the `create-user` and `update-user` edge functions, (6) any role-conditional UI in pages/components.
+
+### User Management (`/settings/users`)
+`src/pages/Users.jsx` lists users with search + role filter. Creation goes through `AddUserModal`; `super_admin` additionally gets an Edit button per row (`EditUserModal`) covering name, email, role, employee ID, contact, assigned sites and an optional password reset. Both modals share `src/constants/userRoles.js` (role matrix, labels, colours, and `generatePassword()` — which produces readable `Mango-River-47` style passwords from `src/constants/wordlist.js`) and `SiteCheckboxList`.
+
+Neither the edit nor the activate/deactivate toggle writes to `public.users` from the browser — both call the `update-user` edge function, so every change is role-checked server-side and recorded in `user_audit_logs`. That table is **super_admin-read-only with no INSERT policy** (only the service-role edge functions write to it), and is surfaced by the paginated `UserAuditLog` panel below the user list. Its `target_user_id` / `performed_by` columns are deliberately **not** foreign keys, and it snapshots names and emails, so history survives a user being deleted or renamed.
 
 ### user_sites & vehicle_sites Junction Tables
 - `public.user_sites (user_id, site_id)` — supervisors may be assigned to multiple sites. The old `users.site` text column still exists for backwards compatibility but is no longer authoritative — RLS policies join through `user_sites`.
@@ -72,7 +77,8 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 
 | Function | Purpose |
 |---|---|
-| `create-user` | Provisions new users (auth + public.users profile). Requires `maintenance_exec` role. |
+| `create-user` | Provisions new users (auth + public.users profile). Requires `maintenance_exec` role. Writes a `CREATE` row to `user_audit_logs`. |
+| `update-user` | Edits an existing user. Two modes via an `action` field: `update` (name/email/role/employee_id/contact/sites/password — **`super_admin` only**) and `set_active` (the activate-deactivate toggle — `super_admin`, plus `maintenance_exec` for supervisor/mechanic/electrician). Both write to `user_audit_logs`. Nobody may edit their own account through it. Email and password changes need the service-role key, which is why this can't be a client write. Note: a password change does **not** revoke the target's existing sessions. |
 | `send-email` | Thin wrapper around Resend API for transactional emails |
 | `daily-digest` | Reads `user_settings.notify_daily_digest` and sends personalised summaries via Resend |
 | `upload-to-drive` | Uploads images to a specific Google Drive folder via service account JWT |

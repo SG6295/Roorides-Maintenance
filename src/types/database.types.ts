@@ -1604,6 +1604,48 @@ export type Database = {
           },
         ]
       }
+      user_audit_logs: {
+        Row: {
+          action: string
+          changed_fields: string[]
+          id: string
+          new_data: Json
+          old_data: Json
+          performed_at: string
+          performed_by: string | null
+          performed_by_name: string
+          target_email: string
+          target_name: string
+          target_user_id: string
+        }
+        Insert: {
+          action?: string
+          changed_fields?: string[]
+          id?: string
+          new_data?: Json
+          old_data?: Json
+          performed_at?: string
+          performed_by?: string | null
+          performed_by_name?: string
+          target_email?: string
+          target_name?: string
+          target_user_id: string
+        }
+        Update: {
+          action?: string
+          changed_fields?: string[]
+          id?: string
+          new_data?: Json
+          old_data?: Json
+          performed_at?: string
+          performed_by?: string | null
+          performed_by_name?: string
+          target_email?: string
+          target_name?: string
+          target_user_id?: string
+        }
+        Relationships: []
+      }
       user_settings: {
         Row: {
           created_at: string
