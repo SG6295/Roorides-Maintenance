@@ -135,7 +135,9 @@ All supplier hooks in `src/hooks/useSuppliers.js`: `useSuppliers`, `useSupplierB
 - `src/pages/MechanicDetail.jsx` — profile + job card activity + labour hours for a mechanic; uses `useMechanicProfile` + `useMechanicActivity`
 
 ### Auth Pages
-`src/pages/auth/ForgotPassword.jsx` and `src/pages/auth/UpdatePassword.jsx` — unauthenticated reset flow; both are public routes (`/forgot-password`, `/update-password`). `Profile.jsx` (`/profile`) lets any authenticated user update their display name/avatar.
+`src/pages/auth/ForgotPassword.jsx` and `src/pages/auth/UpdatePassword.jsx` — unauthenticated reset flow; both are public routes (`/forgot-password`, `/update-password`).
+
+`Profile.jsx` (`/profile`) lets any authenticated user change **their password only**. Name, email, role and site are read-only by design — `public.users` has no self-UPDATE policy (so a name save silently affected zero rows for every non-exec role while still reporting success), and `supabase.auth.updateUser({ email })` changes the login address without touching `public.users.email`. Both now go through `/settings/users`, which enforces the role rules server-side and records the change in `user_audit_logs`. **Do not re-add self-service name/email editing here** without first adding a column-restricted self-UPDATE path — a naive self-UPDATE policy would let any user set their own `role`.
 
 ### Settings (Nested Routes under `/settings`)
 `src/pages/settings/SettingsLayout.jsx` wraps a sidebar + `<Outlet>`. Sub-routes:
