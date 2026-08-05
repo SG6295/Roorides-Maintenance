@@ -44,7 +44,7 @@ serve(async (req) => {
 
         const { data: callerProfile, error: callerProfileError } = await callerClient
             .from('users')
-            .select('role')
+            .select('role, name')
             .eq('id', callerUser.id)
             .single()
 
@@ -141,6 +141,40 @@ serve(async (req) => {
                 )
             }
         }
+
+        // 4. Audit trail — starts the user's history at creation. Never records the
+        //    password. A failure here must not undo a successful account creation.
+        let siteNames: string[] = []
+        if (role === 'supervisor' && sites?.length > 0) {
+            const { data: siteRows } = await adminClient
+                .from('sites')
+                .select('name')
+                .in('id', sites)
+            siteNames = (siteRows ?? []).map((s: { name: string }) => s.name).sort()
+        }
+
+        const { error: auditError } = await adminClient
+            .from('user_audit_logs')
+            .insert([{
+                target_user_id: userId,
+                target_name: name,
+                target_email: email,
+                action: 'CREATE',
+                changed_fields: ['name', 'email', 'role', 'employee_id', 'contact', 'sites'],
+                old_data: {},
+                new_data: {
+                    name,
+                    email,
+                    role,
+                    employee_id: employee_id || null,
+                    contact: contact || null,
+                    sites: siteNames,
+                },
+                performed_by: callerUser.id,
+                performed_by_name: callerProfile.name ?? '',
+            }])
+
+        if (auditError) console.error('Audit log write failed:', auditError)
 
         return new Response(
             JSON.stringify({ user: newUser.user, message: 'User created successfully' }),

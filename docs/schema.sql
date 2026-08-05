@@ -6560,6 +6560,28 @@ ALTER TABLE public.tickets ALTER COLUMN ticket_number ADD GENERATED ALWAYS AS ID
 
 
 --
+-- Name: user_audit_logs; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.user_audit_logs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    target_user_id uuid NOT NULL,
+    target_name text DEFAULT ''::text NOT NULL,
+    target_email text DEFAULT ''::text NOT NULL,
+    action text DEFAULT 'UPDATE'::text NOT NULL,
+    changed_fields text[] DEFAULT '{}'::text[] NOT NULL,
+    old_data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    new_data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    performed_by uuid,
+    performed_by_name text DEFAULT ''::text NOT NULL,
+    performed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT user_audit_logs_action_check CHECK ((action = ANY (ARRAY['CREATE'::text, 'UPDATE'::text, 'ACTIVATE'::text, 'DEACTIVATE'::text])))
+);
+
+
+ALTER TABLE public.user_audit_logs OWNER TO postgres;
+
+--
 -- Name: user_settings; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -7470,6 +7492,14 @@ ALTER TABLE ONLY public.system_settings
 
 ALTER TABLE ONLY public.tickets
     ADD CONSTRAINT tickets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_audit_logs user_audit_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.user_audit_logs
+    ADD CONSTRAINT user_audit_logs_pkey PRIMARY KEY (id);
 
 
 --
@@ -8397,6 +8427,20 @@ CREATE INDEX stock_transfers_from_idx ON public.stock_transfers USING btree (fro
 --
 
 CREATE INDEX stock_transfers_to_idx ON public.stock_transfers USING btree (to_location_id);
+
+
+--
+-- Name: user_audit_logs_performed_at_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX user_audit_logs_performed_at_idx ON public.user_audit_logs USING btree (performed_at DESC);
+
+
+--
+-- Name: user_audit_logs_target_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX user_audit_logs_target_idx ON public.user_audit_logs USING btree (target_user_id);
 
 
 --
@@ -10312,6 +10356,19 @@ ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: user_audit_logs; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.user_audit_logs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: user_audit_logs user_audit_logs_select; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY user_audit_logs_select ON public.user_audit_logs FOR SELECT USING (public.is_super_admin());
+
+
+--
 -- Name: user_settings; Type: ROW SECURITY; Schema: public; Owner: postgres
 --
 
@@ -12157,6 +12214,15 @@ GRANT ALL ON TABLE public.system_settings TO service_role;
 GRANT ALL ON SEQUENCE public.tickets_ticket_number_seq TO anon;
 GRANT ALL ON SEQUENCE public.tickets_ticket_number_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.tickets_ticket_number_seq TO service_role;
+
+
+--
+-- Name: TABLE user_audit_logs; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.user_audit_logs TO anon;
+GRANT ALL ON TABLE public.user_audit_logs TO authenticated;
+GRANT ALL ON TABLE public.user_audit_logs TO service_role;
 
 
 --

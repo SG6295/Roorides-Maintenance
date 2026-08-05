@@ -1,31 +1,18 @@
 
 import { useState } from 'react'
 import { Switch } from '@headlessui/react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import AddUserModal from '../components/users/AddUserModal'
-import { PlusIcon, UserIcon, WrenchIcon, BriefcaseIcon, CurrencyDollarIcon, MagnifyingGlassIcon, ShieldCheckIcon, BoltIcon } from '@heroicons/react/24/outline'
-
-const ROLE_LABELS = {
-    super_admin: 'Super Admin',
-    maintenance_exec: 'Maintenance Exec',
-    supervisor: 'Supervisor',
-    mechanic: 'Mechanic',
-    electrician: 'Electrician',
-    finance: 'Finance',
-}
-
-const ROLE_COLORS = {
-    super_admin: 'bg-purple-100 text-purple-800',
-    maintenance_exec: 'bg-indigo-100 text-indigo-800',
-    supervisor: 'bg-blue-100 text-blue-800',
-    mechanic: 'bg-gray-100 text-gray-800',
-    electrician: 'bg-yellow-100 text-yellow-800',
-    finance: 'bg-green-100 text-green-800',
-}
+import EditUserModal from '../components/users/EditUserModal'
+import UserAuditLog from '../components/users/UserAuditLog'
+import { USER_AUDIT_LOGS_KEY } from '../hooks/useUserAuditLogs'
+import { ROLE_LABELS, ROLE_COLORS, MANAGEABLE_BY } from '../constants/userRoles'
+import { PlusIcon, UserIcon, WrenchIcon, BriefcaseIcon, CurrencyDollarIcon, MagnifyingGlassIcon, ShieldCheckIcon, BoltIcon, PencilSquareIcon } from '@heroicons/react/24/outline'
 
 function getRoleIcon(role) {
     switch (role) {
@@ -38,17 +25,15 @@ function getRoleIcon(role) {
     }
 }
 
-// Roles that a given role is allowed to activate/deactivate
-const MANAGEABLE_BY = {
-    super_admin: ['super_admin', 'maintenance_exec', 'finance', 'supervisor', 'mechanic', 'electrician'],
-    maintenance_exec: ['supervisor', 'mechanic', 'electrician'],
-}
-
 export default function Users({ embedded = false }) {
     const { userProfile: currentUserProfile } = useAuth()
+    const queryClient = useQueryClient()
     const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+    const [editingUser, setEditingUser] = useState(null)
     const [filterRole, setFilterRole] = useState('all')
     const [searchQuery, setSearchQuery] = useState('')
+
+    const isSuperAdmin = currentUserProfile?.role === 'super_admin'
 
     const canManage = (targetRole, targetId) => {
         if (targetId === currentUserProfile?.id) return false
@@ -56,19 +41,31 @@ export default function Users({ embedded = false }) {
         return allowed.includes(targetRole)
     }
 
+    const refreshAuditLog = () => queryClient.invalidateQueries({ queryKey: [USER_AUDIT_LOGS_KEY] })
+
+    // Routed through the edge function rather than written directly, so that every
+    // change to public.users lands in the audit trail and the role matrix is
+    // enforced server-side (RLS alone cannot tell an exec from a super admin).
     const toggleUserStatus = async (userId, currentStatus, targetRole) => {
         if (!canManage(targetRole, userId)) return
         try {
-            const { error } = await supabase
-                .from('users')
-                .update({ is_active: !currentStatus })
-                .eq('id', userId)
+            const { data, error } = await supabase.functions.invoke('update-user', {
+                body: { action: 'set_active', user_id: userId, is_active: !currentStatus }
+            })
 
-            if (error) throw error
+            if (error) {
+                const body = error instanceof FunctionsHttpError
+                    ? await error.context.json().catch(() => null)
+                    : null
+                throw new Error(body?.error || error.message)
+            }
+            if (data?.error) throw new Error(data.error)
+
             refetch()
+            refreshAuditLog()
         } catch (error) {
             console.error('Error toggling status:', error)
-            alert('Failed to update status')
+            alert(error.message || 'Failed to update status')
         }
     }
 
@@ -177,6 +174,7 @@ export default function Users({ embedded = false }) {
                         ) : (
                             filteredUsers.map((user) => {
                                 const toggleAllowed = canManage(user.role, user.id)
+                                const canEdit = isSuperAdmin && user.id !== currentUserProfile?.id
                                 return (
                                     <li key={user.id} className="hover:bg-gray-50 transition-colors duration-150 ease-in-out">
                                         <div className="px-4 py-4 sm:px-6">
@@ -209,6 +207,16 @@ export default function Users({ embedded = false }) {
                                                 <div>
                                                     <div className="flex flex-col items-end space-y-2">
                                                         <div className="flex items-center gap-2">
+                                                            {canEdit && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setEditingUser(user)}
+                                                                    className="p-1.5 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors"
+                                                                    title={`Edit ${user.name}`}
+                                                                >
+                                                                    <PencilSquareIcon className="h-5 w-5" />
+                                                                </button>
+                                                            )}
                                                             <span className={`text-xs font-medium ${user.is_active ? 'text-green-700' : 'text-gray-600'}`}>
                                                                 {user.is_active ? 'Active' : 'Inactive'}
                                                             </span>
@@ -242,12 +250,21 @@ export default function Users({ embedded = false }) {
                         )}
                     </ul>
                 </div>
+
+                {isSuperAdmin && <UserAuditLog users={users ?? []} enabled={isSuperAdmin} />}
             </div>
 
             <AddUserModal
                 isOpen={isAddModalOpen}
                 onClose={() => setIsAddModalOpen(false)}
-                onSuccess={() => refetch()}
+                onSuccess={() => { refetch(); refreshAuditLog() }}
+            />
+
+            <EditUserModal
+                isOpen={!!editingUser}
+                user={editingUser}
+                onClose={() => setEditingUser(null)}
+                onSuccess={() => { refetch(); refreshAuditLog() }}
             />
         </div>
     )

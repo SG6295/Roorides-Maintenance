@@ -24,7 +24,7 @@ jobs:
 
       - name: Deploy edge functions to production
         run: |
-          for fn in create-user send-email daily-digest upload-to-drive sync-roorides-vehicles backup-to-drive; do
+          for fn in create-user update-user send-email daily-digest upload-to-drive sync-roorides-vehicles backup-to-drive; do
             supabase functions deploy $fn --project-ref "$PROD_PROJECT_REF" --no-verify-jwt
           done
         env:

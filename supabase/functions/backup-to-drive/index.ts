@@ -4,7 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // behind (the whole scrap module plus outsource invoices) before this was noticed —
 // MAIN-33 replaces it with dynamic discovery so it cannot silently fall behind again.
 const TABLES = [
-  'sites', 'users', 'user_sites', 'user_settings',
+  'sites', 'users', 'user_sites', 'user_settings', 'user_audit_logs',
   'vehicles', 'vehicle_sites',
   'tickets', 'issues', 'job_cards', 'issue_parts',
   'parts', 'part_units', 'purchase_invoices', 'purchase_invoice_items',
