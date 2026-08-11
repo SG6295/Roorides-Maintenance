@@ -49,3 +49,26 @@ export function formatAs(value, pattern, fallback = '—') {
     const d = toDate(value)
     return d ? format(d, pattern) : fallback
 }
+
+/**
+ * The local calendar date of an instant, as "yyyy-MM-dd".
+ *
+ * For date-range filters, which compare against `<input type="date">` values — those are
+ * always local calendar dates. Bucketing a timestamp by its UTC date instead puts
+ * anything logged after 18:30 IST into the following day, so a month filter quietly
+ * includes and excludes the wrong rows at both ends.
+ */
+export function dateKey(value) {
+    const d = toDate(value)
+    return d ? format(d, 'yyyy-MM-dd') : ''
+}
+
+/**
+ * Today as "yyyy-MM-dd" in the viewer's zone.
+ *
+ * `new Date().toISOString().slice(0, 10)` is the tempting one-liner and it is wrong: it
+ * gives the UTC date, which between midnight and 05:30 IST is still yesterday.
+ */
+export function todayLocal() {
+    return format(new Date(), 'yyyy-MM-dd')
+}

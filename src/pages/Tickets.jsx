@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
+import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { dateKey } from '../utils/datetime'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useTickets, useSites } from '../hooks/useTickets'
@@ -72,7 +73,7 @@ export default function Tickets() {
 
     return allTickets.filter((ticket) => {
       // Date range filter
-      const ticketDate = format(parseISO(ticket.created_at), 'yyyy-MM-dd')
+      const ticketDate = dateKey(ticket.created_at)
       if (ticketDate < dateRange.start || ticketDate > dateRange.end) {
         return false
       }
@@ -108,7 +109,7 @@ export default function Tickets() {
 
     allTickets.forEach((ticket) => {
       // Apply date filter for counts
-      const ticketDate = format(parseISO(ticket.created_at), 'yyyy-MM-dd')
+      const ticketDate = dateKey(ticket.created_at)
       if (ticketDate >= dateRange.start && ticketDate <= dateRange.end) {
         counts.total++
         if (ticket.status in counts) {

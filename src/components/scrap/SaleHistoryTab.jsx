@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { format, parseISO } from 'date-fns'
+import { formatDate } from '../../utils/datetime'
 import * as XLSX from 'xlsx'
 import { ChevronDownIcon, ChevronUpIcon, ArrowDownTrayIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
@@ -24,7 +24,7 @@ function DisposalRow({ disposal }) {
                 onClick={() => setExpanded(e => !e)}
             >
                 <td className="px-4 py-3 text-gray-700 text-sm">
-                    {disposal.disposal_date ? format(parseISO(disposal.disposal_date), 'dd MMM yyyy') : '—'}
+                    {formatDate(disposal.disposal_date)}
                 </td>
                 <td className="px-4 py-3 font-medium text-gray-900 text-sm">{disposal.buyer_name}</td>
                 <td className="px-4 py-3 text-gray-500 text-sm">
@@ -35,7 +35,7 @@ function DisposalRow({ disposal }) {
                 </td>
                 <td className="px-4 py-3 text-center text-gray-500 text-sm">{disposal.item_count}</td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
-                    {disposal.recorded_at ? format(parseISO(disposal.recorded_at), 'dd MMM yyyy') : '—'}
+                    {formatDate(disposal.recorded_at)}
                     {disposal.recorded_by_user?.name ? ` · ${disposal.recorded_by_user.name}` : ''}
                 </td>
                 <td className="px-4 py-3 text-gray-400">

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { format, parseISO } from 'date-fns'
+import { formatDate } from '../utils/datetime'
 import Navigation from '../components/shared/Navigation'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useVehicleHistory, useJobCardParts } from '../hooks/useInventory'
@@ -34,10 +34,10 @@ function JobCardRow({ jc }) {
                     </Link>
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {jc.created_at ? format(parseISO(jc.created_at), 'dd MMM yyyy') : '—'}
+                    {formatDate(jc.created_at)}
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {jc.completed_at ? format(parseISO(jc.completed_at), 'dd MMM yyyy') : '—'}
+                    {formatDate(jc.completed_at)}
                 </td>
                 <td className="px-4 py-3 text-gray-700 text-sm">
                     {jc.mechanic ? (

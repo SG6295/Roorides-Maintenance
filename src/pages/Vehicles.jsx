@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { format, parseISO } from 'date-fns'
+import { formatDate } from '../utils/datetime'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
@@ -288,7 +288,7 @@ export default function Vehicles() {
                                             }
                                         </td>
                                         <td className="px-4 py-3 text-gray-400 text-xs">
-                                            {v.created_at ? format(parseISO(v.created_at), 'dd MMM yyyy') : '—'}
+                                            {formatDate(v.created_at)}
                                         </td>
                                         {canEdit && (
                                             <td className="px-4 py-3 text-center">
