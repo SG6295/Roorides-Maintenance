@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { format, parseISO } from 'date-fns'
+import { formatDate, toDate } from '../utils/datetime'
 import Navigation from '../components/shared/Navigation'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useMechanicProfile, useMechanicActivity } from '../hooks/useInventory'
@@ -47,7 +47,7 @@ export default function MechanicDetail() {
                 job_card_status: jc.status,
                 date: jc.completed_at || jc.created_at,
             }))
-    ).sort((a, b) => new Date(b.date) - new Date(a.date))
+    ).sort((a, b) => toDate(b.date) - toDate(a.date))
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -148,10 +148,10 @@ export default function MechanicDetail() {
                                                     </td>
                                                     <td className="px-4 py-3 text-gray-500 text-sm">{jc.type || '—'}</td>
                                                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                                                        {jc.created_at ? format(parseISO(jc.created_at), 'dd MMM yyyy') : '—'}
+                                                        {jc.created_at ? formatDate(jc.created_at) : '—'}
                                                     </td>
                                                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                                                        {jc.completed_at ? format(parseISO(jc.completed_at), 'dd MMM yyyy') : '—'}
+                                                        {jc.completed_at ? formatDate(jc.completed_at) : '—'}
                                                     </td>
                                                     <td className="px-4 py-3 text-center text-gray-600">
                                                         {jc.issues?.length ?? 0}
@@ -195,7 +195,7 @@ export default function MechanicDetail() {
                                             {labourRows.map(row => (
                                                 <tr key={row.issue_id} className="hover:bg-gray-50">
                                                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                                                        {row.date ? format(parseISO(row.date), 'dd MMM yyyy') : '—'}
+                                                        {row.date ? formatDate(row.date) : '—'}
                                                     </td>
                                                     <td className="px-4 py-3 font-mono text-xs">
                                                         <Link

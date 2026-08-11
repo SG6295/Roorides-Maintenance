@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { format, parseISO } from 'date-fns'
+import { formatDate } from '../../utils/datetime'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import FilterSelect from '../shared/FilterSelect'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
@@ -125,7 +125,7 @@ export default function ScrapInventoryTab() {
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-gray-500 text-xs">
-                                        {item.created_at ? format(parseISO(item.created_at), 'dd MMM yyyy') : '—'}
+                                        {formatDate(item.created_at)}
                                     </td>
                                 </tr>
                             ))}

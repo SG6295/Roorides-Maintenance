@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
+import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { dateKey, formatAs, toDate } from '../utils/datetime'
 import { supabase } from '../lib/supabase'
 import Navigation from '../components/shared/Navigation'
 import { ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
@@ -109,7 +110,7 @@ export default function FeedbackReport() {
         let result = [...feedbackData]
 
         result = result.filter(issue => {
-            const issueDate = format(parseISO(issue.created_at), 'yyyy-MM-dd')
+            const issueDate = dateKey(issue.created_at)
             if (issueDate < dateRange.start || issueDate > dateRange.end) return false
             if (filters.site && issue.ticket?.site !== filters.site) return false
             if (filters.vehicle_number) {
@@ -131,8 +132,8 @@ export default function FeedbackReport() {
             else if (sortConfig.key === 'vehicle_number') { aValue = a.ticket?.vehicle_number || ''; bValue = b.ticket?.vehicle_number || '' }
             else if (sortConfig.key === 'supervisor_name') { aValue = a.ticket?.supervisor_id || ''; bValue = b.ticket?.supervisor_id || '' }
             if (sortConfig.key === 'created_at' || sortConfig.key === 'rated_at') {
-                aValue = aValue ? new Date(aValue).getTime() : 0
-                bValue = bValue ? new Date(bValue).getTime() : 0
+                aValue = aValue ? toDate(aValue).getTime() : 0
+                bValue = bValue ? toDate(bValue).getTime() : 0
             }
             if (aValue === null || aValue === undefined) aValue = ''
             if (bValue === null || bValue === undefined) bValue = ''
@@ -307,7 +308,7 @@ export default function FeedbackReport() {
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                                            {row.created_at ? format(new Date(row.created_at), 'MMM d, yyyy') : '-'}
+                                            {row.created_at ? formatAs(row.created_at, 'MMM d, yyyy') : '-'}
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-sm">
                                             <Link to={`/tickets/${row.ticket_id}`} className="text-blue-600 hover:underline font-medium">
@@ -329,7 +330,7 @@ export default function FeedbackReport() {
                                             {row.rating_remarks || '-'}
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                                            {row.rated_at ? format(new Date(row.rated_at), 'MMM d, yyyy') : '-'}
+                                            {row.rated_at ? formatAs(row.rated_at, 'MMM d, yyyy') : '-'}
                                         </td>
                                     </tr>
                                 ))
