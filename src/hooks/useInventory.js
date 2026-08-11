@@ -296,6 +296,7 @@ export function usePartConsumption(filters = {}) {
 
             let rows = (data || []).map(row => ({
                 id: row.id,
+                source: 'job_card',
                 quantity_used: row.quantity_used,
                 added_at: row.added_at,
                 part_name: row.part?.name,
@@ -311,6 +312,17 @@ export function usePartConsumption(filters = {}) {
                 mechanic_name: row.issue?.job_card?.mechanic?.name,
             }))
 
+            // Stock audits remove (or return) stock without a job card, so they belong in
+            // this history too — otherwise a part's quantity drops with nothing here to
+            // explain it. They carry source: 'audit' so per-mechanic and per-vehicle
+            // reporting can filter them back out.
+            const auditRows = await fetchAuditConsumption(filters)
+            rows = [...rows, ...auditRows]
+
+            if (filters.source) {
+                rows = rows.filter(r => r.source === filters.source)
+            }
+
             // Client-side filters
             if (filters.search) {
                 const term = filters.search.toLowerCase()
@@ -322,9 +334,65 @@ export function usePartConsumption(filters = {}) {
                 )
             }
 
-            return rows
+            return rows.sort((a, b) => String(b.added_at ?? '').localeCompare(String(a.added_at ?? '')))
         },
     })
+}
+
+/**
+ * Completed stock-audit differences, shaped like consumption rows.
+ *
+ * quantity_used is the negated variance: a shortfall of -3 reads as 3 units gone, and a
+ * surplus of +5 reads as -5 — stock that came back. Matched parts are skipped entirely.
+ */
+async function fetchAuditConsumption(filters = {}) {
+    let query = supabase
+        .from('stock_audit_items')
+        .select(`
+            id, part_id, part_name_snapshot, part_number_snapshot, unit_snapshot,
+            variance, reason, reason_notes,
+            audit:stock_audits!audit_id(
+                id, audit_number, status, completed_at, completed_by_name,
+                location:workshop_locations!location_id(id, name)
+            )
+        `)
+        .neq('variance', 0)
+
+    const { data, error } = await query
+    if (error) throw error
+
+    const from = filters.dateFrom ? filters.dateFrom : null
+    const to = filters.dateTo ? filters.dateTo + 'T23:59:59' : null
+
+    return (data || [])
+        .filter(row => row.audit?.status === 'completed' && row.audit?.completed_at)
+        .filter(row => {
+            const at = row.audit.completed_at
+            if (from && at < from) return false
+            if (to && at > to) return false
+            return true
+        })
+        .map(row => ({
+            id: `audit:${row.id}`,
+            source: 'audit',
+            quantity_used: -Number(row.variance ?? 0),
+            added_at: row.audit.completed_at,
+            part_name: row.part_name_snapshot,
+            part_number: row.part_number_snapshot,
+            unit: row.unit_snapshot,
+            job_card_id: null,
+            job_card_number: null,
+            vehicle_number: null,
+            job_card_status: null,
+            location_id: row.audit.location?.id,
+            location_name: row.audit.location?.name,
+            mechanic_id: null,
+            mechanic_name: null,
+            audit_id: row.audit.id,
+            audit_number: row.audit.audit_number,
+            audit_reason: row.reason,
+            audit_reason_notes: row.reason_notes,
+        }))
 }
 
 /**
