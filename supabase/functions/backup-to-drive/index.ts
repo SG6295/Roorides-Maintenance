@@ -17,6 +17,8 @@ const TABLES = [
   'outsource_invoices', 'outsource_invoice_payments',
   // Workshop locations
   'workshop_locations', 'part_stock', 'stock_transfers', 'stock_transfer_items',
+  // Stock audits
+  'stock_audits', 'stock_audit_items',
 ]
 
 const RETENTION_DAYS = 7
