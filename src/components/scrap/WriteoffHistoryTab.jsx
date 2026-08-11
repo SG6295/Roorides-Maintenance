@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { format, parseISO } from 'date-fns'
+import { formatDate } from '../../utils/datetime'
 import * as XLSX from 'xlsx'
 import { ChevronDownIcon, ChevronUpIcon, ArrowDownTrayIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
@@ -25,7 +25,7 @@ function WriteoffRow({ writeoff }) {
                 onClick={() => setExpanded(e => !e)}
             >
                 <td className="px-4 py-3 text-gray-700 text-sm">
-                    {writeoff.writeoff_date ? format(parseISO(writeoff.writeoff_date), 'dd MMM yyyy') : '—'}
+                    {formatDate(writeoff.writeoff_date)}
                 </td>
                 <td className="px-4 py-3 text-gray-700 text-sm">
                     {REASON_LABEL[writeoff.reason] || writeoff.reason}
@@ -35,7 +35,7 @@ function WriteoffRow({ writeoff }) {
                 </td>
                 <td className="px-4 py-3 text-center text-gray-500 text-sm">{writeoff.item_count}</td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
-                    {writeoff.recorded_at ? format(parseISO(writeoff.recorded_at), 'dd MMM yyyy') : '—'}
+                    {formatDate(writeoff.recorded_at)}
                     {writeoff.recorded_by_user?.name ? ` · ${writeoff.recorded_by_user.name}` : ''}
                 </td>
                 <td className="px-4 py-3 text-gray-400">

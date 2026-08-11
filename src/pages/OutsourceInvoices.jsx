@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { format, parseISO, isValid } from 'date-fns'
+import { format, isValid } from 'date-fns'
+import { toDate, todayLocal } from '../utils/datetime'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
 
@@ -34,8 +35,8 @@ function fmtMoney(v) {
 
 function fmtDate(d) {
     if (!d) return '—'
-    const parsed = parseISO(d)
-    return isValid(parsed) ? format(parsed, 'dd MMM yyyy') : '—'
+    const parsed = toDate(d)
+    return parsed && isValid(parsed) ? format(parsed, 'dd MMM yyyy') : '—'
 }
 
 export default function OutsourceInvoices() {
@@ -50,7 +51,9 @@ export default function OutsourceInvoices() {
     const dateTo   = searchParams.get('to')   || ''
     const page     = Math.max(0, parseInt(searchParams.get('p') ?? '0', 10) || 0)
 
-    const todayStr = new Date().toISOString().split('T')[0]
+    // Local, not UTC: toISOString() would still say yesterday until 05:30 IST, which caps
+    // the date pickers a day short and mis-flags invoices as overdue.
+    const todayStr = todayLocal()
 
     // Server-side filters shared by both hooks (no page, no search)
     const serverFilters = {
