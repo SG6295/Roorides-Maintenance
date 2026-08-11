@@ -1219,6 +1219,195 @@ export type Database = {
         }
         Relationships: []
       }
+      stock_audit_items: {
+        Row: {
+          applied_delta: number | null
+          audit_id: string
+          counted_qty: number | null
+          final_qty: number | null
+          id: string
+          moved_during_audit: number | null
+          part_id: string
+          part_name_snapshot: string
+          part_number_snapshot: string | null
+          reason: string | null
+          reason_notes: string | null
+          system_qty: number
+          unit_snapshot: string
+          unit_value_snapshot: number | null
+          variance: number | null
+          variance_value: number | null
+          was_found_row: boolean
+        }
+        Insert: {
+          applied_delta?: number | null
+          audit_id: string
+          counted_qty?: number | null
+          final_qty?: number | null
+          id?: string
+          moved_during_audit?: number | null
+          part_id: string
+          part_name_snapshot?: string
+          part_number_snapshot?: string | null
+          reason?: string | null
+          reason_notes?: string | null
+          system_qty?: number
+          unit_snapshot?: string
+          unit_value_snapshot?: number | null
+          variance?: number | null
+          variance_value?: number | null
+          was_found_row?: boolean
+        }
+        Update: {
+          applied_delta?: number | null
+          audit_id?: string
+          counted_qty?: number | null
+          final_qty?: number | null
+          id?: string
+          moved_during_audit?: number | null
+          part_id?: string
+          part_name_snapshot?: string
+          part_number_snapshot?: string | null
+          reason?: string | null
+          reason_notes?: string | null
+          system_qty?: number
+          unit_snapshot?: string
+          unit_value_snapshot?: number | null
+          variance?: number | null
+          variance_value?: number | null
+          was_found_row?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_audit_items_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "stock_audits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_audit_items_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stock_audits: {
+        Row: {
+          audit_number: number
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancelled_by_name: string
+          completed_at: string | null
+          completed_by: string | null
+          completed_by_name: string
+          counts_uploaded_at: string | null
+          counts_uploaded_by: string | null
+          counts_uploaded_by_name: string
+          id: string
+          location_id: string
+          net_units: number
+          net_value: number
+          notes: string | null
+          started_at: string
+          started_by: string | null
+          started_by_name: string
+          status: string
+          total_parts: number
+          unvalued_parts: number
+          variance_parts: number
+        }
+        Insert: {
+          audit_number?: number
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancelled_by_name?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          completed_by_name?: string
+          counts_uploaded_at?: string | null
+          counts_uploaded_by?: string | null
+          counts_uploaded_by_name?: string
+          id?: string
+          location_id: string
+          net_units?: number
+          net_value?: number
+          notes?: string | null
+          started_at?: string
+          started_by?: string | null
+          started_by_name?: string
+          status?: string
+          total_parts?: number
+          unvalued_parts?: number
+          variance_parts?: number
+        }
+        Update: {
+          audit_number?: number
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancelled_by_name?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          completed_by_name?: string
+          counts_uploaded_at?: string | null
+          counts_uploaded_by?: string | null
+          counts_uploaded_by_name?: string
+          id?: string
+          location_id?: string
+          net_units?: number
+          net_value?: number
+          notes?: string | null
+          started_at?: string
+          started_by?: string | null
+          started_by_name?: string
+          status?: string
+          total_parts?: number
+          unvalued_parts?: number
+          variance_parts?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_audits_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_audits_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_audits_counts_uploaded_by_fkey"
+            columns: ["counts_uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_audits_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_audits_started_by_fkey"
+            columns: ["started_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stock_transfer_items: {
         Row: {
           id: string
@@ -1890,6 +2079,10 @@ export type Database = {
         Args: { p_category: string; p_impact: string }
         Returns: number
       }
+      cancel_stock_audit: {
+        Args: { p_audit_id: string; p_reason?: string }
+        Returns: undefined
+      }
       check_pan_exists: { Args: { p_pan: string }; Returns: boolean }
       close_job_card_with_scrap:
         | {
@@ -1909,6 +2102,7 @@ export type Database = {
             }
             Returns: Json
           }
+      complete_stock_audit: { Args: { p_audit_id: string }; Returns: string }
       delete_issue_part_with_scrap_check: {
         Args: { p_issue_part_id: string }
         Returns: Json
@@ -2013,6 +2207,29 @@ export type Database = {
         }[]
       }
       seed_truncate_public_tables: { Args: never; Returns: undefined }
+      set_stock_audit_reasons: {
+        Args: { p_audit_id: string; p_items: Json }
+        Returns: undefined
+      }
+      start_stock_audit: {
+        Args: { p_location_id: string; p_notes?: string }
+        Returns: string
+      }
+      stock_audit_movements: {
+        Args: { p_audit_id: string }
+        Returns: {
+          occurred_at: string
+          part_id: string
+          quantity: number
+          reference: string
+          source: string
+          vehicle_number: string
+        }[]
+      }
+      submit_stock_audit_counts: {
+        Args: { p_audit_id: string; p_counts: Json }
+        Returns: undefined
+      }
       transfer_stock: {
         Args: { p_from: string; p_items: Json; p_notes?: string; p_to: string }
         Returns: string

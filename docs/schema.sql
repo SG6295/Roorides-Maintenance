@@ -1257,6 +1257,45 @@ $$;
 ALTER FUNCTION public.calculate_ticket_overall_sla() OWNER TO postgres;
 
 --
+-- Name: cancel_stock_audit(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.cancel_stock_audit(p_audit_id uuid, p_reason text DEFAULT NULL::text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role   text;
+    v_name   text;
+    v_status text;
+BEGIN
+    SELECT role, name INTO v_role, v_name FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance or a super admin can cancel a stock audit.';
+    END IF;
+
+    SELECT status INTO v_status FROM public.stock_audits WHERE id = p_audit_id FOR UPDATE;
+    IF v_status IS NULL THEN
+        RAISE EXCEPTION 'That audit no longer exists.';
+    END IF;
+    IF v_status NOT IN ('counting', 'review') THEN
+        RAISE EXCEPTION 'Only an audit still in progress can be cancelled. This one is %.', v_status;
+    END IF;
+
+    UPDATE public.stock_audits
+    SET status            = 'cancelled',
+        cancelled_by      = auth.uid(),
+        cancelled_by_name = COALESCE(v_name, ''),
+        cancelled_at      = now(),
+        cancel_reason     = NULLIF(btrim(COALESCE(p_reason, '')), '')
+    WHERE id = p_audit_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.cancel_stock_audit(p_audit_id uuid, p_reason text) OWNER TO postgres;
+
+--
 -- Name: check_pan_exists(text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1811,6 +1850,125 @@ $$;
 
 
 ALTER FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) OWNER TO postgres;
+
+--
+-- Name: complete_stock_audit(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.complete_stock_audit(p_audit_id uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role        text;
+    v_name        text;
+    v_status      text;
+    v_location    uuid;
+    r             RECORD;
+    v_live        numeric;
+    v_unit_value  numeric;
+    v_total       integer := 0;
+    v_var_parts   integer := 0;
+    v_net_units   numeric := 0;
+    v_net_value   numeric := 0;
+    v_unvalued    integer := 0;
+    v_unexplained integer;
+BEGIN
+    SELECT role, name INTO v_role, v_name FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance or a super admin can complete a stock audit.';
+    END IF;
+
+    SELECT status, location_id INTO v_status, v_location
+    FROM   public.stock_audits WHERE id = p_audit_id FOR UPDATE;
+
+    IF v_status IS NULL THEN
+        RAISE EXCEPTION 'That audit no longer exists.';
+    END IF;
+    IF v_status <> 'review' THEN
+        RAISE EXCEPTION 'Only an audit under review can be completed. This one is %.', v_status;
+    END IF;
+
+    SELECT count(*) INTO v_unexplained
+    FROM   public.stock_audit_items
+    WHERE  audit_id = p_audit_id AND variance <> 0 AND reason IS NULL;
+
+    IF v_unexplained > 0 THEN
+        RAISE EXCEPTION '% mismatch(es) still need a reason before the audit can be completed.', v_unexplained;
+    END IF;
+
+    FOR r IN
+        SELECT * FROM public.stock_audit_items
+        WHERE  audit_id = p_audit_id
+        ORDER  BY part_name_snapshot
+    LOOP
+        SELECT quantity INTO v_live
+        FROM   public.part_stock
+        WHERE  part_id = r.part_id AND location_id = v_location;
+        v_live := COALESCE(v_live, 0);
+
+        -- Latest purchase price per unit, net of discount and before GST — the same
+        -- arithmetic purchase_invoice_items.line_total uses.
+        SELECT (pii.quantity * pii.unit_price - pii.discount_amount) / NULLIF(pii.quantity, 0)
+        INTO   v_unit_value
+        FROM   public.purchase_invoice_items pii
+        JOIN   public.purchase_invoices pi ON pi.id = pii.invoice_id
+        WHERE  pii.part_id = r.part_id
+        ORDER  BY pi.invoice_date DESC, pi.created_at DESC
+        LIMIT  1;
+
+        IF COALESCE(r.variance, 0) <> 0 THEN
+            -- apply_part_stock_delta guards this too, but it cannot know the count is
+            -- what pushed the workshop negative, so check here for a usable message.
+            IF v_live + r.variance < 0 THEN
+                RAISE EXCEPTION 'Cannot write off % of "%": only % left at this workshop after activity during the audit. Re-count that part and run a fresh audit.',
+                    abs(r.variance), r.part_name_snapshot, v_live;
+            END IF;
+
+            PERFORM public.apply_part_stock_delta(r.part_id, v_location, r.variance);
+
+            v_var_parts := v_var_parts + 1;
+            v_net_units := v_net_units + r.variance;
+
+            IF v_unit_value IS NULL THEN
+                v_unvalued := v_unvalued + 1;
+            ELSE
+                v_net_value := v_net_value + round(r.variance * v_unit_value, 2);
+            END IF;
+        END IF;
+
+        UPDATE public.stock_audit_items
+        SET moved_during_audit  = v_live - r.system_qty,
+            applied_delta       = COALESCE(r.variance, 0),
+            final_qty           = v_live + COALESCE(r.variance, 0),
+            unit_value_snapshot = v_unit_value,
+            variance_value      = CASE
+                                      WHEN v_unit_value IS NULL THEN NULL
+                                      ELSE round(COALESCE(r.variance, 0) * v_unit_value, 2)
+                                  END
+        WHERE id = r.id;
+
+        v_total := v_total + 1;
+    END LOOP;
+
+    UPDATE public.stock_audits
+    SET status            = 'completed',
+        completed_by      = auth.uid(),
+        completed_by_name = COALESCE(v_name, ''),
+        completed_at      = now(),
+        total_parts       = v_total,
+        variance_parts    = v_var_parts,
+        net_units         = v_net_units,
+        net_value         = v_net_value,
+        unvalued_parts    = v_unvalued
+    WHERE id = p_audit_id;
+
+    RETURN p_audit_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.complete_stock_audit(p_audit_id uuid) OWNER TO postgres;
 
 --
 -- Name: deduct_part_from_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2965,6 +3123,73 @@ $$;
 ALTER FUNCTION public.set_scrap_location_from_job_card() OWNER TO postgres;
 
 --
+-- Name: set_stock_audit_reasons(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.set_stock_audit_reasons(p_audit_id uuid, p_items jsonb) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role      text;
+    v_status    text;
+    r           RECORD;
+    v_variance  numeric;
+    v_part_name text;
+BEGIN
+    SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance or a super admin can explain an audit mismatch.';
+    END IF;
+
+    SELECT status INTO v_status FROM public.stock_audits WHERE id = p_audit_id;
+    IF v_status IS NULL THEN
+        RAISE EXCEPTION 'That audit no longer exists.';
+    END IF;
+    IF v_status <> 'review' THEN
+        RAISE EXCEPTION 'Reasons can only be set while the audit is under review. This one is %.', v_status;
+    END IF;
+
+    FOR r IN
+        SELECT (elem->>'part_id')::uuid AS part_id,
+               NULLIF(btrim(COALESCE(elem->>'reason', '')), '') AS reason,
+               NULLIF(btrim(COALESCE(elem->>'notes',  '')), '') AS notes
+        FROM   jsonb_array_elements(p_items) AS elem
+    LOOP
+        SELECT variance, part_name_snapshot INTO v_variance, v_part_name
+        FROM   public.stock_audit_items
+        WHERE  audit_id = p_audit_id AND part_id = r.part_id;
+
+        IF v_part_name IS NULL THEN
+            RAISE EXCEPTION 'One of those parts is not part of this audit.';
+        END IF;
+
+        IF r.reason IS NOT NULL THEN
+            IF r.reason NOT IN ('missing', 'stolen', 'damaged', 'found', 'other') THEN
+                RAISE EXCEPTION 'Unknown reason "%".', r.reason;
+            END IF;
+            IF r.reason = 'other' AND r.notes IS NULL THEN
+                RAISE EXCEPTION 'A note is required when the reason is Other (%).', v_part_name;
+            END IF;
+            IF r.reason = 'found' AND COALESCE(v_variance, 0) <= 0 THEN
+                RAISE EXCEPTION 'Found / excess only applies where more was counted than expected (%).', v_part_name;
+            END IF;
+            IF r.reason IN ('missing', 'stolen', 'damaged') AND COALESCE(v_variance, 0) >= 0 THEN
+                RAISE EXCEPTION 'Missing, Stolen and Damaged only apply to a shortfall (%).', v_part_name;
+            END IF;
+        END IF;
+
+        UPDATE public.stock_audit_items
+        SET reason = r.reason, reason_notes = r.notes
+        WHERE audit_id = p_audit_id AND part_id = r.part_id;
+    END LOOP;
+END;
+$$;
+
+
+ALTER FUNCTION public.set_stock_audit_reasons(p_audit_id uuid, p_items jsonb) OWNER TO postgres;
+
+--
 -- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3039,6 +3264,242 @@ $$;
 
 
 ALTER FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() OWNER TO postgres;
+
+--
+-- Name: start_stock_audit(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text DEFAULT NULL::text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_audit_id uuid;
+    v_role     text;
+    v_name     text;
+    v_open_by  text;
+    v_open_at  timestamp without time zone;
+BEGIN
+    SELECT role, name INTO v_role, v_name FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance or a super admin can run a stock audit.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM public.workshop_locations WHERE id = p_location_id AND is_active
+    ) THEN
+        RAISE EXCEPTION 'That workshop is not an active location.';
+    END IF;
+
+    SELECT started_by_name, started_at INTO v_open_by, v_open_at
+    FROM   public.stock_audits
+    WHERE  location_id = p_location_id
+      AND  status IN ('counting', 'review');
+
+    IF v_open_at IS NOT NULL THEN
+        RAISE EXCEPTION 'An audit is already open at this workshop, started by % on %. Complete or cancel it before starting another.',
+            COALESCE(NULLIF(v_open_by, ''), 'someone'),
+            to_char(v_open_at, 'DD Mon YYYY');
+    END IF;
+
+    INSERT INTO public.stock_audits (location_id, started_by, started_by_name, notes)
+    VALUES (p_location_id, auth.uid(), COALESCE(v_name, ''),
+            NULLIF(btrim(COALESCE(p_notes, '')), ''))
+    RETURNING id INTO v_audit_id;
+
+    -- Only what is actually stocked here. Printing the whole catalogue would mean 300+
+    -- rows of zeroes to write out by hand at a workshop that stocks seven parts, and a
+    -- blank row blocks the upload. Anything physically present but unlisted comes back
+    -- on one of the sheet's blank "found" rows instead.
+    --
+    -- A workshop with no stock at all yields an empty sheet on purpose: that is how a new
+    -- workshop's opening stock gets entered, entirely through found rows.
+    INSERT INTO public.stock_audit_items (
+        audit_id, part_id, part_name_snapshot, part_number_snapshot, unit_snapshot, system_qty
+    )
+    SELECT v_audit_id, p.id, p.name, p.part_number, COALESCE(p.unit, 'pcs'), ps.quantity
+    FROM   public.part_stock ps
+    JOIN   public.parts p ON p.id = ps.part_id
+    WHERE  ps.location_id = p_location_id
+      AND  ps.quantity > 0;
+
+    RETURN v_audit_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text) OWNER TO postgres;
+
+--
+-- Name: stock_audit_movements(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part_id uuid, source text, quantity numeric, reference text, vehicle_number text, occurred_at timestamp without time zone)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    WITH a AS (
+        SELECT sa.id, sa.location_id, sa.started_at
+        FROM   public.stock_audits sa
+        WHERE  sa.id = p_audit_id
+          -- Mirrors the SELECT policy on stock_audits.
+          AND  EXISTS (
+                   SELECT 1 FROM public.users u
+                   WHERE u.id = auth.uid()
+                     AND u.role IN ('finance', 'super_admin', 'maintenance_exec')
+               )
+    )
+    -- Consumed on a job card. Outsource job cards never touch stock, so they are excluded
+    -- here exactly as deduct_part_from_inventory() excludes them.
+    SELECT ip.part_id,
+           'consumption'::text,
+           -ip.quantity_used,
+           'JC-' || jc.job_card_number::text,
+           jc.vehicle_number,
+           ip.added_at
+    FROM   a
+    JOIN   public.job_cards   jc ON jc.location_id = a.location_id AND jc.type <> 'Outsource'
+    JOIN   public.issues      i  ON i.job_card_id = jc.id
+    JOIN   public.issue_parts ip ON ip.issue_id = i.id
+    WHERE  ip.added_at > a.started_at
+
+    UNION ALL
+
+    -- Inwarded on a purchase invoice.
+    SELECT pii.part_id,
+           'purchase'::text,
+           pii.quantity,
+           pi.invoice_number,
+           NULL::text,
+           pi.created_at
+    FROM   a
+    JOIN   public.purchase_invoices      pi  ON pi.location_id = a.location_id
+    JOIN   public.purchase_invoice_items pii ON pii.invoice_id = pi.id
+    WHERE  pi.created_at > a.started_at
+
+    UNION ALL
+
+    -- Moved to or from another workshop.
+    SELECT sti.part_id,
+           CASE WHEN st.to_location_id = a.location_id
+                THEN 'transfer_in' ELSE 'transfer_out' END,
+           CASE WHEN st.to_location_id = a.location_id
+                THEN sti.quantity ELSE -sti.quantity END,
+           wl.name,
+           NULL::text,
+           st.transferred_at
+    FROM   a
+    JOIN   public.stock_transfers st
+           ON (st.from_location_id = a.location_id OR st.to_location_id = a.location_id)
+    JOIN   public.stock_transfer_items sti ON sti.transfer_id = st.id
+    JOIN   public.workshop_locations wl
+           ON wl.id = CASE WHEN st.to_location_id = a.location_id
+                           THEN st.from_location_id ELSE st.to_location_id END
+    WHERE  st.transferred_at > a.started_at
+
+    ORDER BY 6 DESC;
+$$;
+
+
+ALTER FUNCTION public.stock_audit_movements(p_audit_id uuid) OWNER TO postgres;
+
+--
+-- Name: FUNCTION stock_audit_movements(p_audit_id uuid); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.stock_audit_movements(p_audit_id uuid) IS 'Stock that legitimately moved at a workshop while an audit was open. SECURITY DEFINER, so it carries its own role check: returns nothing unless the caller is finance, super_admin or maintenance_exec.';
+
+
+--
+-- Name: submit_stock_audit_counts(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role     text;
+    v_name     text;
+    v_status   text;
+    v_location uuid;
+    r          RECORD;
+    v_blank    integer;
+BEGIN
+    SELECT role, name INTO v_role, v_name FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance or a super admin can upload a count sheet.';
+    END IF;
+
+    SELECT status, location_id INTO v_status, v_location
+    FROM   public.stock_audits WHERE id = p_audit_id FOR UPDATE;
+
+    IF v_status IS NULL THEN
+        RAISE EXCEPTION 'That audit no longer exists.';
+    END IF;
+    IF v_status NOT IN ('counting', 'review') THEN
+        RAISE EXCEPTION 'This audit is already % and cannot take new counts.', v_status;
+    END IF;
+
+    FOR r IN
+        SELECT (elem->>'part_id')::uuid        AS part_id,
+               (elem->>'counted_qty')::numeric AS counted_qty
+        FROM   jsonb_array_elements(p_counts) AS elem
+    LOOP
+        IF r.part_id IS NULL OR r.counted_qty IS NULL THEN
+            RAISE EXCEPTION 'Every row on the sheet needs a part and a counted quantity.';
+        END IF;
+        IF r.counted_qty < 0 THEN
+            RAISE EXCEPTION 'A counted quantity cannot be negative.';
+        END IF;
+
+        UPDATE public.stock_audit_items
+        SET counted_qty  = r.counted_qty,
+            reason       = CASE WHEN counted_qty IS DISTINCT FROM r.counted_qty
+                                THEN NULL ELSE reason END,
+            reason_notes = CASE WHEN counted_qty IS DISTINCT FROM r.counted_qty
+                                THEN NULL ELSE reason_notes END
+        WHERE audit_id = p_audit_id AND part_id = r.part_id;
+
+        IF NOT FOUND THEN
+            -- Written onto a blank row: stock the app did not know was here.
+            INSERT INTO public.stock_audit_items (
+                audit_id, part_id, part_name_snapshot, part_number_snapshot,
+                unit_snapshot, system_qty, counted_qty, was_found_row
+            )
+            SELECT p_audit_id, p.id, p.name, p.part_number, COALESCE(p.unit, 'pcs'),
+                   COALESCE(ps.quantity, 0), r.counted_qty, true
+            FROM   public.parts p
+            LEFT   JOIN public.part_stock ps
+                   ON ps.part_id = p.id AND ps.location_id = v_location
+            WHERE  p.id = r.part_id;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'A part written onto the sheet is not in the catalogue. Add it under Parts Catalog first, then upload again.';
+            END IF;
+        END IF;
+    END LOOP;
+
+    -- Nothing printed on the sheet may come back blank.
+    SELECT count(*) INTO v_blank
+    FROM   public.stock_audit_items
+    WHERE  audit_id = p_audit_id AND counted_qty IS NULL;
+
+    IF v_blank > 0 THEN
+        RAISE EXCEPTION '% part(s) on the sheet have no counted quantity. Every row must be filled in before the sheet can be uploaded.', v_blank;
+    END IF;
+
+    UPDATE public.stock_audits
+    SET status                  = 'review',
+        counts_uploaded_by      = auth.uid(),
+        counts_uploaded_by_name = COALESCE(v_name, ''),
+        counts_uploaded_at      = now()
+    WHERE id = p_audit_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb) OWNER TO postgres;
 
 --
 -- Name: sync_part_total_stock(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -6409,6 +6870,139 @@ CREATE TABLE public.sla_rules_config (
 ALTER TABLE public.sla_rules_config OWNER TO postgres;
 
 --
+-- Name: stock_audit_items; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.stock_audit_items (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    audit_id uuid NOT NULL,
+    part_id uuid NOT NULL,
+    part_name_snapshot text DEFAULT ''::text NOT NULL,
+    part_number_snapshot text,
+    unit_snapshot text DEFAULT 'pcs'::text NOT NULL,
+    system_qty numeric(10,2) DEFAULT 0 NOT NULL,
+    counted_qty numeric(10,2),
+    variance numeric(10,2) GENERATED ALWAYS AS ((counted_qty - system_qty)) STORED,
+    was_found_row boolean DEFAULT false NOT NULL,
+    reason text,
+    reason_notes text,
+    moved_during_audit numeric(10,2),
+    applied_delta numeric(10,2),
+    final_qty numeric(10,2),
+    unit_value_snapshot numeric(12,2),
+    variance_value numeric(14,2),
+    CONSTRAINT stock_audit_items_counted_nonneg CHECK (((counted_qty IS NULL) OR (counted_qty >= (0)::numeric))),
+    CONSTRAINT stock_audit_items_reason_check CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['missing'::text, 'stolen'::text, 'damaged'::text, 'found'::text, 'other'::text]))))
+);
+
+
+ALTER TABLE public.stock_audit_items OWNER TO postgres;
+
+--
+-- Name: TABLE stock_audit_items; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.stock_audit_items IS 'One counted part per audit. system_qty is frozen when the count sheet is generated; variance is measured against it, not against live stock, so parts consumed mid-audit are not silently reversed.';
+
+
+--
+-- Name: COLUMN stock_audit_items.system_qty; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.system_qty IS 'What the app believed was here when the count sheet was generated. Never updated.';
+
+
+--
+-- Name: COLUMN stock_audit_items.was_found_row; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.was_found_row IS 'The part was written onto a blank row on the sheet rather than printed on it — stock the app did not know was here.';
+
+
+--
+-- Name: COLUMN stock_audit_items.moved_during_audit; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.moved_during_audit IS 'Live stock minus system_qty at the moment of completion — legitimate consumption, purchases and transfers that happened while the audit was open. Recorded for explanation only; the variance is applied on top of it.';
+
+
+--
+-- Name: COLUMN stock_audit_items.unit_value_snapshot; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.unit_value_snapshot IS 'Latest purchase price per unit, net of discount and before GST, frozen at completion. NULL when the part has never been purchased.';
+
+
+--
+-- Name: stock_audits; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.stock_audits (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    location_id uuid NOT NULL,
+    status text DEFAULT 'counting'::text NOT NULL,
+    notes text,
+    started_by uuid,
+    started_by_name text DEFAULT ''::text NOT NULL,
+    started_at timestamp without time zone DEFAULT now() NOT NULL,
+    counts_uploaded_by uuid,
+    counts_uploaded_by_name text DEFAULT ''::text NOT NULL,
+    counts_uploaded_at timestamp without time zone,
+    completed_by uuid,
+    completed_by_name text DEFAULT ''::text NOT NULL,
+    completed_at timestamp without time zone,
+    cancelled_by uuid,
+    cancelled_by_name text DEFAULT ''::text NOT NULL,
+    cancelled_at timestamp without time zone,
+    cancel_reason text,
+    total_parts integer DEFAULT 0 NOT NULL,
+    variance_parts integer DEFAULT 0 NOT NULL,
+    net_units numeric(12,2) DEFAULT 0 NOT NULL,
+    net_value numeric(14,2) DEFAULT 0 NOT NULL,
+    unvalued_parts integer DEFAULT 0 NOT NULL,
+    audit_number integer NOT NULL,
+    CONSTRAINT stock_audits_status_check CHECK ((status = ANY (ARRAY['counting'::text, 'review'::text, 'completed'::text, 'cancelled'::text])))
+);
+
+
+ALTER TABLE public.stock_audits OWNER TO postgres;
+
+--
+-- Name: TABLE stock_audits; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.stock_audits IS 'Physical stock counts, one per workshop at a time. Immutable once completed: a wrong count is corrected by running another audit, never by editing this one.';
+
+
+--
+-- Name: COLUMN stock_audits.audit_number; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audits.audit_number IS 'Human-readable reference, shown in the app as AUD-<n>. Sequential across all workshops.';
+
+
+--
+-- Name: stock_audits_audit_number_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.stock_audits_audit_number_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.stock_audits_audit_number_seq OWNER TO postgres;
+
+--
+-- Name: stock_audits_audit_number_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.stock_audits_audit_number_seq OWNED BY public.stock_audits.audit_number;
+
+
+--
 -- Name: stock_transfer_items; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -6935,6 +7529,13 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
+-- Name: stock_audits audit_number; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits ALTER COLUMN audit_number SET DEFAULT nextval('public.stock_audits_audit_number_seq'::regclass);
+
+
+--
 -- Name: mfa_amr_claims amr_id_pk; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -7444,6 +8045,30 @@ ALTER TABLE ONLY public.sla_rules
 
 ALTER TABLE ONLY public.sla_rules
     ADD CONSTRAINT sla_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_audit_items stock_audit_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audit_items
+    ADD CONSTRAINT stock_audit_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_audit_items stock_audit_items_unique_part; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audit_items
+    ADD CONSTRAINT stock_audit_items_unique_part UNIQUE (audit_id, part_id);
+
+
+--
+-- Name: stock_audits stock_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits
+    ADD CONSTRAINT stock_audits_pkey PRIMARY KEY (id);
 
 
 --
@@ -8395,6 +9020,55 @@ CREATE INDEX scrap_inventory_location_idx ON public.scrap_inventory USING btree 
 
 
 --
+-- Name: stock_audit_items_audit_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_audit_items_audit_idx ON public.stock_audit_items USING btree (audit_id);
+
+
+--
+-- Name: stock_audit_items_part_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_audit_items_part_idx ON public.stock_audit_items USING btree (part_id);
+
+
+--
+-- Name: stock_audits_location_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_audits_location_idx ON public.stock_audits USING btree (location_id);
+
+
+--
+-- Name: stock_audits_number_key; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX stock_audits_number_key ON public.stock_audits USING btree (audit_number);
+
+
+--
+-- Name: stock_audits_one_open_per_location; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX stock_audits_one_open_per_location ON public.stock_audits USING btree (location_id) WHERE (status = ANY (ARRAY['counting'::text, 'review'::text]));
+
+
+--
+-- Name: stock_audits_started_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_audits_started_idx ON public.stock_audits USING btree (started_at DESC);
+
+
+--
+-- Name: stock_audits_status_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_audits_status_idx ON public.stock_audits USING btree (status);
+
+
+--
 -- Name: stock_transfer_items_part_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -9169,6 +9843,62 @@ ALTER TABLE ONLY public.sla_events
 
 
 --
+-- Name: stock_audit_items stock_audit_items_audit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audit_items
+    ADD CONSTRAINT stock_audit_items_audit_id_fkey FOREIGN KEY (audit_id) REFERENCES public.stock_audits(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_audit_items stock_audit_items_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audit_items
+    ADD CONSTRAINT stock_audit_items_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id);
+
+
+--
+-- Name: stock_audits stock_audits_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits
+    ADD CONSTRAINT stock_audits_cancelled_by_fkey FOREIGN KEY (cancelled_by) REFERENCES public.users(id);
+
+
+--
+-- Name: stock_audits stock_audits_completed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits
+    ADD CONSTRAINT stock_audits_completed_by_fkey FOREIGN KEY (completed_by) REFERENCES public.users(id);
+
+
+--
+-- Name: stock_audits stock_audits_counts_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits
+    ADD CONSTRAINT stock_audits_counts_uploaded_by_fkey FOREIGN KEY (counts_uploaded_by) REFERENCES public.users(id);
+
+
+--
+-- Name: stock_audits stock_audits_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits
+    ADD CONSTRAINT stock_audits_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
+
+
+--
+-- Name: stock_audits stock_audits_started_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audits
+    ADD CONSTRAINT stock_audits_started_by_fkey FOREIGN KEY (started_by) REFERENCES public.users(id);
+
+
+--
 -- Name: stock_transfer_items stock_transfer_items_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -9618,6 +10348,24 @@ CREATE POLICY "Exec and finance view invoice items" ON public.purchase_invoice_i
 CREATE POLICY "Exec and finance view invoices" ON public.purchase_invoices FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
+
+
+--
+-- Name: stock_audit_items Exec and finance view stock_audit_items; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view stock_audit_items" ON public.stock_audit_items FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['finance'::text, 'super_admin'::text, 'maintenance_exec'::text]))))));
+
+
+--
+-- Name: stock_audits Exec and finance view stock_audits; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view stock_audits" ON public.stock_audits FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['finance'::text, 'super_admin'::text, 'maintenance_exec'::text]))))));
 
 
 --
@@ -10299,6 +11047,18 @@ ALTER TABLE public.sla_events ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.sla_rules ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: stock_audit_items; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.stock_audit_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: stock_audits; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.stock_audits ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: stock_transfer_items; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -11223,6 +11983,15 @@ GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO service_role;
 
 
 --
+-- Name: FUNCTION cancel_stock_audit(p_audit_id uuid, p_reason text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.cancel_stock_audit(p_audit_id uuid, p_reason text) TO anon;
+GRANT ALL ON FUNCTION public.cancel_stock_audit(p_audit_id uuid, p_reason text) TO authenticated;
+GRANT ALL ON FUNCTION public.cancel_stock_audit(p_audit_id uuid, p_reason text) TO service_role;
+
+
+--
 -- Name: FUNCTION check_pan_exists(p_pan text); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -11247,6 +12016,15 @@ GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_rem
 GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) TO anon;
 GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) TO authenticated;
 GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) TO service_role;
+
+
+--
+-- Name: FUNCTION complete_stock_audit(p_audit_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.complete_stock_audit(p_audit_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.complete_stock_audit(p_audit_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.complete_stock_audit(p_audit_id uuid) TO service_role;
 
 
 --
@@ -11457,6 +12235,15 @@ GRANT ALL ON FUNCTION public.set_scrap_location_from_job_card() TO service_role;
 
 
 --
+-- Name: FUNCTION set_stock_audit_reasons(p_audit_id uuid, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.set_stock_audit_reasons(p_audit_id uuid, p_items jsonb) TO anon;
+GRANT ALL ON FUNCTION public.set_stock_audit_reasons(p_audit_id uuid, p_items jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.set_stock_audit_reasons(p_audit_id uuid, p_items jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION set_updated_at(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -11472,6 +12259,32 @@ GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO anon;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO authenticated;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO service_role;
+
+
+--
+-- Name: FUNCTION start_stock_audit(p_location_id uuid, p_notes text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text) TO anon;
+GRANT ALL ON FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text) TO authenticated;
+GRANT ALL ON FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text) TO service_role;
+
+
+--
+-- Name: FUNCTION stock_audit_movements(p_audit_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_audit_movements(p_audit_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.stock_audit_movements(p_audit_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb) TO anon;
+GRANT ALL ON FUNCTION public.submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb) TO service_role;
 
 
 --
@@ -12160,6 +12973,33 @@ GRANT ALL ON TABLE public.sla_rules TO service_role;
 GRANT ALL ON TABLE public.sla_rules_config TO anon;
 GRANT ALL ON TABLE public.sla_rules_config TO authenticated;
 GRANT ALL ON TABLE public.sla_rules_config TO service_role;
+
+
+--
+-- Name: TABLE stock_audit_items; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.stock_audit_items TO anon;
+GRANT ALL ON TABLE public.stock_audit_items TO authenticated;
+GRANT ALL ON TABLE public.stock_audit_items TO service_role;
+
+
+--
+-- Name: TABLE stock_audits; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.stock_audits TO anon;
+GRANT ALL ON TABLE public.stock_audits TO authenticated;
+GRANT ALL ON TABLE public.stock_audits TO service_role;
+
+
+--
+-- Name: SEQUENCE stock_audits_audit_number_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.stock_audits_audit_number_seq TO anon;
+GRANT ALL ON SEQUENCE public.stock_audits_audit_number_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.stock_audits_audit_number_seq TO service_role;
 
 
 --

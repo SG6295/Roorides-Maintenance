@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { format, parseISO } from 'date-fns'
-import { Link } from 'react-router-dom'
+import { formatDate, formatDateTime } from '../utils/datetime'
+import { Link, useSearchParams } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
@@ -10,6 +10,7 @@ import BulkUploadModal from '../components/inventory/BulkUploadModal'
 import EditPartModal from '../components/inventory/EditPartModal'
 import EditPurchaseModal from '../components/inventory/EditPurchaseModal'
 import MoveStockModal from '../components/inventory/MoveStockModal'
+import StockAuditTab from '../components/inventory/audit/StockAuditTab'
 import {
     useParts,
     usePurchaseInvoices,
@@ -19,6 +20,7 @@ import {
     useLocationStockSummary,
 } from '../hooks/useInventory'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
+import { AUDIT_REASON_LABELS } from '../hooks/useStockAudits'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import {
@@ -445,7 +447,7 @@ function InvoiceRow({ invoice, onEdit }) {
                 <td className="px-4 py-3 font-mono text-xs text-gray-700">{invoice.invoice_number}</td>
                 <td className="px-4 py-3 text-gray-700">
                     {invoice.invoice_date
-                        ? format(parseISO(invoice.invoice_date), 'dd MMM yyyy')
+                        ? formatDate(invoice.invoice_date)
                         : '—'}
                 </td>
                 <td className="px-4 py-3 text-gray-700">{invoice.supplier_name}</td>
@@ -559,7 +561,7 @@ function PurchaseHistory() {
                 const inv = invoiceMap[item.invoice_id]
                 return {
                     'Invoice #': inv?.invoice_number ?? '',
-                    'Date': inv?.invoice_date ? format(parseISO(inv.invoice_date), 'dd MMM yyyy') : '',
+                    'Date': inv?.invoice_date ? formatDate(inv.invoice_date) : '',
                     'Supplier': inv?.supplier_name ?? '',
                     'Workshop': inv?.location?.name ?? '',
                     'Part Name': item.part?.name ?? '',
@@ -680,22 +682,25 @@ const JC_STATUS_BADGE = {
 }
 
 function ConsumptionHistory() {
-    const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
+    const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', source: '' })
     const { data: rows = [], isLoading } = usePartConsumption(filters)
 
     function handleExport() {
         if (rows.length === 0) return
         const exportRows = rows.map(row => ({
-            'Date Used': row.added_at ? format(parseISO(row.added_at), 'dd MMM yyyy HH:mm') : '',
+            'Date Used': row.added_at ? formatDateTime(row.added_at) : '',
+            'Source': row.source === 'audit' ? 'Stock audit' : 'Job card',
             'Part Name': row.part_name ?? '',
             'Part Number': row.part_number ?? '',
             'Unit': row.unit ?? '',
             'Qty Used': row.quantity_used,
             'Job Card #': row.job_card_number ? `JC-${row.job_card_number}` : '',
+            'Audit #': row.audit_number ? `AUD-${row.audit_number}` : '',
             'Vehicle': row.vehicle_number ?? '',
             'Workshop': row.location_name ?? '',
             'Mechanic': row.mechanic_name ?? '',
             'JC Status': row.job_card_status ?? '',
+            'Audit Reason': row.audit_reason ? AUDIT_REASON_LABELS[row.audit_reason] ?? row.audit_reason : '',
         }))
         const ws = XLSX.utils.json_to_sheet(exportRows)
         const wb = XLSX.utils.book_new()
@@ -707,7 +712,7 @@ function ConsumptionHistory() {
     return (
         <div className="space-y-4">
             <div className="bg-white p-4 rounded-lg shadow-sm">
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
                     <div className="relative sm:col-span-2">
                         <input
                             type="text"
@@ -718,6 +723,15 @@ function ConsumptionHistory() {
                         />
                         <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
                     </div>
+                    <FilterSelect
+                        value={filters.source}
+                        onChange={v => setFilters(p => ({ ...p, source: v }))}
+                        options={[
+                            { value: '', label: 'All sources' },
+                            { value: 'job_card', label: 'Job card usage' },
+                            { value: 'audit', label: 'Stock audit' },
+                        ]}
+                    />
                     <input
                         type="date"
                         className="border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
@@ -758,11 +772,11 @@ function ConsumptionHistory() {
                                 <th className="px-4 py-3 text-left">Part</th>
                                 <th className="px-4 py-3 text-left">Part No.</th>
                                 <th className="px-4 py-3 text-right">Qty Used</th>
-                                <th className="px-4 py-3 text-left">Job Card</th>
+                                <th className="px-4 py-3 text-left">Reference</th>
                                 <th className="px-4 py-3 text-left">Vehicle</th>
                                 <th className="px-4 py-3 text-left">Workshop</th>
                                 <th className="px-4 py-3 text-left">Mechanic</th>
-                                <th className="px-4 py-3 text-left">JC Status</th>
+                                <th className="px-4 py-3 text-left">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -770,16 +784,24 @@ function ConsumptionHistory() {
                                 <tr key={row.id} className="hover:bg-gray-50">
                                     <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
                                         {row.added_at
-                                            ? format(parseISO(row.added_at), 'dd MMM yyyy, HH:mm')
+                                            ? formatDateTime(row.added_at)
                                             : '—'}
                                     </td>
                                     <td className="px-4 py-3 font-medium text-gray-900">{row.part_name}</td>
                                     <td className="px-4 py-3 text-gray-400 font-mono text-xs">{row.part_number || '—'}</td>
-                                    <td className="px-4 py-3 text-right text-gray-700">
+                                    <td className={`px-4 py-3 text-right ${row.quantity_used < 0 ? 'text-green-700' : 'text-gray-700'}`}>
                                         {row.quantity_used} <span className="text-gray-400 text-xs">{row.unit}</span>
                                     </td>
                                     <td className="px-4 py-3 font-mono text-xs">
-                                        {row.job_card_number ? (
+                                        {row.source === 'audit' ? (
+                                            <Link
+                                                to={`/inventory?tab=audit&audit=${row.audit_id}`}
+                                                className="text-purple-700 hover:text-purple-900 hover:underline"
+                                                title="Open this stock audit"
+                                            >
+                                                AUD-{row.audit_number}
+                                            </Link>
+                                        ) : row.job_card_number ? (
                                             <Link
                                                 to={`/job-cards/${row.job_card_number}`}
                                                 className="text-blue-600 hover:text-blue-800 hover:underline"
@@ -810,7 +832,14 @@ function ConsumptionHistory() {
                                         ) : (row.mechanic_name || '—')}
                                     </td>
                                     <td className="px-4 py-3">
-                                        {row.job_card_status ? (
+                                        {row.source === 'audit' ? (
+                                            <span
+                                                className="px-2 py-0.5 text-xs rounded-full bg-purple-50 text-purple-700 whitespace-nowrap"
+                                                title={row.audit_reason_notes || undefined}
+                                            >
+                                                {AUDIT_REASON_LABELS[row.audit_reason] ?? row.audit_reason ?? 'Adjustment'}
+                                            </span>
+                                        ) : row.job_card_status ? (
                                             <span className={`px-2 py-0.5 text-xs rounded-full ${JC_STATUS_BADGE[row.job_card_status] || 'bg-gray-100 text-gray-600'}`}>
                                                 {row.job_card_status}
                                             </span>
@@ -831,9 +860,20 @@ function ConsumptionHistory() {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
-    const [tab, setTab] = useState('parts')
+    const { userProfile } = useAuth()
+
+    // The tab lives in the URL so Consumption History can link straight to a specific
+    // audit, and so the back button steps between tabs rather than off the page.
+    const [searchParams, setSearchParams] = useSearchParams()
+    const tab = searchParams.get('tab') || 'parts'
+    const setTab = key => setSearchParams(key === 'parts' ? {} : { tab: key })
+
     const [showPurchaseModal, setShowPurchaseModal] = useState(false)
     const [showBulkModal, setShowBulkModal] = useState(false)
+
+    // The audit belongs to finance. maintenance_exec can see what an audit did to stock —
+    // its write-offs show up in Consumption History — but takes no part in running one.
+    const canAudit = ['finance', 'super_admin'].includes(userProfile?.role)
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -867,6 +907,7 @@ export default function Inventory() {
                         { key: 'parts', label: 'Parts Catalog' },
                         { key: 'history', label: 'Purchase History' },
                         { key: 'consumption', label: 'Consumption History' },
+                        { key: 'audit', label: 'Stock Audit' },
                     ].map(t => (
                         <button
                             key={t.key}
@@ -885,6 +926,7 @@ export default function Inventory() {
                 {tab === 'parts' && <PartsTab />}
                 {tab === 'history' && <PurchaseHistory />}
                 {tab === 'consumption' && <ConsumptionHistory />}
+                {tab === 'audit' && <StockAuditTab canAudit={canAudit} />}
             </div>
 
             {showPurchaseModal && (
