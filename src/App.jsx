@@ -49,7 +49,7 @@ window.testResend = async (email) => {
 const queryClient = new QueryClient()
 
 function ProtectedRoute({ children, allowedRoles = [] }) {
-  const { user, userProfile, loading } = useAuth()
+  const { user, userProfile, loading, profileError } = useAuth()
 
   if (loading) {
     return (
@@ -59,12 +59,38 @@ function ProtectedRoute({ children, allowedRoles = [] }) {
     )
   }
 
+  // Before the profile check — a deactivated user is signed out and then
+  // throws, so they belong at the login screen, not the error screen.
   if (!user) {
     return <Navigate to="/login" />
   }
 
+  // Without a profile there is no role to check, so the role gate below cannot
+  // be trusted. Fail closed rather than rendering the page.
+  if (profileError || !userProfile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="max-w-sm text-center">
+          <h1 className="text-lg font-medium text-gray-900">
+            We couldn't load your account
+          </h1>
+          <p className="mt-2 text-sm text-gray-600">
+            This is usually a connection problem. Please refresh to try again —
+            if it keeps happening, contact your administrator.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // Role check
-  if (allowedRoles.length > 0 && userProfile && !allowedRoles.includes(userProfile.role)) {
+  if (allowedRoles.length > 0 && !allowedRoles.includes(userProfile.role)) {
     return <Navigate to="/dashboard" replace />
   }
 

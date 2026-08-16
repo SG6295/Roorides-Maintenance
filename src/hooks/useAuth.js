@@ -7,6 +7,10 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Set when the profile could not be loaded at all. Distinct from a profile
+  // that loaded and happens to be empty — callers must not treat a failed
+  // fetch as "this user has no sites" or "this user has no role".
+  const [profileError, setProfileError] = useState(null)
 
   useEffect(() => {
     // Get initial session
@@ -36,6 +40,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const fetchUserProfile = async (userId) => {
+    setProfileError(null)
     try {
       const [profileRes, sitesRes] = await Promise.all([
         supabase.from('users').select('*').eq('id', userId).single(),
@@ -43,6 +48,9 @@ export function AuthProvider({ children }) {
       ])
 
       if (profileRes.error) throw profileRes.error
+      // A failed sites query used to fall through as an empty array, which is
+      // indistinguishable from a user who genuinely has none.
+      if (sitesRes.error) throw sitesRes.error
       const data = profileRes.data
 
       if (!data.is_active) {
@@ -56,6 +64,7 @@ export function AuthProvider({ children }) {
       setUserProfile({ ...data, sites })
     } catch (error) {
       console.error('Error fetching user profile:', error)
+      setProfileError(error)
     } finally {
       setLoading(false)
     }
@@ -74,6 +83,7 @@ export function AuthProvider({ children }) {
     if (!error) {
       setUser(null)
       setUserProfile(null)
+      setProfileError(null)
     }
     return { error }
   }
@@ -86,6 +96,7 @@ export function AuthProvider({ children }) {
     user,
     userProfile,
     loading,
+    profileError,
     signIn,
     signOut,
     refreshProfile,
