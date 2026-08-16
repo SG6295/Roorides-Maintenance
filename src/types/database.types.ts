@@ -1171,33 +1171,6 @@ export type Database = {
           },
         ]
       }
-      sla_rules: {
-        Row: {
-          category: string
-          created_at: string | null
-          days: number
-          id: string
-          impact: string
-          updated_at: string | null
-        }
-        Insert: {
-          category: string
-          created_at?: string | null
-          days?: number
-          id?: string
-          impact: string
-          updated_at?: string | null
-        }
-        Update: {
-          category?: string
-          created_at?: string | null
-          days?: number
-          id?: string
-          impact?: string
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
       sla_rules_config: {
         Row: {
           category: Database["public"]["Enums"]["issue_category"]
@@ -1674,6 +1647,7 @@ export type Database = {
       }
       tickets: {
         Row: {
+          acceptance_sla_end_date: string | null
           acceptance_sla_status:
             | Database["public"]["Enums"]["sla_status_enum"]
             | null
@@ -1706,6 +1680,7 @@ export type Database = {
           vehicle_number: string
         }
         Insert: {
+          acceptance_sla_end_date?: string | null
           acceptance_sla_status?:
             | Database["public"]["Enums"]["sla_status_enum"]
             | null
@@ -1738,6 +1713,7 @@ export type Database = {
           vehicle_number: string
         }
         Update: {
+          acceptance_sla_end_date?: string | null
           acceptance_sla_status?:
             | Database["public"]["Enums"]["sla_status_enum"]
             | null
@@ -2067,17 +2043,14 @@ export type Database = {
       }
     }
     Functions: {
+      acceptance_deadline: { Args: { p_created_at: string }; Returns: string }
       add_working_days: {
-        Args: { n_days: number; start_date: string }
+        Args: { n_days: number; start_ts: string }
         Returns: string
       }
       apply_part_stock_delta: {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
         Returns: undefined
-      }
-      calculate_sla_days: {
-        Args: { p_category: string; p_impact: string }
-        Returns: number
       }
       cancel_stock_audit: {
         Args: { p_audit_id: string; p_reason?: string }
@@ -2127,12 +2100,15 @@ export type Database = {
         }
         Returns: {
           accept_adhered: number
+          accept_na: number
           accept_pending: number
           accept_violated: number
           comp_in_adhered: number
+          comp_in_na: number
           comp_in_violated: number
           comp_in_wip_within: number
           comp_out_adhered: number
+          comp_out_na: number
           comp_out_violated: number
           comp_out_wip_within: number
           csat_score_sum: number
@@ -2184,6 +2160,7 @@ export type Database = {
         Args: { p_job_card_id: string }
         Returns: boolean
       }
+      recalculate_open_slas: { Args: never; Returns: undefined }
       record_scrap_disposal: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
@@ -2272,7 +2249,7 @@ export type Database = {
         | "stocktake_adjustment"
         | "donated"
         | "other"
-      sla_status_enum: "Pending" | "Adhered" | "Violated"
+      sla_status_enum: "Pending" | "Adhered" | "Violated" | "NA"
       ticket_status_new:
         | "New"
         | "Accepted"
@@ -2449,7 +2426,7 @@ export const Constants = {
         "donated",
         "other",
       ],
-      sla_status_enum: ["Pending", "Adhered", "Violated"],
+      sla_status_enum: ["Pending", "Adhered", "Violated", "NA"],
       ticket_status_new: [
         "New",
         "Accepted",

@@ -54,7 +54,19 @@ export default function TicketForm() {
     ? allSites.filter(s => supervisorSites.some(us => us.name === s.name))
     : allSites
 
-  const { data: vehicles = [] } = useVehicles(watchSite || null)
+  const hasNoSites = isSupervisor && supervisorSites.length === 0
+  const singleSiteName = isSupervisor && supervisorSites.length === 1
+    ? supervisorSites[0].name
+    : null
+
+  // userProfile can resolve after the first render, in which case defaultValues
+  // was computed before the supervisor's sites were known and the prefill below
+  // never happened — leaving a disabled, empty, required field.
+  useEffect(() => {
+    if (singleSiteName && !watchSite) setValue('site', singleSiteName)
+  }, [singleSiteName, watchSite, setValue])
+
+  const { data: vehicles = [], isLoading: vehiclesLoading } = useVehicles(watchSite || null)
   const createTicket = useCreateTicket()
 
   const handleRefreshVehicles = async () => {
@@ -153,12 +165,21 @@ export default function TicketForm() {
                   value={value}
                   onChange={onChange}
                   options={availableSites.map(s => ({ value: s.name, label: s.name }))}
-                  disabled={isSupervisor && supervisorSites.length <= 1}
+                  // Exactly one site is prefilled, so there is nothing to choose.
+                  // Zero sites must stay enabled — a locked empty field is a dead end.
+                  disabled={singleSiteName !== null}
+                  showAllOnFocus
                   error={error}
                   placeholder="Type to search site..."
                 />
               )}
             />
+            {hasNoSites && (
+              <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                You have no sites assigned, so there are no sites to raise a ticket
+                against. Please contact your administrator.
+              </p>
+            )}
           </div>
 
           {/* Vehicle Number */}
@@ -176,11 +197,19 @@ export default function TicketForm() {
                     value: v.registration_number,
                     label: `${v.registration_number}${v.make ? ` — ${v.make}` : ''}${v.model ? ` ${v.model}` : ''}`
                   }))}
+                  showAllOnFocus
                   error={error}
-                  placeholder="Type to search vehicle..."
+                  placeholder={watchSite ? 'Type to search vehicle...' : 'Select a site first'}
                 />
               )}
             />
+            {watchSite && !vehiclesLoading && vehicles.length === 0 && (
+              <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                No vehicles are linked to {watchSite}. Try refreshing the list below —
+                if it stays empty, the site may need to be corrected. Please contact
+                your administrator.
+              </p>
+            )}
             <button
               type="button"
               onClick={handleRefreshVehicles}
@@ -261,7 +290,7 @@ export default function TicketForm() {
           <div className="sticky bottom-0 bg-white py-4 -mx-4 px-4 border-t border-gray-300">
             <button
               type="submit"
-              disabled={createTicket.isPending}
+              disabled={createTicket.isPending || hasNoSites}
               className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {createTicket.isPending ? 'Submitting...' : 'Submit Ticket'}
