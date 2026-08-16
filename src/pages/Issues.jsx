@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { format } from 'date-fns'
+import { formatAs } from '../utils/datetime'
 import { useIssues } from '../hooks/useIssues'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
@@ -89,7 +89,7 @@ export default function Issues() {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                        {issue.sla_end_date ? format(new Date(issue.sla_end_date), 'MMM d') : '-'}
+                                        {issue.sla_end_date ? formatAs(issue.sla_end_date, 'MMM d') : '-'}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                         {issue.job_card?.job_card_number ? (
