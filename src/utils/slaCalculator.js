@@ -1,6 +1,24 @@
 import { supabase } from '../lib/supabase'
 
-/* 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * PARKED — nothing imports this file today (MAIN-43).
+ *
+ * It is NOT dead code and must NOT be deleted. SLA is currently calculated by
+ * database triggers; this module is the frontend counterpart, kept to be fixed
+ * and wired up rather than thrown away. It has been mistaken for dead code once
+ * already, so please read MAIN-43 before touching it.
+ *
+ * Known defect while it sits here: every `new Date(value)` below parses a naive
+ * Postgres timestamp as local time, which is 5.5 hours early for IST — the
+ * MAIN-42 bug. Use src/utils/datetime.js when this is revived. The `date`
+ * columns (sla_end_date) additionally need a decision on whether a deadline
+ * means the start or the end of that day.
+ *
+ * ► DELETE THIS BANNER as part of MAIN-43, once the file is fixed and imported.
+ *   Leaving it here after that would be worse than not having written it.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/*
  * NOTE: Acceptance SLA is dynamic based on system_settings.
  * Completion SLA is dynamic based on database rules.
  */
