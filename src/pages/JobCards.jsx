@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { format } from 'date-fns'
+import { formatAs } from '../utils/datetime'
 import { useJobCards } from '../hooks/useJobCards'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
@@ -156,7 +156,7 @@ export default function JobCards() {
                                             {jc.location?.name || '—'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                            {format(new Date(jc.created_at), 'MMM d, yyyy')}
+                                            {formatAs(jc.created_at, 'MMM d, yyyy')}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${

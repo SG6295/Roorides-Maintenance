@@ -1,4 +1,5 @@
 import { formatDistanceToNow } from 'date-fns'
+import { toDate } from '../../utils/datetime'
 import { useSLAEvents } from '../../hooks/useSLA'
 import { useAuditLogs } from '../../hooks/useAuditLogs'
 
@@ -13,8 +14,11 @@ export default function TicketTimeline({ ticketId }) {
         ...(slaEvents || []).map(e => ({ ...e, type: 'SLA' })),
         ...(auditLogs || []).map(e => ({ ...e, type: 'AUDIT' }))
     ].sort((a, b) => {
-        const dateA = new Date(a.created_at || a.performed_at)
-        const dateB = new Date(b.created_at || b.performed_at)
+        // Both sources are timestamptz (sla_events.created_at, audit_logs.performed_at),
+        // so these already parse correctly — routed through the helper so a future column
+        // added here as a naive timestamp cannot silently sort 5.5 hours out of place.
+        const dateA = toDate(a.created_at || a.performed_at)
+        const dateB = toDate(b.created_at || b.performed_at)
         return dateB - dateA // Descending
     })
 
@@ -53,8 +57,8 @@ export default function TicketTimeline({ ticketId }) {
                                             </p>
                                         </div>
                                         <div className="whitespace-nowrap text-right text-sm text-gray-600">
-                                            <time dateTime={date} title={new Date(date).toLocaleString()}>
-                                                {formatDistanceToNow(new Date(date), { addSuffix: true })}
+                                            <time dateTime={date} title={toDate(date)?.toLocaleString()}>
+                                                {formatDistanceToNow(toDate(date), { addSuffix: true })}
                                             </time>
                                         </div>
                                     </div>

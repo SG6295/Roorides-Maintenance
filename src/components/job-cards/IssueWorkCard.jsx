@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { format } from 'date-fns'
+import { formatAs } from '../../utils/datetime'
 import { useUpdateIssue } from '../../hooks/useIssues'
 import { useAddIssuePart, useDeleteIssuePart, useCreatePart } from '../../hooks/useParts'
 import { usePartUnits } from '../../hooks/useInventory'
@@ -193,7 +193,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                 </span>
                 {issue.sla_end_date && (
                     <span className="text-xs text-gray-500">
-                        SLA: {format(new Date(issue.sla_end_date), 'MMM d')}
+                        SLA: {formatAs(issue.sla_end_date, 'MMM d')}
                     </span>
                 )}
             </div>

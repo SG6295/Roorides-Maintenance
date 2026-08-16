@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Fragment } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { format } from 'date-fns'
+import { formatAs, formatDate, todayLocal } from '../utils/datetime'
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from '@headlessui/react'
 import { useAuth } from '../hooks/useAuth'
 import { useJobCard, useUpdateJobCard } from '../hooks/useJobCards'
@@ -109,7 +109,9 @@ export default function JobCardDetail() {
     })
     const [showInvoiceErrors, setShowInvoiceErrors] = useState(false)
 
-    const todayStr = new Date().toISOString().split('T')[0]
+    // Local, not UTC: toISOString() still says yesterday until 05:30 IST, which caps the
+    // date picker a day short and rejects an invoice dated today.
+    const todayStr = todayLocal()
 
     useEffect(() => {
         if (jobCard) {
@@ -424,7 +426,7 @@ export default function JobCardDetail() {
                             </span>
                         </div>
                         <span className="text-xs text-gray-500">
-                            {format(new Date(jobCard.created_at), 'MMM d, yyyy')}
+                            {formatAs(jobCard.created_at, 'MMM d, yyyy')}
                         </span>
                     </div>
 
@@ -808,7 +810,7 @@ export default function JobCardDetail() {
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                                 {[
                                     ['Date of Activity', existingInvoice?.date_of_activity
-                                        ? format(new Date(existingInvoice.date_of_activity), 'dd MMM yyyy')
+                                        ? formatDate(existingInvoice.date_of_activity)
                                         : '—'],
                                     ['Invoice No', existingInvoice?.invoice_no || '—'],
                                     ['Paid By', existingInvoice?.paid_by || '—'],
@@ -826,7 +828,7 @@ export default function JobCardDetail() {
                                         ? `₹${Number(existingInvoice.approved_amount - existingInvoice.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
                                         : '—'],
                                     ['Pay By Date', existingInvoice?.payby_date
-                                        ? format(new Date(existingInvoice.payby_date), 'dd MMM yyyy')
+                                        ? formatDate(existingInvoice.payby_date)
                                         : '—'],
                                 ].map(([label, value]) => (
                                     <div key={label}>
