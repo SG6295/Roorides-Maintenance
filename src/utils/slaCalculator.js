@@ -10,9 +10,26 @@ import { supabase } from '../lib/supabase'
  *
  * Known defect while it sits here: every `new Date(value)` below parses a naive
  * Postgres timestamp as local time, which is 5.5 hours early for IST — the
- * MAIN-42 bug. Use src/utils/datetime.js when this is revived. The `date`
- * columns (sla_end_date) additionally need a decision on whether a deadline
- * means the start or the end of that day.
+ * MAIN-42 bug. Use src/utils/datetime.js when this is revived.
+ *
+ * What MAIN-45 settled, which this file does NOT yet reflect:
+ *
+ *   • A deadline is a timestamptz, not a date. The old open question — start or
+ *     end of the day — is gone: a deadline carries the time of day the work was
+ *     raised. Raised 22:00, due 22:00.
+ *   • EVERY SLA counts working days, skipping sla_weekly_offs and the holidays
+ *     calendar. calculateSLAEndDate() below already walks working days, but
+ *     checkAcceptanceSLA() and checkCompletionSLA() still reason in flat 24-hour
+ *     days and would disagree with the database.
+ *   • The calendar walk belongs in IST. calculateSLAEndDate() matches holidays
+ *     with toISOString().split('T')[0], the UTC date, so between 00:00 and 05:30
+ *     IST it tests the wrong day.
+ *   • Deadlines are recomputed when rules or the calendar change, for open work
+ *     only. Anything here that caches a deadline has to honour that.
+ *
+ * Whatever this becomes, it must not re-derive a deadline the database already
+ * stores — that divergence was the bug MAIN-45 existed to kill. Read the stored
+ * value; compute only what is genuinely not persisted.
  *
  * ► DELETE THIS BANNER as part of MAIN-43, once the file is fixed and imported.
  *   Leaving it here after that would be worse than not having written it.
@@ -46,17 +63,21 @@ export async function fetchSystemSetting(key) {
 }
 
 /**
- * Fetch SLA days from database based on impact and category
+ * Fetch SLA days from database based on severity and category
  * Returns default 3 if not found or error
+ *
+ * Reads `sla_rules_config` — the table the DB triggers use. This used to query
+ * `sla_rules`, which nothing consumed and which MAIN-47 dropped; the argument was
+ * named `impact` after that table's column, but the issues table calls it `severity`.
  */
-export async function fetchSLADays(impact, category) {
-  if (!impact || !category) return 3
+export async function fetchSLADays(severity, category) {
+  if (!severity || !category) return 3
 
   try {
     const { data, error } = await supabase
-      .from('sla_rules')
-      .select('days')
-      .eq('impact', impact)
+      .from('sla_rules_config')
+      .select('sla_days')
+      .eq('severity', severity)
       .eq('category', category)
       .single()
 
@@ -65,7 +86,7 @@ export async function fetchSLADays(impact, category) {
       return 3
     }
 
-    return data.days
+    return data.sla_days
   } catch (err) {
     console.error('Error fetching SLA:', err)
     return 3

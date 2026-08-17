@@ -1,16 +1,15 @@
 import { Link } from 'react-router-dom'
-import { format, addDays } from 'date-fns'
+import { formatAs, toDate } from '../../utils/datetime'
 import SLATimer from '../shared/SLATimer'
 
-// Supabase returns timestamptz without 'Z', causing JS to parse as local time instead of UTC.
-// Appending 'Z' forces correct UTC interpretation.
-const parseUTC = (ts) => ts ? new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z') : null
-
-export default function TicketCard({ ticket, currentDate, acceptanceSLADays = 1 }) {
-    let acceptanceDeadline = null
-    if (ticket.status === 'Pending' || ticket.status === 'New') {
-        acceptanceDeadline = addDays(parseUTC(ticket.created_at), acceptanceSLADays)
-    }
+export default function TicketCard({ ticket, currentDate }) {
+    // The deadline is read, not computed. It used to be built here with addDays() — plain
+    // 24-hour days — while the database judged the same SLA in working days, so across a
+    // weekend the badge could show breached while the stored verdict said Adhered. The
+    // database now stamps tickets.acceptance_sla_end_date and owns the definition (MAIN-45).
+    const acceptanceDeadline = ticket.status === 'New'
+        ? toDate(ticket.acceptance_sla_end_date)
+        : null
 
     return (
         <Link
@@ -52,7 +51,7 @@ export default function TicketCard({ ticket, currentDate, acceptanceSLADays = 1 
                         {ticket.supervisor_name}
                     </div>
                     <div className="text-gray-500">
-                        {format(parseUTC(ticket.created_at), 'MMM d, yyyy h:mm a')}
+                        {formatAs(ticket.created_at, 'MMM d, yyyy h:mm a')}
                     </div>
                 </div>
             </div>
@@ -78,10 +77,12 @@ function StatusBadge({ status }) {
 }
 
 function SLABadge({ ticket, currentDate, acceptanceDeadline }) {
-    if ((ticket.status === 'Pending' || ticket.status === 'New') && acceptanceDeadline) {
+    if (ticket.status === 'New' && acceptanceDeadline) {
         return <SLATimer targetDate={acceptanceDeadline} currentDate={currentDate} />
     }
 
+    // Tickets from before the timestamptz migration carry no deadline and a verdict of NA
+    // (MAIN-45): there is nothing to count down to, so show nothing rather than a zero.
     if (ticket.final_sla_end_date) {
         return <SLATimer targetDate={ticket.final_sla_end_date} currentDate={currentDate} />
     }

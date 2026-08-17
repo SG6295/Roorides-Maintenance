@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import TicketCard from './TicketCard'
 
-export default function StatusAccordion({ tickets, statusCounts, currentDate, acceptanceSLADays }) {
+export default function StatusAccordion({ tickets, statusCounts, currentDate }) {
   const [openStatuses, setOpenStatuses] = useState({
     'New': true,
     'Accepted': false,
@@ -77,7 +77,6 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate, ac
                       key={ticket.id}
                       ticket={ticket}
                       currentDate={currentDate}
-                      acceptanceSLADays={acceptanceSLADays}
                     />
                   ))
                 ) : (

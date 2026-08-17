@@ -22,7 +22,7 @@ export default function SLASettings({ embedded = false }) {
         setLoading(true)
         try {
             const [rulesRes, settingsRes, offsRes, holidaysRes] = await Promise.all([
-                supabase.from('sla_rules').select('*').order('impact').order('category'),
+                supabase.from('sla_rules_config').select('*').order('severity', { ascending: false }).order('category'),
                 supabase.from('system_settings').select('value').eq('key', 'acceptance_sla_days').single(),
                 supabase.from('system_settings').select('value').eq('key', 'sla_weekly_offs').single(),
                 supabase.from('holidays').select('*').order('date')
@@ -107,12 +107,12 @@ export default function SLASettings({ embedded = false }) {
 
     const handleDayChange = async (id, newDays) => {
         // Optimistic update
-        setRules(rules.map(r => r.id === id ? { ...r, days: parseInt(newDays) } : r))
+        setRules(rules.map(r => r.id === id ? { ...r, sla_days: parseInt(newDays) } : r))
 
         try {
             const { error } = await supabase
-                .from('sla_rules')
-                .update({ days: parseInt(newDays) })
+                .from('sla_rules_config')
+                .update({ sla_days: parseInt(newDays) })
                 .eq('id', id)
 
             if (error) throw error
@@ -167,7 +167,7 @@ export default function SLASettings({ embedded = false }) {
                     <div className="flex items-center justify-between max-w-lg">
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Acceptance SLA Threshold</label>
-                            <p className="text-xs text-gray-600">Max days to assign a ticket before violation</p>
+                            <p className="text-xs text-gray-600">Max working days to assign a ticket before violation</p>
                         </div>
                         <div className="flex items-center">
                             <input
@@ -178,14 +178,14 @@ export default function SLASettings({ embedded = false }) {
                                 readOnly={!canEdit}
                                 className={`w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm sm:text-sm ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}
                             />
-                            <span className="ml-2 text-sm text-gray-600">days</span>
+                            <span className="ml-2 text-sm text-gray-600">working days</span>
                         </div>
                     </div>
 
                     {/* Weekly Offs */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Weekly Offs</label>
-                        <p className="text-xs text-gray-600 mb-3">SLA calculations will skip these days.</p>
+                        <p className="text-xs text-gray-600 mb-3">All SLA deadlines skip these days.</p>
                         <div className="flex gap-4 flex-wrap">
                             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
                                 <label key={day} className={`inline-flex items-center ${!canEdit ? 'cursor-default' : ''}`}>
@@ -205,7 +205,7 @@ export default function SLASettings({ embedded = false }) {
                     {/* Holidays */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Holidays</label>
-                        <p className="text-xs text-gray-600 mb-3">Add specific dates to exclude from SLA.</p>
+                        <p className="text-xs text-gray-600 mb-3">Add specific dates to exclude from SLA. Editing these recalculates deadlines on tickets still open.</p>
 
                         <form onSubmit={canEdit ? addHoliday : (e) => e.preventDefault()} className="flex gap-2 mb-4 max-w-lg">
                             <input
@@ -263,13 +263,13 @@ export default function SLASettings({ embedded = false }) {
                         <thead className="bg-gray-50">
                             <tr>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Impact
+                                    Severity
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Category
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    SLA Days
+                                    SLA Working Days
                                 </th>
                             </tr>
                         </thead>
@@ -279,9 +279,9 @@ export default function SLASettings({ embedded = false }) {
                             ) : rules.map((rule) => (
                                 <tr key={rule.id}>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${rule.impact === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'
+                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${rule.severity === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'
                                             }`}>
-                                            {rule.impact}
+                                            {rule.severity}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -293,7 +293,7 @@ export default function SLASettings({ embedded = false }) {
                                             min="1"
                                             readOnly={!canEdit}
                                             className={`w-20 px-2 py-1 border border-gray-300 rounded ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}
-                                            value={rule.days}
+                                            value={rule.sla_days}
                                             onChange={(e) => canEdit && handleDayChange(rule.id, e.target.value)}
                                         />
                                     </td>
