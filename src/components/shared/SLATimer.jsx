@@ -1,15 +1,23 @@
 import { differenceInMinutes } from 'date-fns'
+import { toDate } from '../../utils/datetime'
 
-/* 
+/*
  * Optimised SLA Timer
  * Does NOT maintain internal state. Relies on parent to pass 'currentDate'.
- * This allows the parent to control the update frequency (e.g. 1 min) 
+ * This allows the parent to control the update frequency (e.g. 1 min)
  * for 1000s of rows efficiently.
+ *
+ * targetDate used to arrive as a bare `date` like "2026-08-20", and `new Date()` parses
+ * that as UTC midnight — 05:30 IST. The countdown was aiming at half past five in the
+ * morning, an instant nobody chose. Deadlines are timestamptz now (MAIN-45) and toDate()
+ * handles either form.
  */
 export default function SLATimer({ targetDate, currentDate }) {
     if (!targetDate || !currentDate) return null
 
-    const target = new Date(targetDate)
+    const target = toDate(targetDate)
+    if (!target) return null
+
     const diffMinutes = differenceInMinutes(target, currentDate)
 
     const isOverdue = diffMinutes < 0

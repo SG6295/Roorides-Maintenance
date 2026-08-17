@@ -40,7 +40,7 @@ export default function Analytics() {
                 .from('tickets')
                 .select('*', { count: 'exact', head: true })
                 .not('status', 'in', '("Resolved","Closed","Rejected")')
-                .lt('final_sla_end_date', format(new Date(), 'yyyy-MM-dd'))
+                .lt('final_sla_end_date', new Date().toISOString())
             if (error) throw error
             return count || 0
         },
@@ -79,14 +79,17 @@ export default function Analytics() {
             accept_pending: acc.accept_pending + curr.accept_pending,
             accept_adhered: acc.accept_adhered + curr.accept_adhered,
             accept_violated: acc.accept_violated + curr.accept_violated,
+            accept_na: acc.accept_na + curr.accept_na,
 
             comp_in_wip_within: acc.comp_in_wip_within + curr.comp_in_wip_within,
             comp_in_adhered: acc.comp_in_adhered + curr.comp_in_adhered,
             comp_in_violated: acc.comp_in_violated + curr.comp_in_violated,
+            comp_in_na: acc.comp_in_na + curr.comp_in_na,
 
             comp_out_wip_within: acc.comp_out_wip_within + curr.comp_out_wip_within,
             comp_out_adhered: acc.comp_out_adhered + curr.comp_out_adhered,
             comp_out_violated: acc.comp_out_violated + curr.comp_out_violated,
+            comp_out_na: acc.comp_out_na + curr.comp_out_na,
 
             rating_pending: acc.rating_pending + curr.rating_pending,
             rating_collected: acc.rating_collected + curr.rating_collected,
@@ -102,9 +105,9 @@ export default function Analytics() {
             major_total: 0, major_electrical: 0, major_mechanical: 0, major_body: 0, major_tyre: 0,
             minor_total: 0, minor_electrical: 0, minor_mechanical: 0, minor_body: 0, minor_tyre: 0,
             type_in_house: 0, type_outsource: 0,
-            accept_pending: 0, accept_adhered: 0, accept_violated: 0,
-            comp_in_wip_within: 0, comp_in_adhered: 0, comp_in_violated: 0,
-            comp_out_wip_within: 0, comp_out_adhered: 0, comp_out_violated: 0,
+            accept_pending: 0, accept_adhered: 0, accept_violated: 0, accept_na: 0,
+            comp_in_wip_within: 0, comp_in_adhered: 0, comp_in_violated: 0, comp_in_na: 0,
+            comp_out_wip_within: 0, comp_out_adhered: 0, comp_out_violated: 0, comp_out_na: 0,
             rating_pending: 0, rating_collected: 0, rating_good: 0, rating_ok: 0, rating_bad: 0,
             csat_score_sum: 0, total_completed_tickets: 0
         })
@@ -133,7 +136,19 @@ export default function Analytics() {
         const acceptTotal = aggregates.accept_adhered + aggregates.accept_violated
         const acceptRate = acceptTotal > 0 ? Math.round((aggregates.accept_adhered / acceptTotal) * 100) : null
 
-        return { adherenceRate, totalAdhered, totalResolved, acceptRate, acceptTotal, acceptAdhered: aggregates.accept_adhered }
+        // Tickets raised before the timestamptz migration were never measured under the
+        // current rules and carry a verdict of NA (MAIN-45). They are excluded from every
+        // rate above, and counted separately here so the figures still reconcile against
+        // the ticket total instead of silently swelling "awaiting issue".
+        const completionNA = aggregates.comp_in_na + aggregates.comp_out_na
+        const acceptNA = aggregates.accept_na
+        const acceptAwaiting = aggregates.total_tickets - acceptTotal - acceptNA
+
+        return {
+            adherenceRate, totalAdhered, totalResolved,
+            acceptRate, acceptTotal, acceptAdhered: aggregates.accept_adhered,
+            completionNA, acceptNA, acceptAwaiting
+        }
     }, [aggregates])
 
     const downloadCSV = () => {
@@ -151,11 +166,11 @@ export default function Analytics() {
             // 4. In House / Outsource
             'In House', 'Outsource',
             // 5. Acceptance SLA
-            'Accept (Pending)', 'Accept (Adhered)', 'Accept (Violated)', 'Acceptance SLA % (Sharan KPI)',
+            'Accept (Pending)', 'Accept (Adhered)', 'Accept (Violated)', 'Accept (Not Tracked)', 'Acceptance SLA % (Sharan KPI)',
             // 6. Completion SLA (In House)
-            'Comp In (WIP Within)', 'Comp In (Adhered)', 'Comp In (Violated)', 'Comp In SLA % (Sharan KPI)',
+            'Comp In (WIP Within)', 'Comp In (Adhered)', 'Comp In (Violated)', 'Comp In (Not Tracked)', 'Comp In SLA % (Sharan KPI)',
             // 7. Completion SLA (Outsourced)
-            'Comp Out (WIP Within)', 'Comp Out (Adhered)', 'Comp Out (Violated)', 'Comp Out SLA % (Manjunath KPI)',
+            'Comp Out (WIP Within)', 'Comp Out (Adhered)', 'Comp Out (Violated)', 'Comp Out (Not Tracked)', 'Comp Out SLA % (Manjunath KPI)',
             // 8. Ratings
             'Rating Pending', 'Ratings Collected', 'Collection % (Sharan KPI)',
             'Good', 'Ok', 'Bad', 'CSAT % (Manjunath KPI)'
@@ -197,11 +212,11 @@ export default function Analytics() {
                 // Type
                 row.type_in_house, row.type_outsource,
                 // Assign SLA
-                row.accept_pending, row.accept_adhered, row.accept_violated, acceptSLA,
+                row.accept_pending, row.accept_adhered, row.accept_violated, row.accept_na, acceptSLA,
                 // Comp In SLA
-                row.comp_in_wip_within, row.comp_in_adhered, row.comp_in_violated, compInSLA,
+                row.comp_in_wip_within, row.comp_in_adhered, row.comp_in_violated, row.comp_in_na, compInSLA,
                 // Comp Out SLA
-                row.comp_out_wip_within, row.comp_out_adhered, row.comp_out_violated, compOutSLA,
+                row.comp_out_wip_within, row.comp_out_adhered, row.comp_out_violated, row.comp_out_na, compOutSLA,
                 // Ratings
                 row.rating_pending, row.rating_collected, collectionPerc,
                 row.rating_good, row.rating_ok, row.rating_bad, csatPerc
@@ -260,14 +275,14 @@ export default function Analytics() {
                             title="Overall SLA Adherence"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
                             rate={slaMetrics?.adherenceRate}
-                            detail={slaMetrics ? `${slaMetrics.totalAdhered} adhered · ${slaMetrics.totalResolved - slaMetrics.totalAdhered} violated (of ${aggregates?.total_tickets} total tickets)` : null}
+                            detail={slaMetrics ? `${slaMetrics.totalAdhered} adhered · ${slaMetrics.totalResolved - slaMetrics.totalAdhered} violated${slaMetrics.completionNA ? ` · ${slaMetrics.completionNA} not tracked` : ''} (of ${aggregates?.total_tickets} total tickets)` : null}
                             icon={<CheckCircleIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
                             title="Acceptance SLA Compliance"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
                             rate={slaMetrics?.acceptRate}
-                            detail={slaMetrics ? `${slaMetrics.acceptAdhered} on time · ${slaMetrics.acceptTotal - slaMetrics.acceptAdhered} late · ${aggregates?.total_tickets - slaMetrics.acceptTotal} awaiting issue` : null}
+                            detail={slaMetrics ? `${slaMetrics.acceptAdhered} on time · ${slaMetrics.acceptTotal - slaMetrics.acceptAdhered} late${slaMetrics.acceptNA ? ` · ${slaMetrics.acceptNA} not tracked` : ''} · ${slaMetrics.acceptAwaiting} awaiting issue` : null}
                             icon={<ClockIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
@@ -322,6 +337,9 @@ export default function Analytics() {
                         <VerticalTable title="Completion SLA">
                             <Row label="Adhered" value={aggregates.comp_in_adhered} color="text-green-600" />
                             <Row label="Violated" value={aggregates.comp_in_violated} color="text-red-600" />
+                            {aggregates.comp_in_na > 0 && (
+                                <Row label="Not tracked (pre-migration)" value={aggregates.comp_in_na} color="text-gray-500" />
+                            )}
                             <Row label="SLA %" value={aggregates.comp_in_sla_perc} bold />
                         </VerticalTable>
 

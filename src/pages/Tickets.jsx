@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import { dateKey } from '../utils/datetime'
-import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useTickets, useSites } from '../hooks/useTickets'
 import Navigation from '../components/shared/Navigation'
@@ -14,8 +13,9 @@ export default function Tickets() {
   useAuth()
   const { data: sites = [] } = useSites()
 
-  // SLA & Timer State
-  const [acceptanceSLADays, setAssignmentSLADays] = useState(1)
+  // Timer state. The acceptance SLA threshold used to be fetched here so TicketCard could
+  // compute a deadline in JavaScript; the database stamps it now (MAIN-45), so the setting
+  // is no longer needed on this page.
   const [now, setNow] = useState(new Date())
 
   // Initialize with current month as default
@@ -35,23 +35,8 @@ export default function Tickets() {
   // Fetch all tickets (we'll filter by date on client side)
   const { data: allTickets, isLoading } = useTickets({})
 
-  // Fetch System Settings & Start Timer
+  // Sync timer to next full minute for cleaner updates
   useEffect(() => {
-    // 1. Fetch Acceptance SLA Threshold
-    const fetchSettings = async () => {
-      const { data } = await supabase
-        .from('system_settings')
-        .select('value')
-        .eq('key', 'acceptance_sla_days')
-        .single()
-
-      if (data) {
-        setAssignmentSLADays(parseInt(data.value) || 1)
-      }
-    }
-    fetchSettings()
-
-    // 2. Sync timer to next full minute for cleaner updates
     const delay = 60000 - (new Date().getTime() % 60000)
     let interval
     const timeout = setTimeout(() => {
@@ -218,7 +203,6 @@ export default function Tickets() {
             tickets={filteredTickets}
             statusCounts={statusCounts}
             currentDate={now}
-            acceptanceSLADays={acceptanceSLADays}
           />
         )}
       </div>

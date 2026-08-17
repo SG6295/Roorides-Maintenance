@@ -10,8 +10,7 @@ import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import { getDriveThumbnailUrl } from '../lib/googleDrive'
 import Navigation from '../components/shared/Navigation'
 import SLATimer from '../components/shared/SLATimer'
-
-const parseUTC = (ts) => ts ? new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z') : null
+import { toDate } from '../utils/datetime'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import PhotoUpload from '../components/tickets/PhotoUpload'
 import TicketTimeline from '../components/tickets/TicketTimeline'
@@ -105,7 +104,7 @@ export default function TicketDetail() {
                   <StatusBadge status={ticket.status} />
                 </div>
                 <p className="text-sm text-gray-600 mt-1">
-                  Created {format(parseUTC(ticket.created_at), 'MMM d, yyyy')} by {ticket.supervisor_name}
+                  Created {format(toDate(ticket.created_at), 'MMM d, yyyy')} by {ticket.supervisor_name}
                 </p>
               </div>
             </div>
@@ -350,7 +349,22 @@ function SLAWarning({ ticket }) {
     return () => clearInterval(t)
   }, [])
 
-  const deadline = ticket.final_sla_end_date
+  // Tickets raised before the timestamptz migration carry no deadline and a verdict of NA
+  // (MAIN-45). Say so rather than showing nothing, so an empty panel is not mistaken for
+  // an SLA that was met.
+  if (ticket.overall_sla_status === 'NA') {
+    return (
+      <div className="mt-4 flex items-center gap-3 px-4 py-3 rounded-lg border bg-gray-50 border-gray-200">
+        <span className="text-base">—</span>
+        <div>
+          <p className="text-sm font-semibold text-gray-700">SLA not available</p>
+          <p className="text-xs text-gray-500">Raised before SLA deadlines were tracked to the minute</p>
+        </div>
+      </div>
+    )
+  }
+
+  const deadline = toDate(ticket.final_sla_end_date)
   if (!deadline) return null
 
   const isTerminal = ticket.status === 'Resolved' || ticket.status === 'Closed'
@@ -364,13 +378,13 @@ function SLAWarning({ ticket }) {
         <span className="text-base">{adhered ? '✅' : '⚠️'}</span>
         <div>
           <p className={`text-sm font-semibold ${adhered ? 'text-green-700' : 'text-red-700'}`}>SLA {adhered ? 'Adhered' : 'Violated'}</p>
-          <p className="text-xs text-gray-500">Deadline was {format(new Date(deadline), 'MMM d, yyyy')}</p>
+          <p className="text-xs text-gray-500">Deadline was {format(deadline, 'MMM d, yyyy, h:mm a')}</p>
         </div>
       </div>
     )
   }
 
-  const diffDays = Math.ceil((new Date(deadline) - now) / (1000 * 60 * 60 * 24))
+  const diffDays = Math.ceil((deadline - now) / (1000 * 60 * 60 * 24))
   const isOverdue = diffDays < 0
   const isWarning = !isOverdue && diffDays <= 2
 
@@ -388,7 +402,7 @@ function SLAWarning({ ticket }) {
           <p className={`text-sm font-semibold ${styles.label}`}>
             {isOverdue ? 'SLA Violated' : isWarning ? 'SLA Due Soon' : 'SLA On Track'}
           </p>
-          <p className="text-xs text-gray-500">{styles.sub} {format(new Date(deadline), 'MMM d, yyyy')}</p>
+          <p className="text-xs text-gray-500">{styles.sub} {format(deadline, 'MMM d, yyyy, h:mm a')}</p>
         </div>
       </div>
       <SLATimer targetDate={deadline} currentDate={now} />
@@ -1025,7 +1039,7 @@ function JobCardsTab({ ticket, issues }) {
                       Job Card #{jc.job_card_number}
                     </Link>
                   </h3>
-                  <p className="text-sm text-gray-600">{jc.type} • {format(parseUTC(jc.created_at), 'MMM d, yyyy')}</p>
+                  <p className="text-sm text-gray-600">{jc.type} • {format(toDate(jc.created_at), 'MMM d, yyyy')}</p>
                 </div>
                 <StatusBadge status={jc.status} />
               </div>
