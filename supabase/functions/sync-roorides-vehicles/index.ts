@@ -102,7 +102,7 @@ serve(async (req) => {
     if (allSiteNames.size > 0) {
       // Insert only the name — other columns use DB defaults (is_active defaults to true).
       // ON CONFLICT (name) DO UPDATE SET name = name is effectively a no-op for existing rows,
-      // preserving any manual is_active changes made locally.
+      // so a site's row is never rewritten once created. is_active is set below instead.
       const siteRows = [...allSiteNames].map(name => ({ name }))
       const { error: sitesError } = await supabase
         .from('sites')
@@ -151,10 +151,50 @@ serve(async (req) => {
       if (insertError) throw insertError
     }
 
-    console.log(`sync-roorides-vehicles: synced ${uniqueVehicles.length} vehicles, ${allSiteNames.size} sites, ${vehicleSitesRecords.length} vehicle-site associations`)
+    // Step 7: a site is active exactly when this feed still places a vehicle at it.
+    //
+    // Sites are never deleted — tickets, job cards and user_sites reference them, and a
+    // school that leaves still has history worth keeping. So departure is expressed as
+    // is_active = false, which hides the site from the New Ticket form without touching
+    // anything that points at it.
+    //
+    // This is deliberately two-way and fully machine-owned: there is no UI for toggling a
+    // site, so nothing here can overwrite a human decision, and a partial feed that wrongly
+    // deactivates a site is corrected by the next good sync. The empty-response guard above
+    // means a total outage can never deactivate everything.
+    const { data: existingSites, error: readSitesError } = await supabase
+      .from('sites')
+      .select('id, name, is_active')
+    if (readSitesError) throw readSitesError
+
+    const toActivate = (existingSites ?? [])
+      .filter(s => allSiteNames.has(s.name) && !s.is_active)
+      .map(s => s.id)
+    const toDeactivate = (existingSites ?? [])
+      .filter(s => !allSiteNames.has(s.name) && s.is_active)
+      .map(s => s.id)
+
+    if (toActivate.length > 0) {
+      const { error } = await supabase
+        .from('sites').update({ is_active: true }).in('id', toActivate)
+      if (error) throw error
+    }
+    if (toDeactivate.length > 0) {
+      const { error } = await supabase
+        .from('sites').update({ is_active: false }).in('id', toDeactivate)
+      if (error) throw error
+    }
+
+    console.log(`sync-roorides-vehicles: synced ${uniqueVehicles.length} vehicles, ${allSiteNames.size} sites, ${vehicleSitesRecords.length} vehicle-site associations, ${toActivate.length} sites reactivated, ${toDeactivate.length} deactivated`)
 
     return new Response(
-      JSON.stringify({ success: true, synced: uniqueVehicles.length, sites: allSiteNames.size }),
+      JSON.stringify({
+        success: true,
+        synced: uniqueVehicles.length,
+        sites: allSiteNames.size,
+        sitesActivated: toActivate.length,
+        sitesDeactivated: toDeactivate.length,
+      }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 
