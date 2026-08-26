@@ -6880,11 +6880,27 @@ CREATE TABLE public.sites (
     id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
     name text NOT NULL,
     is_active boolean DEFAULT true,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp without time zone DEFAULT now(),
+    display_name text,
+    corp_id integer
 );
 
 
 ALTER TABLE public.sites OWNER TO postgres;
+
+--
+-- Name: COLUMN sites.display_name; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.sites.display_name IS 'Full school name (corpName) from the Roorides corporation mapping. Display only; NULL until the sync finds a matching corpShortName.';
+
+
+--
+-- Name: COLUMN sites.corp_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.sites.corp_id IS 'Roorides corpId for this site. Display only; NULL until the sync finds a matching corpShortName.';
+
 
 --
 -- Name: sla_events; Type: TABLE; Schema: public; Owner: postgres
