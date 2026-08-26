@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import { useCreateTicket, useSites, useVehicles } from '../../hooks/useTickets'
+import { useCreateTicket, useVehicles } from '../../hooks/useTickets'
+import { useActiveSites } from '../../hooks/useSites'
+import { formatSiteLabel } from '../../utils/siteLabel'
 import { useQueryClient } from '@tanstack/react-query'
 import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
@@ -45,7 +47,8 @@ export default function TicketForm() {
     prevSiteRef.current = watchSite
   }, [watchSite, setValue])
 
-  const { data: allSites = [] } = useSites()
+  // Active only — a ticket must not be raised against a school that has left.
+  const { data: allSites = [] } = useActiveSites()
 
   // Supervisors only see their assigned sites; others see all
   const isSupervisor = userProfile?.role === 'supervisor'
@@ -164,7 +167,10 @@ export default function TicketForm() {
                   label={<span>Site <span className="text-red-500">*</span></span>}
                   value={value}
                   onChange={onChange}
-                  options={availableSites.map(s => ({ value: s.name, label: s.name }))}
+                  // The value stays the bare code — tickets.site is free text matched
+                  // exactly. Only the label carries the full name and corp id, which is
+                  // what makes all three searchable here.
+                  options={availableSites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
                   // Exactly one site is prefilled, so there is nothing to choose.
                   // Zero sites must stay enabled — a locked empty field is a dead end.
                   disabled={singleSiteName !== null}

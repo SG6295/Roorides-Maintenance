@@ -7,7 +7,8 @@ import { supabase } from '../lib/supabase'
 import Navigation from '../components/shared/Navigation'
 import { ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { useUpdateIssue } from '../hooks/useIssues'
-import { useSites } from '../hooks/useTickets'
+import { useAllSites } from '../hooks/useSites'
+import { formatSiteLabel } from '../utils/siteLabel'
 import { useAuth } from '../hooks/useAuth'
 import FeedbackModal from '../components/tickets/FeedbackModal'
 import FilterSelect from '../components/shared/FilterSelect'
@@ -75,7 +76,8 @@ export default function FeedbackReport() {
     const { userProfile } = useAuth()
     const queryClient = useQueryClient()
     const updateIssue = useUpdateIssue()
-    const { data: sites = [] } = useSites()
+    // All sites, not just active — resolved issues at a departed school still need rating.
+    const { data: sites = [] } = useAllSites()
 
     const [sortConfig, setSortConfig] = useState({ key: 'created_at', direction: 'desc' })
     const [dateRange, setDateRange] = useState({
@@ -219,7 +221,7 @@ export default function FeedbackReport() {
                                 value={filters.site}
                                 onChange={(site) => setFilters({ ...filters, site })}
                                 placeholder="All Sites"
-                                options={sites.map(s => ({ value: s.name, label: s.name }))}
+                                options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
                             />
 
                             <input
