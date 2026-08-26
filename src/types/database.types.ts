@@ -1110,19 +1110,25 @@ export type Database = {
       }
       sites: {
         Row: {
+          corp_id: number | null
           created_at: string | null
+          display_name: string | null
           id: string
           is_active: boolean | null
           name: string
         }
         Insert: {
+          corp_id?: number | null
           created_at?: string | null
+          display_name?: string | null
           id?: string
           is_active?: boolean | null
           name: string
         }
         Update: {
+          corp_id?: number | null
           created_at?: string | null
+          display_name?: string | null
           id?: string
           is_active?: boolean | null
           name?: string

@@ -79,6 +79,8 @@ Neither the edit nor the activate/deactivate toggle writes to `public.users` fro
 
 **The sync owns `is_active` and rewrites it on every run** — a site is active exactly when the current feed still places a vehicle at it. The rule is two-way, so a site that regains vehicles reactivates itself, and a partial feed that wrongly deactivates one is corrected by the next run. Any UI that writes `is_active` would be silently overwritten within 24 hours, which is why there is deliberately no Sites settings page. `sites` also has no INSERT/UPDATE/DELETE RLS policy, so a browser client cannot write to it at all.
 
+**`display_name` and `corp_id` are sync-owned too** — filled from `GET /api/ManageCorp/GetAllCorporation/0/0`, joined on `corpShortName`. They are display-only (`formatSiteLabel()` in `src/utils/siteLabel.js` renders `CODE — Full Name — corpId` for every site picker) and nothing matches on them, so that join is case-insensitive even though `name` is not. Both stay NULL when no corporation matches, and an unmatched site keeps its existing name rather than being reset. `DCTS` legitimately reads "Demo Corp" upstream; it is shown as-is by decision, not by bug.
+
 Consequences worth knowing before touching site code:
 - A site name is matched **exactly**, including case. The supervisor `SELECT` policy on `tickets` compares `tickets.site` against site names joined through `user_sites`, so a casing mismatch silently hides a supervisor's own tickets. In Aug 2026 an upstream rename (`Agrata` → `AGRATA`) left duplicate rows and cost a manual repointing of 7 assignments, 19 tickets and 17 job cards.
 - Renaming a site means updating every one of those free-text columns **and** `user_sites` in the same transaction.

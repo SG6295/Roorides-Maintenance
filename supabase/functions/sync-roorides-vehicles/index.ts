@@ -29,16 +29,85 @@ async function getRooridesToken(): Promise<string> {
   return data.accessToken
 }
 
+/**
+ * Short code → full school name, from the corporation mapping endpoint.
+ *
+ * The per-vehicle `schoolName` field cannot be used for this: it is an empty string on
+ * every vehicle, and `school` is comma-separated ("VTS, CSS, TMS, DCTS") so several full
+ * names could not be packed into it safely — real school names contain commas.
+ *
+ * corpShortName is unique across the full 0/0 result and is what the vehicle feed's
+ * `school` field contains, so it is the join key. Duplicates are logged rather than
+ * silently resolved, since a collision would mean that assumption has stopped holding.
+ *
+ * Returns an empty map on any failure. The names are cosmetic — failing the whole
+ * vehicle sync, and with it the is_active bookkeeping, over a display lookup would do
+ * far more damage than showing bare short codes for another day.
+ */
+async function fetchCorporations(token: string): Promise<Map<string, { name: string; corpId: number | null }>> {
+  const byShortName = new Map<string, { name: string; corpId: number | null }>()
+
+  try {
+    const res = await fetch(`${ROORIDES_BASE_URL}/ManageCorp/GetAllCorporation/0/0`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!res.ok) {
+      console.warn(`GetAllCorporation failed: ${res.status} ${res.statusText} — site names left unchanged`)
+      return byShortName
+    }
+
+    const raw = await res.json()
+    const rows = Array.isArray(raw) ? raw : []
+
+    for (const c of rows as Array<Record<string, unknown>>) {
+      const shortName = String(c.corpShortName ?? '').trim()
+      const corpName = String(c.corpName ?? '').trim()
+      if (!shortName || !corpName) continue
+
+      // Keyed uppercase so an upstream casing change (the Agrata → AGRATA rename that
+      // caused MAIN-48) does not silently drop the school's name. Safe to normalise
+      // here because nothing downstream matches on this — it is display text only.
+      const key = shortName.toUpperCase()
+      if (byShortName.has(key)) {
+        console.warn(`Duplicate corpShortName "${shortName}" — keeping the first; the join key is no longer unique`)
+        continue
+      }
+
+      const corpId = Number(c.corpId)
+      byShortName.set(key, { name: corpName, corpId: Number.isFinite(corpId) ? corpId : null })
+    }
+
+    console.log(`fetched ${byShortName.size} corporations for site naming`)
+  } catch (err) {
+    console.warn('GetAllCorporation errored — site names left unchanged:', err)
+  }
+
+  return byShortName
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const orgId = Deno.env.get('ROORIDES_ORG_ID') ?? '137'
+    // No fallback on purpose. This used to default to '137' while the real org is 126, so
+    // removing the secret would have quietly synced a *different organisation's* vehicles,
+    // rebuilt vehicle_sites from them and reported success. Matches how ROORIDES_USERNAME
+    // and ROORIDES_PASSWORD already behave.
+    const orgId = Deno.env.get('ROORIDES_ORG_ID')
+    if (!orgId) throw new Error('ROORIDES_ORG_ID secret is not set')
 
     // Step 1: authenticate with Roorides
     const token = await getRooridesToken()
+
+    // Short code → full school name. Same bearer token; never fatal (see the helper).
+    const corporations = await fetchCorporations(token)
 
     // Step 2: fetch all vehicles
     const res = await fetch(`${ROORIDES_BASE_URL}/Vehicle/GetAllVehicles/${orgId}`, {
@@ -108,6 +177,27 @@ serve(async (req) => {
         .from('sites')
         .upsert(siteRows, { onConflict: 'name' })
       if (sitesError) throw sitesError
+    }
+
+    // Step 4b: attach the full school name and corp id to each site.
+    //
+    // Done as targeted updates rather than folded into the upsert above, so a site with
+    // no matching corporation keeps whatever name it already had instead of being reset
+    // to null. corpName is written through as-is — DCTS really does come back as
+    // "Demo Corp" because Roorides test against that record on their live site, and NVS
+    // logs real work against it anyway (decision 2026-08-26: show it, don't build an
+    // override layer).
+    let namedCount = 0
+    for (const siteName of allSiteNames) {
+      const corp = corporations.get(siteName.toUpperCase())
+      if (!corp) continue
+
+      const { error: nameError } = await supabase
+        .from('sites')
+        .update({ display_name: corp.name, corp_id: corp.corpId })
+        .eq('name', siteName)
+      if (nameError) throw nameError
+      namedCount++
     }
 
     // Step 5: upsert vehicles into local vehicles table (bypasses RLS via service role).
@@ -185,13 +275,14 @@ serve(async (req) => {
       if (error) throw error
     }
 
-    console.log(`sync-roorides-vehicles: synced ${uniqueVehicles.length} vehicles, ${allSiteNames.size} sites, ${vehicleSitesRecords.length} vehicle-site associations, ${toActivate.length} sites reactivated, ${toDeactivate.length} deactivated`)
+    console.log(`sync-roorides-vehicles: synced ${uniqueVehicles.length} vehicles, ${allSiteNames.size} sites, ${vehicleSitesRecords.length} vehicle-site associations, ${namedCount} sites named, ${toActivate.length} sites reactivated, ${toDeactivate.length} deactivated`)
 
     return new Response(
       JSON.stringify({
         success: true,
         synced: uniqueVehicles.length,
         sites: allSiteNames.size,
+        sitesNamed: namedCount,
         sitesActivated: toActivate.length,
         sitesDeactivated: toDeactivate.length,
       }),
