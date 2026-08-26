@@ -6,7 +6,7 @@ import { XMarkIcon, EyeIcon, EyeSlashIcon, ArrowPathIcon, ClipboardDocumentIcon,
 import CustomSelect from '../shared/CustomSelect'
 import SiteCheckboxList from './SiteCheckboxList'
 import { supabase } from '../../lib/supabase'
-import { useSites } from '../../hooks/useSites'
+import { useAllSites } from '../../hooks/useSites'
 import { useAuth } from '../../hooks/useAuth'
 import { roleOptions, generatePassword, MIN_PASSWORD_LENGTH } from '../../constants/userRoles'
 
@@ -21,7 +21,9 @@ const EMPTY_FORM = {
 
 export default function EditUserModal({ isOpen, user, onClose, onSuccess }) {
     const { userProfile } = useAuth()
-    const { data: sites = [], isLoading: sitesLoading } = useSites()
+    // All sites — an existing assignment to a deactivated site has to stay visible,
+    // otherwise there is no way to remove it.
+    const { data: sites = [], isLoading: sitesLoading } = useAllSites()
 
     const availableRoles = roleOptions(userProfile?.role)
 

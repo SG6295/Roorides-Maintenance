@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import { dateKey } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
-import { useTickets, useSites } from '../hooks/useTickets'
+import { useTickets } from '../hooks/useTickets'
+import { useAllSites } from '../hooks/useSites'
+import { formatSiteLabel } from '../utils/siteLabel'
 import Navigation from '../components/shared/Navigation'
 import StatusAccordion from '../components/tickets/StatusAccordion'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
@@ -11,7 +13,8 @@ import FilterSelect from '../components/shared/FilterSelect'
 
 export default function Tickets() {
   useAuth()
-  const { data: sites = [] } = useSites()
+  // All sites, not just active — a departed school's past tickets must stay filterable.
+  const { data: sites = [] } = useAllSites()
 
   // Timer state. The acceptance SLA threshold used to be fetched here so TicketCard could
   // compute a deadline in JavaScript; the database stamps it now (MAIN-45), so the setting
@@ -153,7 +156,7 @@ export default function Tickets() {
               value={filters.site}
               onChange={(site) => setFilters({ ...filters, site })}
               placeholder="All Sites"
-              options={sites.map(s => ({ value: s.name, label: s.name }))}
+              options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
             />
 
             {/* Vehicle Search */}

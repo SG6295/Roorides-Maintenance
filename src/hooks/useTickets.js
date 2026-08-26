@@ -115,24 +115,8 @@ export function useUpdateTicket() {
   })
 }
 
-/**
- * Hook to fetch sites
- */
-export function useSites() {
-  return useQuery({
-    queryKey: ['sites'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('sites')
-        .select('*')
-        .eq('is_active', true)
-        .order('name')
-
-      if (error) throw error
-      return data || []
-    },
-  })
-}
+// Sites are not fetched here. useActiveSites / useAllSites in hooks/useSites.js are
+// the only sources — see the note there on why one shared ['sites'] key was a bug.
 
 /**
  * Hook to fetch vehicles, optionally filtered by site via the vehicle_sites junction table.

@@ -6,13 +6,14 @@ import { XMarkIcon, EyeIcon, EyeSlashIcon, ArrowPathIcon, ClipboardDocumentIcon,
 import CustomSelect from '../shared/CustomSelect'
 import SiteCheckboxList from './SiteCheckboxList'
 import { supabase } from '../../lib/supabase'
-import { useSites } from '../../hooks/useSites'
+import { useAllSites } from '../../hooks/useSites'
 import { useAuth } from '../../hooks/useAuth'
 import { roleOptions, generatePassword } from '../../constants/userRoles'
 
 export default function AddUserModal({ isOpen, onClose, onSuccess }) {
     const { userProfile } = useAuth()
-    const { data: sites = [], isLoading: sitesLoading } = useSites()
+    // All sites — SiteCheckboxList greys out and disables the inactive ones itself.
+    const { data: sites = [], isLoading: sitesLoading } = useAllSites()
 
     const availableRoles = roleOptions(userProfile?.role)
     const defaultRole = availableRoles[0]?.value || 'supervisor'

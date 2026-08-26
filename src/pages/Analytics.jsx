@@ -3,13 +3,15 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { format, subMonths, endOfMonth } from 'date-fns'
 import Navigation from '../components/shared/Navigation'
-import { useSites } from '../hooks/useTickets'
+import { useAllSites } from '../hooks/useSites'
+import { formatSiteLabel } from '../utils/siteLabel'
 import FilterSelect from '../components/shared/FilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 export default function Analytics() {
-    const { data: sites = [] } = useSites()
+    // All sites, not just active — reporting on a departed school must still be possible.
+    const { data: sites = [] } = useAllSites()
     const [selectedSite, setSelectedSite] = useState('')
     const [dateRange, setDateRange] = useState({
         start: format(subMonths(new Date(), 11), 'yyyy-MM-01'), // Default last 12 months
@@ -250,7 +252,7 @@ export default function Analytics() {
                                 value={selectedSite}
                                 onChange={setSelectedSite}
                                 placeholder="All Sites"
-                                options={sites.map(s => ({ value: s.name, label: s.name }))}
+                                options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
                             />
 
                             <button
