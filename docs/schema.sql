@@ -718,11 +718,12 @@ COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cr
 
 CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
     LANGUAGE plpgsql
+    SET search_path TO ''
     AS $_$
 begin
     if not exists (
         select 1
-        from pg_event_trigger_ddl_commands() ev
+        from pg_catalog.pg_event_trigger_ddl_commands() ev
         join pg_catalog.pg_extension e on ev.objid = e.oid
         where e.extname = 'pg_graphql'
     ) then
@@ -738,6 +739,7 @@ begin
     )
         returns jsonb
         language sql
+        set search_path to ''
     as $$
         select graphql.resolve(
             query := query,

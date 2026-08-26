@@ -72,6 +72,18 @@ Neither the edit nor the activate/deactivate toggle writes to `public.users` fro
 - `public.user_sites (user_id, site_id)` — supervisors may be assigned to multiple sites. The old `users.site` text column still exists for backwards compatibility but is no longer authoritative — RLS policies join through `user_sites`.
 - `public.vehicle_sites (vehicle_id, site_name)` — vehicles may be assigned to multiple sites, surfaced on the Vehicles page.
 
+### The `sites` table is machine-owned — do not add a UI for it
+`sites` is not maintained by hand. It is a by-product of the Roorides vehicle feed: `sync-roorides-vehicles` splits each vehicle's `school` field and creates a row per distinct value.
+
+**Rows are never deleted.** `tickets.site`, `job_cards.site` and `finance_entries.site` are free text with no foreign key, and `user_sites.site_id` has one, so deleting a site orphans history and breaks supervisor assignments. Departure is expressed as `is_active = false` instead.
+
+**The sync owns `is_active` and rewrites it on every run** — a site is active exactly when the current feed still places a vehicle at it. The rule is two-way, so a site that regains vehicles reactivates itself, and a partial feed that wrongly deactivates one is corrected by the next run. Any UI that writes `is_active` would be silently overwritten within 24 hours, which is why there is deliberately no Sites settings page. `sites` also has no INSERT/UPDATE/DELETE RLS policy, so a browser client cannot write to it at all.
+
+Consequences worth knowing before touching site code:
+- A site name is matched **exactly**, including case. The supervisor `SELECT` policy on `tickets` compares `tickets.site` against site names joined through `user_sites`, so a casing mismatch silently hides a supervisor's own tickets. In Aug 2026 an upstream rename (`Agrata` → `AGRATA`) left duplicate rows and cost a manual repointing of 7 assignments, 19 tickets and 17 job cards.
+- Renaming a site means updating every one of those free-text columns **and** `user_sites` in the same transaction.
+- Active-only is correct for *creating* a ticket and wrong for *filtering history* — a deactivated site's past tickets must still be filterable. See MAIN-50.
+
 ### Edge Functions (`supabase/functions/`)
 All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` for admin operations (auto-provided by Supabase runtime). `create-user` additionally verifies the caller is a `maintenance_exec` by checking their profile via the anon key + caller JWT before proceeding.
 
@@ -83,7 +95,7 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 | `daily-digest` | Reads `user_settings.notify_daily_digest` and sends personalised summaries via Resend |
 | `upload-to-drive` | Uploads images to a specific Google Drive folder via service account JWT |
 | `get-roorides-vehicles` | (Superseded) Early prototype — fetches vehicles from Roorides and returns them without persisting. No longer used by the app. |
-| `sync-roorides-vehicles` | Authenticates with Roorides, fetches all vehicles for org 126 (via `ROORIDES_ORG_ID` secret), and upserts them into the local `vehicles` table. Never overwrites the `site` column. Called by pg_cron at midnight UTC daily and also manually via the "Refresh vehicle list" button on the ticket form. Credentials: `ROORIDES_USERNAME`, `ROORIDES_PASSWORD`, `ROORIDES_ORG_ID` secrets. |
+| `sync-roorides-vehicles` | Authenticates with Roorides, fetches all vehicles for org 126 (via `ROORIDES_ORG_ID` secret), and upserts them into the local `vehicles` table. Never overwrites the `site` column. Called by pg_cron at midnight UTC daily and also manually via the "Refresh vehicle list" button on the ticket form. Credentials: `ROORIDES_USERNAME`, `ROORIDES_PASSWORD`, `ROORIDES_ORG_ID` secrets. **See the `sites` note below — the sync owns `sites.is_active`.** |
 | `seed-staging-from-prod` | **Staging only.** Nukes all staging auth users and public table data, then reseeds from production. Requires `super_admin` role. All staging users are recreated with password `NVSStaging2025!`. Triggered via the "Seed Staging from Production" page under Settings (only visible when `VITE_ENABLE_DANGER_ZONE=true`). Secrets required in staging: `PROD_SUPABASE_URL`, `PROD_SUPABASE_SERVICE_ROLE_KEY`. |
 | `backup-to-drive` | Dumps all tables to JSON and uploads to Google Drive via service account JWT. Deletes backups older than 7 days from the Drive folder. Scheduled hourly 10 AM–7 PM IST (`30 4-13 * * *` UTC) via pg_cron (`nvs-hourly-backup` job). Secrets: `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `BACKUP_DRIVE_FOLDER_ID`. |
 
