@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - staging
+  # Manual trigger. On 2026-08-26 an Actions outage left a run wedged in `queued` with
+  # zero jobs — it could not be rerun ("already running") or cancelled ("already
+  # completed"), so the required `deploy` check had no way to report and the PR was
+  # stuck. With push as the only trigger, the sole remedy was another push.
+  workflow_dispatch:
 
 jobs:
   deploy:
