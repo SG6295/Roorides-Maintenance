@@ -62,7 +62,12 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
     const isValid = Object.entries(decisions).every(([issuePartId, d]) => {
         // Group A parts are not submitted — no validation required
         if (PERMANENT_SCRAP_STATUSES.includes(existingScrapMap[issuePartId]?.status)) return true
-        if (d.action === 'exclude') return d.exclusionReason !== null
+        if (d.action === 'exclude') {
+            if (d.exclusionReason === null) return false
+            // "Other" carries no meaning on its own — require a note
+            if (d.exclusionReason === 'other') return d.exclusionNotes.trim() !== ''
+            return true
+        }
         if (d.action === 'scrap' && isOutsource) {
             if (!d.outsourceDisposition) return false
             if (d.outsourceDisposition === 'retained_by_vendor_with_credit') {
@@ -86,7 +91,7 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                 const entry = { issue_part_id: issuePartId, action: d.action }
                 if (d.action === 'exclude') {
                     entry.exclusion_reason = d.exclusionReason
-                    entry.exclusion_notes  = d.exclusionNotes || null
+                    entry.exclusion_notes  = d.exclusionNotes.trim() || null
                 } else if (d.action === 'scrap' && isOutsource) {
                     entry.outsource_disposition = d.outsourceDisposition
                     if (d.outsourceDisposition === 'retained_by_vendor_with_credit') {
@@ -302,13 +307,15 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                                                 />
                                                 <div>
                                                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                        Notes (optional)
+                                                        {d.exclusionReason === 'other' ? 'Notes (required)' : 'Notes (optional)'}
                                                     </label>
                                                     <input
                                                         type="text"
                                                         value={d.exclusionNotes}
                                                         onChange={e => updateDecision(ip.id, 'exclusionNotes', e.target.value)}
-                                                        placeholder="Additional details…"
+                                                        placeholder={d.exclusionReason === 'other'
+                                                            ? 'Explain why this part is excluded…'
+                                                            : 'Additional details…'}
                                                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                                                     />
                                                 </div>

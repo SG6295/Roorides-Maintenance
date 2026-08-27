@@ -2063,24 +2063,15 @@ export type Database = {
         Returns: undefined
       }
       check_pan_exists: { Args: { p_pan: string }; Returns: boolean }
-      close_job_card_with_scrap:
-        | {
-            Args: {
-              p_job_card_id: string
-              p_remarks: string
-              p_scrap_decisions: Json
-            }
-            Returns: Json
-          }
-        | {
-            Args: {
-              p_invoice_pending?: boolean
-              p_job_card_id: string
-              p_remarks: string
-              p_scrap_decisions: Json
-            }
-            Returns: Json
-          }
+      close_job_card_with_scrap: {
+        Args: {
+          p_invoice_pending?: boolean
+          p_job_card_id: string
+          p_remarks: string
+          p_scrap_decisions: Json
+        }
+        Returns: Json
+      }
       complete_stock_audit: { Args: { p_audit_id: string }; Returns: string }
       delete_issue_part_with_scrap_check: {
         Args: { p_issue_part_id: string }
