@@ -10,7 +10,7 @@ export function useParts(filters = {}) {
         queryFn: async () => {
             let query = supabase
                 .from('parts')
-                .select('id, name, part_number, unit, quantity_in_stock')
+                .select('id, name, part_number, unit, quantity_in_stock, default_exclude_from_scrap, default_exclusion_reason')
                 .order('name')
 
             if (filters.search) {
@@ -251,6 +251,37 @@ export function useUpdatePart() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+        },
+    })
+}
+
+/**
+ * Sets or clears a part's "exclude from scrap by default" flag.
+ *
+ * The reason travels with the flag because the DB constraint requires them to
+ * agree — set together, cleared together. Invalidates both parts lists, since
+ * the Parts Catalog renders either one depending on the workshop drill-down.
+ */
+export function useSetPartScrapDefault() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: async ({ id, excludeByDefault, reason }) => {
+            const { data, error } = await supabase
+                .from('parts')
+                .update({
+                    default_exclude_from_scrap: excludeByDefault,
+                    default_exclusion_reason:   excludeByDefault ? reason : null,
+                })
+                .eq('id', id)
+                .select()
+                .single()
+            if (error) throw error
+            return data
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
         },
     })
 }
@@ -582,7 +613,7 @@ export function usePartStock(locationId, filters = {}) {
         queryFn: async () => {
             let query = supabase
                 .from('parts')
-                .select('id, name, part_number, unit, quantity_in_stock, part_stock(location_id, quantity)')
+                .select('id, name, part_number, unit, quantity_in_stock, default_exclude_from_scrap, default_exclusion_reason, part_stock(location_id, quantity)')
                 .eq('part_stock.location_id', locationId)
                 .order('name')
 

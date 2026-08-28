@@ -1595,12 +1595,13 @@ BEGIN
             INSERT INTO public.scrap_excluded_parts (
                 source_job_card_id, source_issue_id, source_issue_part_id,
                 part_id_snapshot, part_name_snapshot, quantity_snapshot,
-                reason, notes, excluded_by
+                reason, notes, from_part_default, excluded_by
             )
             SELECT
                 jc.id, ip.issue_id, ip.id, p.id, p.name, ip.quantity_used,
                 (v_decision->>'exclusion_reason')::scrap_exclusion_reason,
                 v_decision->>'exclusion_notes',
+                coalesce((v_decision->>'from_default')::boolean, false),
                 auth.uid()
             FROM  public.issue_parts ip
             JOIN  public.issues      i  ON i.id  = ip.issue_id
@@ -6419,11 +6420,32 @@ CREATE TABLE public.parts (
     quantity_in_stock numeric(10,2) DEFAULT 0 NOT NULL,
     created_at timestamp without time zone DEFAULT now(),
     created_via text DEFAULT 'manual'::text NOT NULL,
-    CONSTRAINT parts_created_via_check CHECK ((created_via = ANY (ARRAY['manual'::text, 'outsource_jobcard'::text])))
+    default_exclude_from_scrap boolean DEFAULT false NOT NULL,
+    default_exclusion_reason public.scrap_exclusion_reason,
+    CONSTRAINT parts_created_via_check CHECK ((created_via = ANY (ARRAY['manual'::text, 'outsource_jobcard'::text]))),
+    CONSTRAINT parts_default_exclusion_reason_check CHECK (
+CASE
+    WHEN default_exclude_from_scrap THEN ((default_exclusion_reason IS NOT NULL) AND (default_exclusion_reason = ANY (ARRAY['consumable'::public.scrap_exclusion_reason, 'destroyed_on_removal'::public.scrap_exclusion_reason])))
+    ELSE (default_exclusion_reason IS NULL)
+END)
 );
 
 
 ALTER TABLE public.parts OWNER TO postgres;
+
+--
+-- Name: COLUMN parts.default_exclude_from_scrap; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.parts.default_exclude_from_scrap IS 'When true, the job card closure modal pre-selects "Exclude from scrap" for this part. Set in the Parts Catalog; the exec can still override it per job card.';
+
+
+--
+-- Name: COLUMN parts.default_exclusion_reason; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.parts.default_exclusion_reason IS 'Exclusion reason pre-filled alongside default_exclude_from_scrap. Non-null exactly when the flag is set.';
+
 
 --
 -- Name: purchase_invoice_items; Type: TABLE; Schema: public; Owner: postgres
@@ -6530,11 +6552,19 @@ CREATE TABLE public.scrap_excluded_parts (
     reason public.scrap_exclusion_reason NOT NULL,
     notes text,
     excluded_by uuid NOT NULL,
-    excluded_at timestamp with time zone DEFAULT now() NOT NULL
+    excluded_at timestamp with time zone DEFAULT now() NOT NULL,
+    from_part_default boolean DEFAULT false NOT NULL
 );
 
 
 ALTER TABLE public.scrap_excluded_parts OWNER TO postgres;
+
+--
+-- Name: COLUMN scrap_excluded_parts.from_part_default; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.scrap_excluded_parts.from_part_default IS 'True when this exclusion was pre-filled from parts.default_exclude_from_scrap and left unchanged by the exec.';
+
 
 --
 -- Name: scrap_inventory; Type: TABLE; Schema: public; Owner: postgres

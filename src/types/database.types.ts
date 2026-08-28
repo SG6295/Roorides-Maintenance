@@ -575,6 +575,10 @@ export type Database = {
         Row: {
           created_at: string | null
           created_via: string
+          default_exclude_from_scrap: boolean
+          default_exclusion_reason:
+            | Database["public"]["Enums"]["scrap_exclusion_reason"]
+            | null
           id: string
           name: string
           part_number: string | null
@@ -584,6 +588,10 @@ export type Database = {
         Insert: {
           created_at?: string | null
           created_via?: string
+          default_exclude_from_scrap?: boolean
+          default_exclusion_reason?:
+            | Database["public"]["Enums"]["scrap_exclusion_reason"]
+            | null
           id?: string
           name: string
           part_number?: string | null
@@ -593,6 +601,10 @@ export type Database = {
         Update: {
           created_at?: string | null
           created_via?: string
+          default_exclude_from_scrap?: boolean
+          default_exclusion_reason?:
+            | Database["public"]["Enums"]["scrap_exclusion_reason"]
+            | null
           id?: string
           name?: string
           part_number?: string | null
@@ -805,6 +817,7 @@ export type Database = {
         Row: {
           excluded_at: string
           excluded_by: string
+          from_part_default: boolean
           id: string
           notes: string | null
           part_id_snapshot: string | null
@@ -818,6 +831,7 @@ export type Database = {
         Insert: {
           excluded_at?: string
           excluded_by: string
+          from_part_default?: boolean
           id?: string
           notes?: string | null
           part_id_snapshot?: string | null
@@ -831,6 +845,7 @@ export type Database = {
         Update: {
           excluded_at?: string
           excluded_by?: string
+          from_part_default?: boolean
           id?: string
           notes?: string | null
           part_id_snapshot?: string | null
