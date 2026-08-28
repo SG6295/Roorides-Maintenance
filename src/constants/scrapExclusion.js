@@ -24,6 +24,15 @@ const DEFAULT_ELIGIBLE = ['consumable', 'destroyed_on_removal']
 export const DEFAULT_EXCLUSION_REASON_OPTIONS = EXCLUSION_REASON_OPTIONS
     .filter(o => DEFAULT_ELIGIBLE.includes(o.value))
 
+/**
+ * Whether a reason may be stored as a part default. Used by the closure modal to
+ * decide when to offer "always exclude this part", so the offer and the DB
+ * constraint are gated on the same list.
+ */
+export function isDefaultEligibleReason(value) {
+    return DEFAULT_ELIGIBLE.includes(value)
+}
+
 export function exclusionReasonLabel(value) {
     return EXCLUSION_REASON_OPTIONS.find(o => o.value === value)?.label ?? value
 }

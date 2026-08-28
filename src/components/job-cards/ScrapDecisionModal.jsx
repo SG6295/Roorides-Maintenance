@@ -9,7 +9,11 @@ import {
     ScrapRPCError,
 } from '../../hooks/useScrap'
 import { logAuditEvent } from '../../utils/auditLogger'
-import { EXCLUSION_REASON_OPTIONS, exclusionReasonLabel } from '../../constants/scrapExclusion'
+import {
+    EXCLUSION_REASON_OPTIONS,
+    exclusionReasonLabel,
+    isDefaultEligibleReason,
+} from '../../constants/scrapExclusion'
 import CustomSelect from '../shared/CustomSelect'
 
 const OUTSOURCE_DISPOSITION_OPTIONS = [
@@ -17,6 +21,74 @@ const OUTSOURCE_DISPOSITION_OPTIONS = [
     { value: 'retained_by_vendor',               label: 'Retained by vendor (no credit)' },
     { value: 'retained_by_vendor_with_credit',   label: 'Retained by vendor (with credit)' },
 ]
+
+/**
+ * Which part-master control, if any, this row can offer — the exec teaching the
+ * system as they work, rather than making a separate trip to the Parts Catalog.
+ *
+ * Offers are keyed by part, not by issue_part: a part can appear on a card twice
+ * and can only carry one standing default, so two rows of the same part share a
+ * single tick and cannot disagree. The RPC rejects contradictory directives
+ * outright, so the UI must not be able to produce them.
+ */
+function defaultOfferFor(ip, decision, isPermanent) {
+    const part = ip.part
+    // A permanently-scrapped row is locked, and a part that no longer exists has
+    // no master record to teach.
+    if (!part?.id || isPermanent) return null
+
+    if (decision.action === 'exclude' && isDefaultEligibleReason(decision.exclusionReason)) {
+        // Nothing to offer when the part already stores exactly this. A stored
+        // default with a *different* reason still offers, so a wrong default can
+        // be corrected here instead of in the catalog.
+        const alreadyStored = part.default_exclude_from_scrap
+            && part.default_exclusion_reason === decision.exclusionReason
+        if (alreadyStored) return null
+        return { partId: part.id, partName: part.name, kind: 'set', reason: decision.exclusionReason }
+    }
+
+    if (decision.action === 'scrap' && part.default_exclude_from_scrap) {
+        return { partId: part.id, partName: part.name, kind: 'clear', reason: null }
+    }
+
+    return null
+}
+
+function isPicked(partDefaults, offer) {
+    const picked = partDefaults[offer.partId]
+    return picked?.kind === offer.kind && picked?.reason === offer.reason
+}
+
+/**
+ * The ticks that are still live, in row order and one per part.
+ *
+ * A tick whose row no longer offers the same directive — the exec changed the
+ * reason to Other, or flipped back to Generate scrap — is simply not collected,
+ * so it can neither be sent nor listed in the confirmation. It is kept rather
+ * than deleted so that undoing the change restores the tick, and every live one
+ * is visible as a ticked box.
+ */
+function collectDefaultDirectives(jobCard, decisions, partDefaults, existingScrapMap) {
+    const directives = []
+    const seen = new Set()
+
+    for (const issue of jobCard.issues || []) {
+        for (const ip of issue.issue_parts || []) {
+            const decision = decisions[ip.id]
+            if (!decision) continue
+
+            const isPermanent = PERMANENT_SCRAP_STATUSES.includes(existingScrapMap[ip.id]?.status)
+            const offer = defaultOfferFor(ip, decision, isPermanent)
+            if (!offer || seen.has(offer.partId)) continue
+            if (!isPicked(partDefaults, offer)) continue
+
+            seen.add(offer.partId)
+            directives.push({ ...offer, issuePartId: ip.id })
+        }
+    }
+
+    return directives
+}
 
 function buildInitialDecisions(jobCard) {
     const decisions = {}
@@ -56,6 +128,11 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
     // Default-filled rows the exec has opened up. Expanding is not editing, so
     // this is tracked separately from the decision itself.
     const [expandedRows, setExpandedRows] = useState(() => new Set())
+    // Part-master changes the exec has asked for, keyed by part id:
+    // { [partId]: { kind: 'set' | 'clear', reason } }. Nothing is written until
+    // the confirmation below is accepted, and then only by the closure RPC.
+    const [partDefaults, setPartDefaults] = useState({})
+    const [confirmingDefaults, setConfirmingDefaults] = useState(false)
 
     const updateDecision = (issuePartId, field, value) => {
         setDecisions(prev => ({
@@ -69,6 +146,19 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
     const expandRow = issuePartId => {
         setExpandedRows(prev => new Set(prev).add(issuePartId))
     }
+
+    const toggleDefault = offer => {
+        setPartDefaults(prev => {
+            const next = { ...prev }
+            if (isPicked(prev, offer)) delete next[offer.partId]
+            else next[offer.partId] = { kind: offer.kind, reason: offer.reason }
+            return next
+        })
+    }
+
+    const defaultDirectives = collectDefaultDirectives(
+        jobCard, decisions, partDefaults, existingScrapMap
+    )
 
     const isValid = Object.entries(decisions).every(([issuePartId, d]) => {
         // Group A parts are not submitted — no validation required
@@ -91,6 +181,12 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
 
     const handleSubmit = async () => {
         setSubmitError(null)
+        // Any error from here on belongs on the modal behind this dialog.
+        setConfirmingDefaults(false)
+
+        const directiveByIssuePart = Object.fromEntries(
+            defaultDirectives.map(directive => [directive.issuePartId, directive])
+        )
 
         // Group A parts (permanent scrap) are excluded from the decisions array —
         // their existing scrap entries stay untouched.
@@ -110,6 +206,13 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                         entry.outsource_credit_amount = parseFloat(d.outsourceCreditAmount)
                     }
                 }
+                // The part master change rides along with the decision it was made
+                // on, so it commits inside the closure transaction — a client write
+                // after the RPC returned could leave a default behind on a closure
+                // that failed.
+                const directive = directiveByIssuePart[issuePartId]
+                if (directive?.kind === 'set')        entry.set_as_default = true
+                else if (directive?.kind === 'clear') entry.clear_default  = true
                 return entry
             })
 
@@ -147,6 +250,25 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                 })
             }
 
+            // Audit: part-master defaults set or cleared by this closure. The RPC
+            // reports only real changes, so a directive that asked for the state
+            // the part was already in leaves no row behind.
+            for (const change of result.part_default_changes || []) {
+                await logAuditEvent(change.part_id, 'parts', 'UPDATE', userProfile.id, {
+                    oldData: {
+                        default_exclude_from_scrap: change.old_exclude,
+                        default_exclusion_reason:   change.old_reason,
+                    },
+                    newData: {
+                        default_exclude_from_scrap: change.new_exclude,
+                        default_exclusion_reason:   change.new_reason,
+                        source_job_card_id:         jobCard.id,
+                        source_job_card_number:     jobCard.job_card_number,
+                    },
+                    changedFields: ['default_exclude_from_scrap', 'default_exclusion_reason'],
+                })
+            }
+
             // Audit: in_storage scrap entries reversed during re-close
             for (const scrapId of result.reversed_scrap_ids || []) {
                 await logAuditEvent(scrapId, 'scrap_inventory', 'UPDATE', userProfile.id, {
@@ -176,7 +298,10 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
 
     const issuesWithParts = (jobCard.issues || []).filter(i => (i.issue_parts?.length ?? 0) > 0)
 
+    const confirmLabel = invoicePending ? 'Confirm and Close' : 'Confirm and Complete'
+
     return (
+        <>
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
 
@@ -236,6 +361,8 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                                 // reason for it must stay visible.
                                 const showAsDefault =
                                     d.fromDefault && !isPermanent && !expandedRows.has(ip.id)
+
+                                const defaultOffer = defaultOfferFor(ip, d, isPermanent)
 
                                 if (showAsDefault) {
                                     return (
@@ -371,6 +498,24 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                                                 </div>
                                             </div>
                                         )}
+
+                                        {/* Teach the part master from here, rather than
+                                            making a separate trip to the Parts Catalog. */}
+                                        {defaultOffer && (
+                                            <label className="flex items-start gap-2 cursor-pointer pt-2 border-t border-gray-200">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isPicked(partDefaults, defaultOffer)}
+                                                    onChange={() => toggleDefault(defaultOffer)}
+                                                    className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
+                                                />
+                                                <span className="text-sm text-gray-700">
+                                                    {defaultOffer.kind === 'set'
+                                                        ? <>Always exclude <span className="font-medium">{defaultOffer.partName}</span> from scrap in future</>
+                                                        : <>Stop excluding <span className="font-medium">{defaultOffer.partName}</span> from scrap by default</>}
+                                                </span>
+                                            </label>
+                                        )}
                                     </div>
                                 )
                             })}
@@ -404,16 +549,68 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                     </button>
                     <button
                         type="button"
-                        onClick={handleSubmit}
+                        onClick={defaultDirectives.length > 0
+                            ? () => setConfirmingDefaults(true)
+                            : handleSubmit}
                         disabled={!isValid || closeJobCard.isPending}
                         className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
                     >
                         {closeJobCard.isPending
                             ? (invoicePending ? 'Closing…' : 'Completing…')
-                            : (invoicePending ? 'Confirm and Close' : 'Confirm and Complete')}
+                            : confirmLabel}
                     </button>
                 </div>
             </div>
         </div>
+
+        {/* A part default outlives this job card, so it is stated plainly and
+            confirmed once for all of them. Cancelling here sends nothing and
+            discards nothing — every decision and tick is still on the modal
+            underneath. */}
+        {confirmingDefaults && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col max-h-[85vh]">
+                    <div className="px-6 py-4 border-b border-gray-200 shrink-0">
+                        <h2 className="text-base font-semibold text-gray-900">
+                            Change part defaults?
+                        </h2>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            This applies to all future job cards, for all users — not just this one.
+                        </p>
+                    </div>
+
+                    <div className="overflow-y-auto flex-1 px-6 py-4">
+                        <ul className="space-y-2">
+                            {defaultDirectives.map(directive => (
+                                <li key={directive.partId} className="text-sm text-gray-700">
+                                    <span className="font-medium text-gray-900">{directive.partName}</span>
+                                    {directive.kind === 'set'
+                                        ? <> — excluded from scrap by default, reason {exclusionReasonLabel(directive.reason)}</>
+                                        : <> — no longer excluded from scrap by default</>}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+
+                    <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => setConfirmingDefaults(false)}
+                            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSubmit}
+                            className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                            {confirmLabel}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+        </>
     )
 }
