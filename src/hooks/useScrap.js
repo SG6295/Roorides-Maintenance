@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 
 export class ScrapRPCError extends Error {
@@ -102,6 +102,8 @@ function throwIfRpcError(error) {
 export function useScrapInventory(filters = {}) {
     return useQuery({
         queryKey: ['scrap_inventory', filters],
+        // Keep the current rows visible while a new search term loads — see useSuppliers.
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             let query = supabase
                 .from('scrap_inventory')
@@ -150,6 +152,7 @@ export function useScrapInventory(filters = {}) {
 export function useScrapDisposals(filters = {}) {
     return useQuery({
         queryKey: ['scrap_disposals', filters],
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             let query = supabase
                 .from('scrap_disposal')
@@ -209,6 +212,7 @@ export function useScrapDisposalItems(disposalId) {
 export function useScrapWriteoffs(filters = {}) {
     return useQuery({
         queryKey: ['scrap_writeoffs', filters],
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             let query = supabase
                 .from('scrap_writeoff')

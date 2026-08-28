@@ -4,6 +4,7 @@ import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import FilterSelect from '../shared/FilterSelect'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
 import { useScrapInventory } from '../../hooks/useScrap'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 
 const STATUS_BADGE = {
@@ -20,7 +21,9 @@ const STATUS_LABEL = {
 
 export default function ScrapInventoryTab() {
     const [filters, setFilters] = useState({ status: '', search: '', vehicle: '', location_id: '', dateFrom: '', dateTo: '' })
-    const { data: items = [], isLoading } = useScrapInventory(filters)
+    const search = useDebouncedValue(filters.search)
+    const vehicle = useDebouncedValue(filters.vehicle)
+    const { data: items = [], isLoading } = useScrapInventory({ ...filters, search, vehicle })
     const { data: locations = [] } = useWorkshopLocations()
 
     return (

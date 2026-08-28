@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { ChevronDownIcon, ChevronUpIcon, ArrowDownTrayIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
 import { useScrapDisposals, useScrapDisposalItems } from '../../hooks/useScrap'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 
 const PAYMENT_LABEL = {
     cash:          'Cash',
@@ -111,7 +112,8 @@ function DisposalRow({ disposal }) {
 
 export default function SaleHistoryTab() {
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
-    const { data: disposals = [], isLoading } = useScrapDisposals(filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: disposals = [], isLoading } = useScrapDisposals({ ...filters, search })
 
     function exportToExcel() {
         const rows = disposals.map(d => ({

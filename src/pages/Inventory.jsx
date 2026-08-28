@@ -20,6 +20,7 @@ import {
     usePartStock,
     useLocationStockSummary,
 } from '../hooks/useInventory'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import { AUDIT_REASON_LABELS } from '../hooks/useStockAudits'
 import { useAuth } from '../hooks/useAuth'
@@ -124,7 +125,8 @@ function LocationPicker({ locations, onSelect }) {
  */
 function LocationPartsTable({ location, locations, canMove }) {
     const [filters, setFilters] = useState({ search: '', stockStatus: '' })
-    const { data: parts = [], isLoading } = usePartStock(location.id, filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: parts = [], isLoading } = usePartStock(location.id, { ...filters, search })
     const [editingPart, setEditingPart] = useState(null)
     const [selectedIds, setSelectedIds] = useState(new Set())
     const [showMoveModal, setShowMoveModal] = useState(false)
@@ -294,7 +296,8 @@ function LocationPartsTable({ location, locations, canMove }) {
  */
 function AllLocationsTable() {
     const [filters, setFilters] = useState({ search: '', stockStatus: '' })
-    const { data: parts = [], isLoading } = useParts(filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: parts = [], isLoading } = useParts({ ...filters, search })
     const [editingPart, setEditingPart] = useState(null)
 
     return (
@@ -542,7 +545,8 @@ function InvoiceRow({ invoice, onEdit }) {
 // ── Purchase History Tab ───────────────────────────────────────────────────────
 function PurchaseHistory() {
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
-    const { data: invoices = [], isLoading } = usePurchaseInvoices(filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: invoices = [], isLoading } = usePurchaseInvoices({ ...filters, search })
     const [editingInvoice, setEditingInvoice] = useState(null)
     const [exporting, setExporting] = useState(false)
 
@@ -688,7 +692,8 @@ const JC_STATUS_BADGE = {
 
 function ConsumptionHistory() {
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '', source: '' })
-    const { data: rows = [], isLoading } = usePartConsumption(filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: rows = [], isLoading } = usePartConsumption({ ...filters, search })
 
     function handleExport() {
         if (rows.length === 0) return

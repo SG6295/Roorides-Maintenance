@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { ChevronDownIcon, ChevronUpIcon, ArrowDownTrayIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
 import { useScrapWriteoffs, useScrapWriteoffItems } from '../../hooks/useScrap'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 
 const REASON_LABEL = {
     lost:                   'Lost',
@@ -99,7 +100,8 @@ function WriteoffRow({ writeoff }) {
 
 export default function WriteoffHistoryTab() {
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
-    const { data: writeoffs = [], isLoading } = useScrapWriteoffs(filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: writeoffs = [], isLoading } = useScrapWriteoffs({ ...filters, search })
 
     function exportToExcel() {
         const rows = writeoffs.map(w => ({

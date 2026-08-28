@@ -5,6 +5,7 @@ import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useVehicles, useCreateVehicle, useUpdateVehicle } from '../hooks/useVehicles'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useAuth } from '../hooks/useAuth'
 import {
     MagnifyingGlassIcon,
@@ -177,7 +178,8 @@ export default function Vehicles() {
     const canEdit = ['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)
 
     const [filters, setFilters] = useState({ search: '', site: '', active: 'active' })
-    const { data: vehicles = [], isLoading } = useVehicles(filters)
+    const search = useDebouncedValue(filters.search)
+    const { data: vehicles = [], isLoading } = useVehicles({ ...filters, search })
 
     const [showAddModal, setShowAddModal] = useState(false)
     const [editingVehicle, setEditingVehicle] = useState(null)

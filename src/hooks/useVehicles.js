@@ -1,10 +1,12 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 
 
 export function useVehicles(filters = {}) {
     return useQuery({
         queryKey: ['vehicles', filters],
+        // Keep the current rows visible while a new search term loads — see useSuppliers.
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             const joinType = filters.site ? '!inner' : ''
             let query = supabase
