@@ -38,6 +38,9 @@ export function useCloseJobCardWithScrap() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['job_card'] })
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
+            // The closure may have set or cleared a part's scrap default (MAIN-56),
+            // so the Parts Catalog can no longer be trusted to be current.
+            queryClient.invalidateQueries({ queryKey: ['parts'] })
         },
     })
 }
