@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSuppliers } from '../hooks/useSuppliers'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useAuth } from '../hooks/useAuth'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
@@ -21,8 +22,10 @@ export default function Suppliers() {
 
   const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
+  const debouncedSearch = useDebouncedValue(search)
+
   const { data: suppliers = [], isLoading } = useSuppliers({
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     status: statusFilter || undefined,
   })
 

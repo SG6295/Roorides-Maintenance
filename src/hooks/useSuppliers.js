@@ -1,9 +1,13 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 
 export function useSuppliers(filters = {}) {
   return useQuery({
     queryKey: ['suppliers', filters],
+    // A new search term is a new cache key with nothing in it. Without this the table
+    // blanks to a spinner on every refetch; with it the previous rows stay put until
+    // the new ones arrive. Pairs with useDebouncedValue at the call site.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       let query = supabase
         .from('suppliers')

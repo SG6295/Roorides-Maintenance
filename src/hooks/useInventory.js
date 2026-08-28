@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 
 /**
@@ -7,6 +7,8 @@ import { supabase } from '../lib/supabase'
 export function useParts(filters = {}) {
     return useQuery({
         queryKey: ['parts', filters],
+        // Keep the current rows visible while a new search term loads — see useSuppliers.
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             let query = supabase
                 .from('parts')
@@ -37,6 +39,7 @@ export function useParts(filters = {}) {
 export function usePurchaseInvoices(filters = {}) {
     return useQuery({
         queryKey: ['purchase_invoices', filters],
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             let query = supabase
                 .from('purchase_invoices')
@@ -292,6 +295,7 @@ export function useSetPartScrapDefault() {
 export function usePartConsumption(filters = {}) {
     return useQuery({
         queryKey: ['part_consumption', filters],
+        placeholderData: keepPreviousData,
         queryFn: async () => {
             let query = supabase
                 .from('issue_parts')
@@ -609,6 +613,7 @@ export function useDeletePartUnit() {
 export function usePartStock(locationId, filters = {}) {
     return useQuery({
         queryKey: ['part_stock', locationId, filters],
+        placeholderData: keepPreviousData,
         enabled: !!locationId,
         queryFn: async () => {
             let query = supabase
