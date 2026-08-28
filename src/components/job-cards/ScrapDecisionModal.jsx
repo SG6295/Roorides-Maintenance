@@ -9,14 +9,8 @@ import {
     ScrapRPCError,
 } from '../../hooks/useScrap'
 import { logAuditEvent } from '../../utils/auditLogger'
+import { EXCLUSION_REASON_OPTIONS, exclusionReasonLabel } from '../../constants/scrapExclusion'
 import CustomSelect from '../shared/CustomSelect'
-
-const EXCLUSION_REASON_OPTIONS = [
-    { value: 'consumable',           label: 'Consumable' },
-    { value: 'destroyed_on_removal', label: 'Destroyed on removal' },
-    { value: 'retained_by_vendor',   label: 'Retained by vendor' },
-    { value: 'other',                label: 'Other' },
-]
 
 const OUTSOURCE_DISPOSITION_OPTIONS = [
     { value: 'returned_to_nvs',                  label: 'Returned to NVS' },
@@ -28,10 +22,18 @@ function buildInitialDecisions(jobCard) {
     const decisions = {}
     for (const issue of jobCard.issues || []) {
         for (const ip of issue.issue_parts || []) {
+            // A part flagged in the part master opens pre-set to Exclude with its
+            // reason filled in, so consumables need no interaction at all. The DB
+            // constraint guarantees a reason travels with the flag; the reason is
+            // checked anyway because a decision without one cannot be submitted.
+            const fromDefault = Boolean(
+                ip.part?.default_exclude_from_scrap && ip.part?.default_exclusion_reason
+            )
             decisions[ip.id] = {
-                action: 'scrap',
-                exclusionReason: null,
+                action: fromDefault ? 'exclude' : 'scrap',
+                exclusionReason: fromDefault ? ip.part.default_exclusion_reason : null,
                 exclusionNotes: '',
+                fromDefault,
                 outsourceDisposition: null,
                 outsourceCreditAmount: '',
             }
@@ -51,12 +53,21 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
     const [decisions, setDecisions] = useState(() => buildInitialDecisions(jobCard))
     const [remarks, setRemarks] = useState(jobCard.remarks || '')
     const [submitError, setSubmitError] = useState(null)
+    // Default-filled rows the exec has opened up. Expanding is not editing, so
+    // this is tracked separately from the decision itself.
+    const [expandedRows, setExpandedRows] = useState(() => new Set())
 
     const updateDecision = (issuePartId, field, value) => {
         setDecisions(prev => ({
             ...prev,
-            [issuePartId]: { ...prev[issuePartId], [field]: value },
+            // Any hand edit means this row is no longer the part master's default,
+            // for this job card only — nothing is written back to the part.
+            [issuePartId]: { ...prev[issuePartId], [field]: value, fromDefault: false },
         }))
+    }
+
+    const expandRow = issuePartId => {
+        setExpandedRows(prev => new Set(prev).add(issuePartId))
     }
 
     const isValid = Object.entries(decisions).every(([issuePartId, d]) => {
@@ -92,6 +103,7 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                 if (d.action === 'exclude') {
                     entry.exclusion_reason = d.exclusionReason
                     entry.exclusion_notes  = d.exclusionNotes.trim() || null
+                    entry.from_default     = d.fromDefault
                 } else if (d.action === 'scrap' && isOutsource) {
                     entry.outsource_disposition = d.outsourceDisposition
                     if (d.outsourceDisposition === 'retained_by_vendor_with_credit') {
@@ -217,6 +229,44 @@ export default function ScrapDecisionModal({ jobCard, invoicePending = false, on
                                 const existingScrap = existingScrapMap[ip.id]
                                 const isPermanent = PERMANENT_SCRAP_STATUSES.includes(existingScrap?.status)
                                 const isInStorage = existingScrap?.status === 'in_storage'
+
+                                // A row still sitting on its part-master default collapses to one
+                                // line — the point of the default is that it needs no attention.
+                                // A permanently-scrapped part never collapses: its lock and the
+                                // reason for it must stay visible.
+                                const showAsDefault =
+                                    d.fromDefault && !isPermanent && !expandedRows.has(ip.id)
+
+                                if (showAsDefault) {
+                                    return (
+                                        <div key={ip.id} className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <p className="text-sm font-medium text-gray-800">
+                                                    {ip.part?.name ?? 'Unknown part'} &times; {ip.quantity_used} {ip.part?.unit ?? ''}
+                                                </p>
+                                                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                                                    Excluded — {exclusionReasonLabel(d.exclusionReason)}
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-600">
+                                                    Default
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => expandRow(ip.id)}
+                                                    className="ml-auto text-xs font-medium text-blue-600 hover:text-blue-800"
+                                                >
+                                                    Change
+                                                </button>
+                                            </div>
+                                            {isInStorage && (
+                                                <p className="text-xs text-amber-600 mt-1">
+                                                    Previously scrapped — previous entry will be replaced on submit.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )
+                                }
+
                                 return (
                                     <div key={ip.id} className="rounded-lg bg-gray-50 border border-gray-200 p-3 space-y-3">
 

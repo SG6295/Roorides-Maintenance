@@ -8,6 +8,7 @@ import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import PurchaseModal from '../components/inventory/PurchaseModal'
 import BulkUploadModal from '../components/inventory/BulkUploadModal'
 import EditPartModal from '../components/inventory/EditPartModal'
+import ScrapDefaultCell from '../components/inventory/ScrapDefaultCell'
 import EditPurchaseModal from '../components/inventory/EditPurchaseModal'
 import MoveStockModal from '../components/inventory/MoveStockModal'
 import StockAuditTab from '../components/inventory/audit/StockAuditTab'
@@ -225,6 +226,7 @@ function LocationPartsTable({ location, locations, canMove }) {
                                 <th className="px-4 py-3 text-left">Unit</th>
                                 <th className="px-4 py-3 text-right">At {location.name}</th>
                                 <th className="px-4 py-3 text-right">All Locations</th>
+                                <th className="px-4 py-3 text-left">Exclude from scrap by default</th>
                                 <th className="px-4 py-3 w-10"></th>
                             </tr>
                         </thead>
@@ -248,6 +250,7 @@ function LocationPartsTable({ location, locations, canMove }) {
                                     <td className="px-4 py-3 text-gray-500">{part.unit}</td>
                                     <td className="px-4 py-3 text-right">{stockBadge(part.quantity_here)}</td>
                                     <td className="px-4 py-3 text-right text-gray-400">{part.quantity_total}</td>
+                                    <td className="px-4 py-3"><ScrapDefaultCell part={part} /></td>
                                     <td className="px-4 py-3 text-center">
                                         <button
                                             onClick={() => setEditingPart(part)}
@@ -336,6 +339,7 @@ function AllLocationsTable() {
                                 <th className="px-4 py-3 text-left">Part Number</th>
                                 <th className="px-4 py-3 text-left">Unit</th>
                                 <th className="px-4 py-3 text-right">In Stock</th>
+                                <th className="px-4 py-3 text-left">Exclude from scrap by default</th>
                                 <th className="px-4 py-3 w-10"></th>
                             </tr>
                         </thead>
@@ -346,6 +350,7 @@ function AllLocationsTable() {
                                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">{part.part_number || '—'}</td>
                                     <td className="px-4 py-3 text-gray-500">{part.unit}</td>
                                     <td className="px-4 py-3 text-right">{stockBadge(part.quantity_in_stock)}</td>
+                                    <td className="px-4 py-3"><ScrapDefaultCell part={part} /></td>
                                     <td className="px-4 py-3 text-center">
                                         <button
                                             onClick={() => setEditingPart(part)}
