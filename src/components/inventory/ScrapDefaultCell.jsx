@@ -20,12 +20,14 @@ export default function ScrapDefaultCell({ part }) {
     // True only between ticking the box and choosing a reason.
     const [awaitingReason, setAwaitingReason] = useState(false)
     const [error, setError] = useState(null)
+    const [saved, setSaved] = useState(false)
 
     const isSet = part.default_exclude_from_scrap
     const checked = isSet || awaitingReason
 
     async function save(excludeByDefault, reason) {
         setError(null)
+        setSaved(false)
         try {
             await setDefault.mutateAsync({ id: part.id, excludeByDefault, reason })
             await logAuditEvent(part.id, 'parts', 'UPDATE', userProfile?.id, {
@@ -43,6 +45,12 @@ export default function ScrapDefaultCell({ part }) {
             // itself, otherwise the reason dropdown blinks out of existence
             // between the save resolving and the list arriving.
             if (!excludeByDefault) setAwaitingReason(false)
+            // Otherwise the only sign a save landed is the reason turning up in
+            // the dropdown, which reads as ordinary form behaviour — and an
+            // untick gives even less than that. Same transient green tick as the
+            // labour-hours save in IssueWorkCard.
+            setSaved(true)
+            setTimeout(() => setSaved(false), 2000)
         } catch (err) {
             setError(err.message || 'Could not save.')
             setAwaitingReason(false)
@@ -88,6 +96,7 @@ export default function ScrapDefaultCell({ part }) {
             )}
 
             {error && <span className="text-xs text-red-600">{error}</span>}
+            {saved && <span className="text-xs text-green-600">Saved ✓</span>}
         </div>
     )
 }
