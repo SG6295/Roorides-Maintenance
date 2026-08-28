@@ -8,8 +8,15 @@ import { logAuditEvent } from '../utils/auditLogger'
  * But we also need a global list.
  */
 export function useJobCards(filters = {}) {
+    // Only what this query actually sends to the server belongs in the key. The Job Cards
+    // page keeps its client-side `search` term in the same filters object, and keying on
+    // that made every keystroke a fresh, empty cache entry: a refetch of identical rows,
+    // plus a loading state that tore the search box out from under the cursor.
+    const { status = '', site = '', location_id = '', vehicle_number = '' } = filters
+    const serverFilters = { status, site, location_id, vehicle_number }
+
     return useQuery({
-        queryKey: ['job_cards', filters],
+        queryKey: ['job_cards', serverFilters],
         queryFn: async () => {
             let query = supabase
                 .from('job_cards')
@@ -22,17 +29,17 @@ export function useJobCards(filters = {}) {
         `)
                 .order('created_at', { ascending: false })
 
-            if (filters.status) {
-                query = query.eq('status', filters.status)
+            if (serverFilters.status) {
+                query = query.eq('status', serverFilters.status)
             }
-            if (filters.site) {
-                query = query.eq('site', filters.site)
+            if (serverFilters.site) {
+                query = query.eq('site', serverFilters.site)
             }
-            if (filters.location_id) {
-                query = query.eq('location_id', filters.location_id)
+            if (serverFilters.location_id) {
+                query = query.eq('location_id', serverFilters.location_id)
             }
-            if (filters.vehicle_number) {
-                query = query.eq('vehicle_number', filters.vehicle_number)
+            if (serverFilters.vehicle_number) {
+                query = query.eq('vehicle_number', serverFilters.vehicle_number)
             }
 
             const { data, error } = await query

@@ -38,17 +38,8 @@ export default function JobCards() {
         )
     })
 
-    if (isLoading) {
-        return (
-            <div className="min-h-screen bg-gray-50">
-                <Navigation breadcrumbs={[{ label: 'Job Cards' }]} />
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-                    <TicketListSkeleton />
-                </div>
-            </div>
-        )
-    }
-
+    // The skeleton replaces the list alone, never the page. Anything that unmounts the
+    // filter bar takes the search box — and the cursor inside it — with it.
     return (
         <div className="min-h-screen bg-gray-50">
             <Navigation breadcrumbs={[{ label: 'Job Cards' }]} />
@@ -95,6 +86,9 @@ export default function JobCards() {
                 </div>
 
                 {/* List */}
+                {isLoading && <TicketListSkeleton />}
+
+                {!isLoading && (
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
@@ -189,6 +183,7 @@ export default function JobCards() {
                         </tbody>
                     </table>
                 </div>
+                )}
             </div>
         </div>
     )
