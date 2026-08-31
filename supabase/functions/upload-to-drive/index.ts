@@ -167,7 +167,6 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           error: 'Failed to upload to Google Drive',
-          details: errorText,
           status: uploadResponse.status
         }),
         {
@@ -233,9 +232,13 @@ serve(async (req) => {
     )
 
   } catch (error) {
+    // Detail stays in the logs. Callers render this string verbatim, and DocumentUpload is
+    // used on the public supplier registration form, so an unexpected exception must not
+    // put internal error text in front of a user. The deliberate validation messages above
+    // are returned on their own paths and are unaffected.
     console.error('Error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: 'Upload failed. Please try again, or contact support if it keeps happening.' }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
