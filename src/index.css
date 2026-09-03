@@ -46,6 +46,19 @@
     user-select: none;
   }
 
+  /* Money and percentage inputs — nobody nudges a price by one paisa, so the
+     spinner is only noise and stolen field width. Quantity keeps its arrows. */
+  .no-spinner {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .no-spinner::-webkit-outer-spin-button,
+  .no-spinner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
   /* Safe area insets for iOS */
   .safe-top {
     padding-top: env(safe-area-inset-top);

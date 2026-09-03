@@ -24,6 +24,10 @@ const GST_RATES = [
     { label: '18%', value: 18 },
     { label: '28%', value: 28 },
 ]
+// Line-item columns. Qty needs more than a 12th of the row so 2-decimal
+// quantities aren't clipped by the in-field unit suffix; the trailing
+// remove-button column needs less.
+const LINE_GRID = 'grid gap-2 grid-cols-[minmax(0,3fr)_minmax(0,1.5fr)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.5fr)]'
 const emptyLine = () => ({ part_id: '', quantity: '', unit_price: '', gst_rate: 0, discount_amount: '', discount_pct: '', discount_mode: 'amount' })
 const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
@@ -173,6 +177,11 @@ export default function PurchaseModal({ onClose }) {
         }
         if (lines.some(l => l.part_id && (!l.quantity || !l.unit_price))) {
             setError('All line items must have a quantity and unit price.')
+            return
+        }
+        // '0' is truthy, so the check above lets a zero quantity through
+        if (validLines.some(l => parseFloat(l.quantity) <= 0)) {
+            setError('Quantity must be greater than zero.')
             return
         }
         if (validLines.some(l => (parseFloat(l.discount_amount) || 0) > lineSubtotal(l) + 1e-9)) {
@@ -331,15 +340,15 @@ export default function PurchaseModal({ onClose }) {
                             <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
                             <div className="space-y-2">
                                 {/* Column headers */}
-                                <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-gray-500">
-                                    <div className="col-span-3">Part</div>
-                                    <div className="col-span-1">Qty</div>
-                                    <div className="col-span-2">Unit Price</div>
-                                    <div className="col-span-1">Disc %</div>
-                                    <div className="col-span-2">Discount</div>
-                                    <div className="col-span-1">GST</div>
-                                    <div className="col-span-1 text-right">Line Total</div>
-                                    <div className="col-span-1"></div>
+                                <div className={`${LINE_GRID} px-1 text-xs font-medium text-gray-500`}>
+                                    <div>Part</div>
+                                    <div>Qty</div>
+                                    <div>Unit Price</div>
+                                    <div>Disc %</div>
+                                    <div>Discount</div>
+                                    <div>GST</div>
+                                    <div className="text-right">Line Total</div>
+                                    <div></div>
                                 </div>
 
                                 {lines.map((line, i) => {
@@ -349,8 +358,8 @@ export default function PurchaseModal({ onClose }) {
                                     const selectedPart = parts.find(p => p.id === line.part_id)
                                     const discountInvalid = (parseFloat(line.discount_amount) || 0) > sub + 1e-9
                                     return (
-                                        <div key={i} className="grid grid-cols-12 gap-2 items-start">
-                                            <div className="col-span-3">
+                                        <div key={i} className={`${LINE_GRID} items-start`}>
+                                            <div>
                                                 {npf ? (
                                                     /* ── Inline new-part form ── */
                                                     <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
@@ -417,12 +426,12 @@ export default function PurchaseModal({ onClose }) {
                                                     />
                                                 )}
                                             </div>
-                                            <div className="col-span-1 pt-1">
+                                            <div className="pt-1">
                                                 <div className="relative">
                                                     <input
                                                         type="number"
-                                                        min="0.01"
-                                                        step="0.01"
+                                                        min="0"
+                                                        step="any"
                                                         className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${selectedPart ? 'pr-7' : ''}`}
                                                         placeholder="0"
                                                         value={line.quantity}
@@ -435,41 +444,41 @@ export default function PurchaseModal({ onClose }) {
                                                     )}
                                                 </div>
                                             </div>
-                                            <div className="col-span-2 pt-1">
+                                            <div className="pt-1">
                                                 <input
                                                     type="number"
                                                     min="0"
                                                     step="0.01"
-                                                    className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                                    className="no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                                                     placeholder="0.00"
                                                     value={line.unit_price}
                                                     onChange={e => setLineField(i, 'unit_price', e.target.value)}
                                                 />
                                             </div>
-                                            <div className="col-span-1 pt-1">
+                                            <div className="pt-1">
                                                 <input
                                                     type="number"
                                                     min="0"
                                                     max="100"
                                                     step="0.01"
-                                                    className="w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                                    className="no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                                                     placeholder="0"
                                                     value={line.discount_pct}
                                                     onChange={e => setLineField(i, 'discount_pct', e.target.value)}
                                                 />
                                             </div>
-                                            <div className="col-span-2 pt-1">
+                                            <div className="pt-1">
                                                 <input
                                                     type="number"
                                                     min="0"
                                                     step="0.01"
-                                                    className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 ${discountInvalid ? 'border-red-400 focus:ring-red-500' : 'focus:ring-blue-500'}`}
+                                                    className={`no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 ${discountInvalid ? 'border-red-400 focus:ring-red-500' : 'focus:ring-blue-500'}`}
                                                     placeholder="0.00"
                                                     value={line.discount_amount}
                                                     onChange={e => setLineField(i, 'discount_amount', e.target.value)}
                                                 />
                                             </div>
-                                            <div className="col-span-1 pt-1">
+                                            <div className="pt-1">
                                                 <select
                                                     className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
                                                     value={line.gst_rate}
@@ -480,10 +489,10 @@ export default function PurchaseModal({ onClose }) {
                                                     ))}
                                                 </select>
                                             </div>
-                                            <div className="col-span-1 text-sm text-gray-700 text-right pr-1 pt-3">
+                                            <div className="text-sm text-gray-700 text-right pr-1 pt-3">
                                                 {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}
                                             </div>
-                                            <div className="col-span-1 flex justify-center pt-3">
+                                            <div className="flex justify-center pt-3">
                                                 {lines.length > 1 && (
                                                     <button
                                                         type="button"
@@ -524,7 +533,7 @@ export default function PurchaseModal({ onClose }) {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    className="w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
+                                    className="no-spinner w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
                                     placeholder="0.00"
                                     value={totalDiscount > 0 ? totalDiscount : ''}
                                     onChange={e => handleTotalDiscountChange(e.target.value)}
