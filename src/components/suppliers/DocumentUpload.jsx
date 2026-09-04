@@ -1,54 +1,86 @@
 import { useState, useRef } from 'react'
-import { supabase } from '../../lib/supabase'
+import { uploadToDrive } from '../../lib/googleDrive'
+import { combineFilesToPdf, isAccepted } from '../../lib/filesToPdf'
+import PendingPdfPanel from '../shared/PendingPdfPanel'
 
 /**
- * Reusable document upload field for the supplier registration form.
+ * Reusable document upload field for the supplier registration form and the
+ * job-card outsource invoice.
  * Works both authenticated (app users) and unauthenticated (public form).
  * Uploads to Google Drive via the upload-to-drive edge function.
+ *
+ * One file uploads directly, as it always has. Two or more are staged in
+ * PendingPdfPanel for ordering and combined into a single PDF first — a PAN
+ * card or a vendor bill photographed across several pages no longer has to go
+ * through an outside image-to-PDF site to be attached in full.
  */
 export default function DocumentUpload({ label, required = false, value, onChange, accept = '.pdf,.jpg,.jpeg,.png' }) {
   const [uploading, setUploading] = useState(false)
+  const [combining, setCombining] = useState(false)
+  const [pending, setPending] = useState([])
   const [error, setError] = useState(null)
   const fileInputRef = useRef(null)
 
-  const handleFileSelect = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
+  const upload = async (file) => {
     setUploading(true)
     setError(null)
-
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      // Include auth token if a session exists; edge function allows anonymous too
-      const { data: { session } } = await supabase.auth.getSession()
-      const headers = {}
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`
-      }
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-to-drive`,
-        { method: 'POST', headers, body: formData }
-      )
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}))
-        throw new Error(err.error || 'Upload failed')
-      }
-
-      const result = await response.json()
-      onChange(result.url)
+      const url = await uploadToDrive(file)
+      onChange(url)
+      setPending([])
     } catch (err) {
       setError(err.message || 'Upload failed. Please try again.')
     } finally {
       setUploading(false)
-      // Reset so the same file can be re-selected after a failure
-      e.target.value = ''
     }
   }
+
+  const handleFileSelect = async (e) => {
+    const selected = Array.from(e.target.files || [])
+    // Reset first so the same file can be re-selected after a failure or removal.
+    e.target.value = ''
+    if (selected.length === 0) return
+
+    const rejected = selected.find(f => !isAccepted(f))
+    if (rejected) {
+      setError(`"${rejected.name}" isn't a supported file. Attach a PDF, JPG or PNG.`)
+      return
+    }
+    setError(null)
+
+    // Adding to an existing selection keeps the panel open for ordering.
+    if (pending.length > 0) {
+      setPending(prev => [...prev, ...selected])
+      return
+    }
+    if (selected.length === 1) {
+      await upload(selected[0])
+      return
+    }
+    setPending(selected)
+  }
+
+  const handleConfirm = async () => {
+    if (pending.length === 0) return
+    // Removing files can leave one behind; upload it as-is rather than
+    // wrapping a single page in a pointless PDF.
+    if (pending.length === 1) {
+      await upload(pending[0])
+      return
+    }
+    setError(null)
+    setCombining(true)
+    try {
+      const pdf = await combineFilesToPdf(pending)
+      setCombining(false)
+      await upload(pdf)
+    } catch (err) {
+      setCombining(false)
+      setError(err.message || 'Could not combine these files.')
+    }
+  }
+
+  const busy = uploading || combining
 
   return (
     <div>
@@ -60,11 +92,23 @@ export default function DocumentUpload({ label, required = false, value, onChang
         ref={fileInputRef}
         type="file"
         accept={accept}
+        multiple
         onChange={handleFileSelect}
         className="hidden"
       />
 
-      {value ? (
+      {pending.length > 0 ? (
+        <PendingPdfPanel
+          files={pending}
+          onChange={setPending}
+          onAddMore={() => fileInputRef.current?.click()}
+          onConfirm={handleConfirm}
+          onCancel={() => { setPending([]); setError(null) }}
+          busy={busy}
+          busyLabel={combining ? 'Combining…' : 'Uploading…'}
+          error={error}
+        />
+      ) : value ? (
         <div className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border border-green-200 rounded-lg">
           <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -89,13 +133,13 @@ export default function DocumentUpload({ label, required = false, value, onChang
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
+          disabled={busy}
           className="flex items-center justify-center gap-2 w-full px-4 py-2.5 text-sm text-blue-600 border border-blue-300 border-dashed rounded-lg hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {uploading ? (
+          {busy ? (
             <>
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
-              Uploading...
+              {combining ? 'Combining...' : 'Uploading...'}
             </>
           ) : (
             <>
@@ -108,8 +152,10 @@ export default function DocumentUpload({ label, required = false, value, onChang
         </button>
       )}
 
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-      <p className="mt-1 text-xs text-gray-400">PDF, JPG or PNG — max 10 MB</p>
+      {error && pending.length === 0 && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      <p className="mt-1 text-xs text-gray-400">
+        PDF, JPG or PNG — max 10 MB. Add several pages at once and they'll be combined into one PDF.
+      </p>
     </div>
   )
 }
