@@ -1,13 +1,12 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { usePurchaseInvoiceItems, useUpdatePurchaseInvoice, useParts, useCreatePart, usePartUnits } from '../../hooks/useInventory'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import {
-    PlusIcon, TrashIcon, XMarkIcon, CheckIcon,
-    PaperClipIcon, ArrowUpTrayIcon, ExclamationTriangleIcon,
+    PlusIcon, TrashIcon, XMarkIcon, CheckIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
-import { supabase } from '../../lib/supabase'
+import MultiFileAttach from '../shared/MultiFileAttach'
 import {
     round2,
     lineSubtotal,
@@ -40,7 +39,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const { data: locations = [] } = useWorkshopLocations()
     const updateInvoice = useUpdatePurchaseInvoice()
     const createPart = useCreatePart()
-    const fileInputRef = useRef(null)
 
     const [invoiceData, setInvoiceData] = useState({
         invoice_number: invoice.invoice_number,
@@ -60,7 +58,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const [error, setError] = useState(null)
     const [invoiceFile, setInvoiceFile] = useState(
         invoice.invoice_file_url
-            ? { name: 'Existing document', url: invoice.invoice_file_url, uploading: false }
+            ? { name: 'Existing document', url: invoice.invoice_file_url }
             : null
     )
 
@@ -88,41 +86,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
             setOriginalItems(mapped.map(m => ({ id: m.id })))
         }
     }, [existingItems, lines])
-
-    // ── File upload ────────────────────────────────────────────────────────────
-    async function handleFileSelect(e) {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg', 'application/pdf']
-        if (!allowed.includes(file.type)) {
-            alert('Only images (JPG, PNG) and PDFs are allowed.')
-            return
-        }
-        if (file.size > 20 * 1024 * 1024) {
-            alert('File must be under 20MB.')
-            return
-        }
-
-        setInvoiceFile({ name: file.name, url: null, uploading: true })
-        try {
-            const formData = new FormData()
-            formData.append('file', file)
-            const { data: { session } } = await supabase.auth.getSession()
-            const response = await fetch(
-                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-to-drive`,
-                { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` }, body: formData }
-            )
-            if (!response.ok) throw new Error('Upload failed')
-            const result = await response.json()
-            setInvoiceFile({ name: file.name, url: result.url, uploading: false })
-        } catch (err) {
-            console.error(err)
-            alert('Failed to upload file. Please try again.')
-            setInvoiceFile(null)
-        }
-        e.target.value = ''
-    }
 
     // ── Line helpers ───────────────────────────────────────────────────────────
     const invoiceTotal = calcInvoiceTotal(lines || [])
@@ -357,48 +320,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                             {/* Invoice Document */}
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept="image/*,application/pdf"
-                                    onChange={handleFileSelect}
-                                    className="hidden"
-                                />
-                                {!invoiceFile ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors w-full justify-center"
-                                    >
-                                        <ArrowUpTrayIcon className="w-4 h-4" />
-                                        Attach invoice image or PDF
-                                    </button>
-                                ) : invoiceFile.uploading ? (
-                                    <div className="flex items-center gap-2 px-4 py-2.5 border rounded-lg text-sm text-gray-500 bg-gray-50">
-                                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                                        Uploading {invoiceFile.name}…
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-2 px-4 py-2.5 border border-green-200 rounded-lg bg-green-50">
-                                        <PaperClipIcon className="w-4 h-4 text-green-600 shrink-0" />
-                                        <a
-                                            href={invoiceFile.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-sm text-green-700 hover:underline truncate flex-1"
-                                        >
-                                            {invoiceFile.name}
-                                        </a>
-                                        <button
-                                            type="button"
-                                            onClick={() => setInvoiceFile(null)}
-                                            className="text-gray-400 hover:text-red-500 shrink-0"
-                                            title="Remove document"
-                                        >
-                                            <XMarkIcon className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                )}
+                                <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />
                             </div>
 
                             {/* Line Items */}
