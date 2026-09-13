@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
@@ -71,6 +71,33 @@ export default function TicketForm() {
 
   const { data: vehicles = [], isLoading: vehiclesLoading } = useVehicles(watchSite || null)
   const createTicket = useCreateTicket()
+
+  // Inactive vehicles are shown, greyed and unpickable, after the active ones — hiding
+  // them made a bus that is out of service look identical to one that was never added,
+  // and a supervisor could not tell whether to stop looking or call an admin (MAIN-67).
+  // Rows arrive ordered by registration_number, so this only has to lift the active ones
+  // above the inactive ones. An inactive vehicle that is somehow already selected stays
+  // pickable, as in SiteCheckboxList: never strand the user on a value they cannot clear.
+  const watchVehicle = watch('vehicle_number')
+  const vehicleOptions = useMemo(() => (
+    [...vehicles]
+      .sort((a, b) => {
+        if (!!a.is_active === !!b.is_active) return 0
+        return a.is_active ? -1 : 1
+      })
+      .map(v => ({
+        value: v.registration_number,
+        label: `${v.registration_number}${v.make ? ` — ${v.make}` : ''}${v.model ? ` ${v.model}` : ''}`,
+        ...(v.is_active ? {} : {
+          badge: 'Inactive',
+          disabled: v.registration_number !== watchVehicle,
+        }),
+      }))
+  ), [vehicles, watchVehicle])
+
+  // Distinct from "no vehicles at all": these are linked but every one is out of
+  // service, so refreshing the list or fixing the site would not help.
+  const allVehiclesInactive = vehicles.length > 0 && vehicles.every(v => !v.is_active)
 
   const handleRefreshVehicles = async () => {
     setSyncing(true)
@@ -199,10 +226,7 @@ export default function TicketForm() {
                   label={<span>Vehicle Number <span className="text-red-500">*</span></span>}
                   value={value}
                   onChange={onChange}
-                  options={vehicles.map(v => ({
-                    value: v.registration_number,
-                    label: `${v.registration_number}${v.make ? ` — ${v.make}` : ''}${v.model ? ` ${v.model}` : ''}`
-                  }))}
+                  options={vehicleOptions}
                   showAllOnFocus
                   error={error}
                   placeholder={watchSite ? 'Type to search vehicle...' : 'Select a site first'}
@@ -214,6 +238,12 @@ export default function TicketForm() {
                 No vehicles are linked to {watchSite}. Try refreshing the list below —
                 if it stays empty, the site may need to be corrected. Please contact
                 your administrator.
+              </p>
+            )}
+            {watchSite && !vehiclesLoading && allVehiclesInactive && (
+              <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                Every vehicle linked to {watchSite} is inactive, so there is none to
+                raise a ticket against. Please contact your administrator.
               </p>
             )}
             <button
