@@ -120,6 +120,13 @@ export function useUpdateTicket() {
 
 /**
  * Hook to fetch vehicles, optionally filtered by site via the vehicle_sites junction table.
+ *
+ * Inactive vehicles are returned, not filtered out — omitting them made a bus that is
+ * out of service look identical to one that was never added (MAIN-67). The caller greys
+ * them out and blocks selection; is_active is selected so it can tell them apart.
+ *
+ * Note the site branch inner-joins vehicle_sites, so a vehicle with no site link is
+ * still invisible here regardless of its is_active value.
  */
 export function useVehicles(site = null) {
   return useQuery({
@@ -128,8 +135,7 @@ export function useVehicles(site = null) {
       if (site) {
         const { data, error } = await supabase
           .from('vehicles')
-          .select('registration_number, make, model, vehicle_sites!inner(site_name)')
-          .eq('is_active', true)
+          .select('registration_number, make, model, is_active, vehicle_sites!inner(site_name)')
           .eq('vehicle_sites.site_name', site)
           .order('registration_number')
         if (error) throw error
@@ -138,8 +144,7 @@ export function useVehicles(site = null) {
 
       const { data, error } = await supabase
         .from('vehicles')
-        .select('registration_number, make, model')
-        .eq('is_active', true)
+        .select('registration_number, make, model, is_active')
         .order('registration_number')
       if (error) throw error
       return data || []

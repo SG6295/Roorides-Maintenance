@@ -16,7 +16,14 @@ function classNames(...classes) {
  * A searchable select — shows no options until the user starts typing,
  * then filters as they type. Matches the visual style of CustomSelect.
  *
- * options: array of { value, label } objects
+ * options: array of { value, label } objects. Two optional per-option fields:
+ *   disabled — the row is shown but greyed and cannot be picked (Headless UI also
+ *              skips it in keyboard nav and marks it aria-disabled). Use it to say
+ *              "this exists but is not available" rather than dropping the row,
+ *              which reads as "no such thing" — see MAIN-67.
+ *   badge    — short muted text on the right saying why, e.g. "Inactive".
+ * Both are ignored when absent, so callers that pass plain { value, label } are
+ * unaffected.
  * showAllOnFocus: show full list on focus (empty input = all options visible)
  * pinnedOption: { value, label } — always rendered first, never filtered out
  */
@@ -109,22 +116,44 @@ export default function SearchableSelect({
               <ComboboxOption
                 key={opt.value}
                 value={opt.value}
-                className={({ active }) =>
+                disabled={opt.disabled}
+                className={({ active, disabled }) =>
                   classNames(
-                    active ? 'bg-blue-600 text-white' : 'text-gray-900',
-                    'relative cursor-default select-none py-2 pl-3 pr-9'
+                    disabled
+                      ? 'text-gray-400 cursor-not-allowed'
+                      : classNames(
+                          active ? 'bg-blue-600 text-white' : 'text-gray-900',
+                          'cursor-default'
+                        ),
+                    'relative select-none py-2 pl-3 pr-9'
                   )
                 }
               >
-                {({ selected, active }) => (
+                {({ selected, active, disabled }) => (
                   <>
-                    <span
-                      className={classNames(
-                        selected ? 'font-semibold' : 'font-normal',
-                        'block truncate'
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={classNames(
+                          selected ? 'font-semibold' : 'font-normal',
+                          'min-w-0 truncate'
+                        )}
+                      >
+                        {opt.label}
+                      </span>
+                      {opt.badge && (
+                        <span
+                          className={classNames(
+                            'shrink-0 text-xs italic',
+                            disabled
+                              ? 'text-gray-400'
+                              : active
+                                ? 'text-blue-100'
+                                : 'text-gray-500'
+                          )}
+                        >
+                          {opt.badge}
+                        </span>
                       )}
-                    >
-                      {opt.label}
                     </span>
                     {selected && (
                       <span
