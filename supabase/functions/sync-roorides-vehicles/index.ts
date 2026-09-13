@@ -275,7 +275,52 @@ serve(async (req) => {
       if (error) throw error
     }
 
-    console.log(`sync-roorides-vehicles: synced ${uniqueVehicles.length} vehicles, ${allSiteNames.size} sites, ${vehicleSitesRecords.length} vehicle-site associations, ${namedCount} sites named, ${toActivate.length} sites reactivated, ${toDeactivate.length} deactivated`)
+    // Step 8: a vehicle is active exactly when this feed still returns it — the same rule
+    // Step 7 applies to sites, for the same reason.
+    //
+    // A vehicle that left the feed used to keep is_active = true forever while Step 6
+    // stripped its vehicle_sites rows, leaving a row no supervisor could see (their vehicle
+    // list is site-filtered) but every exec could still pick (a blank Site field means an
+    // unfiltered list). 69 of those had accumulated in prod by Sep 2026. See MAIN-69.
+    //
+    // Rows are never deleted: tickets and job cards hold vehicle_number as free text so
+    // history survives either way, and a vehicle that comes back must keep its id.
+    //
+    // Reactivation needs no code here — a vehicle back in the feed is in uniqueVehicles and
+    // Step 5's upsert already writes is_active from its upstream status. So the rule is
+    // two-way, upstream status stays authoritative, and a partial feed that wrongly
+    // deactivates a vehicle is corrected by the next good run. The zero-vehicle abort above
+    // means a Roorides outage can never deactivate the fleet.
+    //
+    // Unlike sites, vehicles have a UI (Vehicles page → Add Vehicle), so this is restricted
+    // to feed-owned rows. A hand-created vehicle has no feed entry to be absent from, and
+    // deactivating it would be discarding someone's work on a technicality. MAIN-68 decides
+    // whether that manual path should exist at all; if it goes, this filter goes with it.
+    const feedRegs = new Set(uniqueVehicles.map((v: { registration_number: string }) => v.registration_number))
+
+    // raw_data is selected against, never selected — pulling 800+ full payloads back to
+    // read one boolean is the one thing that would make this step expensive.
+    const { data: feedVehicles, error: readVehiclesError } = await supabase
+      .from('vehicles')
+      .select('id, registration_number, is_active')
+      .not('raw_data', 'is', null)
+    if (readVehiclesError) throw readVehiclesError
+
+    const vehiclesToDeactivate = (feedVehicles ?? [])
+      .filter(v => v.is_active && !feedRegs.has(v.registration_number))
+      .map(v => v.id)
+
+    // Chunked so the id list cannot blow the request URL length — the same constraint that
+    // makes Step 6 wipe the whole table rather than filter by 600+ ids.
+    for (let i = 0; i < vehiclesToDeactivate.length; i += 100) {
+      const { error } = await supabase
+        .from('vehicles')
+        .update({ is_active: false })
+        .in('id', vehiclesToDeactivate.slice(i, i + 100))
+      if (error) throw error
+    }
+
+    console.log(`sync-roorides-vehicles: synced ${uniqueVehicles.length} vehicles, ${allSiteNames.size} sites, ${vehicleSitesRecords.length} vehicle-site associations, ${namedCount} sites named, ${toActivate.length} sites reactivated, ${toDeactivate.length} deactivated, ${vehiclesToDeactivate.length} vehicles deactivated`)
 
     return new Response(
       JSON.stringify({
@@ -285,6 +330,7 @@ serve(async (req) => {
         sitesNamed: namedCount,
         sitesActivated: toActivate.length,
         sitesDeactivated: toDeactivate.length,
+        vehiclesDeactivated: vehiclesToDeactivate.length,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
