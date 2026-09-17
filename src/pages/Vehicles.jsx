@@ -4,54 +4,41 @@ import { formatDate } from '../utils/datetime'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
-import { useVehicles, useCreateVehicle, useUpdateVehicle } from '../hooks/useVehicles'
+import { useVehicles, useUpdateVehicle } from '../hooks/useVehicles'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useAuth } from '../hooks/useAuth'
 import {
     MagnifyingGlassIcon,
-    PlusIcon,
     PencilSquareIcon,
     TruckIcon,
     XMarkIcon,
 } from '@heroicons/react/24/outline'
 
-// ── Add / Edit Modal ──────────────────────────────────────────────────────────
-function VehicleModal({ vehicle, onClose }) {
-    const createVehicle = useCreateVehicle()
+// ── Edit Modal ────────────────────────────────────────────────────────────────
+// Edit only — there is no add path. Vehicles come from the Roorides feed (MAIN-68).
+// Only year and notes are offered: the sync rewrites registration_number, make, model,
+// type and is_active on every run, so editing one of those here would be reverted
+// within 24 hours. is_active is shown read-only for the same reason (MAIN-69).
+function EditVehicleModal({ vehicle, onClose }) {
     const updateVehicle = useUpdateVehicle()
 
-    const isEdit = !!vehicle
     const [form, setForm] = useState({
-        registration_number: vehicle?.registration_number || '',
-        make: vehicle?.make || '',
-        model: vehicle?.model || '',
-        year: vehicle?.year || '',
-        notes: vehicle?.notes || '',
-        is_active: vehicle?.is_active ?? true,
+        year: vehicle.year || '',
+        notes: vehicle.notes || '',
     })
     const [error, setError] = useState(null)
 
     const set = (field, value) => setForm(p => ({ ...p, [field]: value }))
-    const mutation = isEdit ? updateVehicle : createVehicle
 
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
-        if (!form.registration_number.trim()) {
-            setError('Registration number is required.')
-            return
-        }
         try {
-            const payload = {
-                ...form,
-                registration_number: form.registration_number.trim().toUpperCase(),
+            await updateVehicle.mutateAsync({
+                id: vehicle.id,
                 year: form.year ? parseInt(form.year) : null,
-            }
-            if (isEdit) {
-                await mutation.mutateAsync({ id: vehicle.id, ...payload })
-            } else {
-                await mutation.mutateAsync(payload)
-            }
+                notes: form.notes,
+            })
             onClose()
         } catch (err) {
             setError(err.message)
@@ -62,65 +49,56 @@ function VehicleModal({ vehicle, onClose }) {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
                 <div className="flex items-center justify-between px-6 py-4 border-b">
-                    <h2 className="text-base font-semibold text-gray-900">
-                        {isEdit ? 'Edit Vehicle' : 'Add Vehicle'}
-                    </h2>
+                    <div>
+                        <h2 className="text-base font-semibold text-gray-900">Edit Vehicle</h2>
+                        <p className="text-xs text-gray-500 font-mono mt-0.5">
+                            {vehicle.registration_number}
+                        </p>
+                    </div>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
                         <XMarkIcon className="w-5 h-5" />
                     </button>
                 </div>
 
                 <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+                    {/* Feed-owned fields, shown for context only */}
+                    <div className="bg-gray-50 rounded-lg px-3 py-2.5 space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-500">Make / Model</span>
+                            <span className="text-gray-700">
+                                {[vehicle.make, vehicle.model].filter(Boolean).join(' ') || '—'}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-500">Site</span>
+                            <span className="text-gray-700">
+                                {vehicle.vehicle_sites?.map(vs => vs.site_name).join(', ') || '—'}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-500">Status</span>
+                            {vehicle.is_active
+                                ? <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">Active</span>
+                                : <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-500">Inactive</span>
+                            }
+                        </div>
+                        <p className="text-xs text-gray-400 pt-1 border-t border-gray-200">
+                            Set by the Roorides sync — change these at source in Roorides.
+                        </p>
+                    </div>
+
                     <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Registration Number <span className="text-red-500">*</span>
-                        </label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
                         <input
                             autoFocus
-                            type="text"
-                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 uppercase"
-                            value={form.registration_number}
-                            onChange={e => set('registration_number', e.target.value)}
-                            placeholder="e.g. KA-01-AB-1234"
+                            type="number"
+                            min="1990"
+                            max="2099"
+                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                            value={form.year}
+                            onChange={e => set('year', e.target.value)}
+                            placeholder="e.g. 2022"
                         />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Make</label>
-                            <input
-                                type="text"
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                value={form.make}
-                                onChange={e => set('make', e.target.value)}
-                                placeholder="e.g. Tata"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
-                            <input
-                                type="text"
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                value={form.model}
-                                onChange={e => set('model', e.target.value)}
-                                placeholder="e.g. Ace"
-                            />
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
-                            <input
-                                type="number"
-                                min="1990"
-                                max="2099"
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                value={form.year}
-                                onChange={e => set('year', e.target.value)}
-                                placeholder="e.g. 2022"
-                            />
-                        </div>
                     </div>
 
                     <div>
@@ -133,18 +111,6 @@ function VehicleModal({ vehicle, onClose }) {
                             placeholder="Optional"
                         />
                     </div>
-
-                    {isEdit && (
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
-                            <input
-                                type="checkbox"
-                                checked={form.is_active}
-                                onChange={e => set('is_active', e.target.checked)}
-                                className="rounded"
-                            />
-                            Active
-                        </label>
-                    )}
 
                     {error && (
                         <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
@@ -160,10 +126,10 @@ function VehicleModal({ vehicle, onClose }) {
                         </button>
                         <button
                             type="submit"
-                            disabled={mutation.isPending}
+                            disabled={updateVehicle.isPending}
                             className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                         >
-                            {mutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Vehicle'}
+                            {updateVehicle.isPending ? 'Saving…' : 'Save Changes'}
                         </button>
                     </div>
                 </form>
@@ -181,7 +147,6 @@ export default function Vehicles() {
     const search = useDebouncedValue(filters.search)
     const { data: vehicles = [], isLoading } = useVehicles({ ...filters, search })
 
-    const [showAddModal, setShowAddModal] = useState(false)
     const [editingVehicle, setEditingVehicle] = useState(null)
 
     return (
@@ -191,16 +156,12 @@ export default function Vehicles() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                    <h1 className="text-2xl font-bold text-gray-900">Vehicles</h1>
-                    {canEdit && (
-                        <button
-                            onClick={() => setShowAddModal(true)}
-                            className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm"
-                        >
-                            <PlusIcon className="w-4 h-4" />
-                            Add Vehicle
-                        </button>
-                    )}
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900">Vehicles</h1>
+                        <p className="text-xs text-gray-500 mt-1">
+                            Synced nightly from Roorides — add or retire a vehicle at source.
+                        </p>
+                    </div>
                 </div>
 
                 {/* Filters */}
@@ -242,14 +203,6 @@ export default function Vehicles() {
                     <div className="bg-white rounded-lg shadow-sm p-16 text-center">
                         <TruckIcon className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                         <p className="text-gray-400 text-sm">No vehicles found.</p>
-                        {canEdit && (
-                            <button
-                                onClick={() => setShowAddModal(true)}
-                                className="mt-4 text-sm text-blue-600 hover:underline"
-                            >
-                                Add your first vehicle
-                            </button>
-                        )}
                     </div>
                 ) : (
                     <div className="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -313,8 +266,9 @@ export default function Vehicles() {
                 )}
             </div>
 
-            {showAddModal && <VehicleModal onClose={() => setShowAddModal(false)} />}
-            {editingVehicle && <VehicleModal vehicle={editingVehicle} onClose={() => setEditingVehicle(null)} />}
+            {editingVehicle && (
+                <EditVehicleModal vehicle={editingVehicle} onClose={() => setEditingVehicle(null)} />
+            )}
         </div>
     )
 }
