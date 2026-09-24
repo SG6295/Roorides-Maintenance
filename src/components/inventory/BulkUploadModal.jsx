@@ -2,8 +2,10 @@ import { useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { useAuth } from '../../hooks/useAuth'
 import { useParts, useRecordPurchase } from '../../hooks/useInventory'
+import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import CustomSelect from '../shared/CustomSelect'
 import {
     XMarkIcon,
     ArrowDownTrayIcon,
@@ -160,9 +162,11 @@ const STEPS = { UPLOAD: 'upload', VALIDATE: 'validate', DONE: 'done' }
 export default function BulkUploadModal({ onClose }) {
     const { userProfile } = useAuth()
     const { data: parts = [] } = useParts()
+    const { data: locations = [] } = useWorkshopLocations()
     const queryClient = useQueryClient()
 
     const [step, setStep] = useState(STEPS.UPLOAD)
+    const [chosenLocationId, setChosenLocationId] = useState('')
     const [dragging, setDragging] = useState(false)
     const [parseError, setParseError] = useState(null)
     const [records, setRecords] = useState([]) // validated records
@@ -171,6 +175,12 @@ export default function BulkUploadModal({ onClose }) {
     const [importError, setImportError] = useState(null)
     const [importedCount, setImportedCount] = useState(0)
     const fileRef = useRef()
+
+    // One workshop for the whole batch (MAIN-73). An invoice holds a single
+    // location_id, so a per-row template column would only buy mixed-workshop
+    // files at the cost of name matching — a spreadsheet spanning two workshops
+    // is split and uploaded twice instead.
+    const locationId = chosenLocationId || (locations.length === 1 ? locations[0].id : '')
 
     // Build lookup maps from parts
     const partsMap = {
@@ -182,6 +192,10 @@ export default function BulkUploadModal({ onClose }) {
 
     async function processFile(file) {
         setParseError(null)
+        if (!locationId) {
+            setParseError('Choose which workshop this batch is being inwarded to first.')
+            return
+        }
         try {
             const rows = await parseFile(file)
             const recs = rowsToRecords(rows)
@@ -227,6 +241,10 @@ export default function BulkUploadModal({ onClose }) {
 
     async function handleImport() {
         if (hasErrors) return
+        if (!locationId) {
+            setImportError('Choose which workshop this batch is being inwarded to.')
+            return
+        }
         setImporting(true)
         setImportError(null)
 
@@ -286,6 +304,10 @@ export default function BulkUploadModal({ onClose }) {
                         invoice_number: group.invoice_number,
                         invoice_date: group.invoice_date,
                         supplier_name: group.supplier_name,
+                        // Written before the line items below, so the restock trigger
+                        // reads this workshop off the header instead of the column
+                        // default (MAIN-73).
+                        location_id: locationId,
                         notes: group.notes || null,
                         total_amount: lineItems.reduce((s, l) => {
                             const lineTotal = Math.round(
@@ -309,6 +331,7 @@ export default function BulkUploadModal({ onClose }) {
             }
 
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
             setImportedCount(totalItems)
             setStep(STEPS.DONE)
@@ -320,6 +343,30 @@ export default function BulkUploadModal({ onClose }) {
     }
 
     // ── RENDER ────────────────────────────────────────────────────────────────
+    // Shown in both the upload and preview steps: the workshop has to be set before
+    // a file is parsed, and stay visible — and changeable — where the rows are
+    // reviewed, so a mis-set one is caught before anything is written.
+    const workshopField = (hint) => (
+        <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+                Inward to Workshop <span className="text-red-500">*</span>
+            </label>
+            <div className="max-w-md">
+                <CustomSelect
+                    value={locationId}
+                    onChange={setChosenLocationId}
+                    options={locations.map(l => ({
+                        value: l.id,
+                        label: l.address ? `${l.name} — ${l.address}` : l.name,
+                    }))}
+                    placeholder="Select workshop"
+                    compact
+                />
+            </div>
+            <p className="text-xs text-gray-400 mt-1">{hint}</p>
+        </div>
+    )
+
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
@@ -361,18 +408,27 @@ export default function BulkUploadModal({ onClose }) {
                                 </button>
                             </div>
 
+                            {/* Workshop — the whole batch lands here, so it gates the drop zone */}
+                            {workshopField("Every invoice in this file is received into this workshop's stock. A file covering two workshops is split and uploaded twice.")}
+
                             {/* Drop zone */}
                             <div
-                                className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
-                                    dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'
+                                className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
+                                    !locationId
+                                        ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
+                                        : dragging
+                                        ? 'border-blue-500 bg-blue-50 cursor-pointer'
+                                        : 'border-gray-300 hover:border-blue-400 cursor-pointer'
                                 }`}
-                                onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+                                onDragOver={(e) => { e.preventDefault(); if (locationId) setDragging(true) }}
                                 onDragLeave={() => setDragging(false)}
                                 onDrop={handleDrop}
-                                onClick={() => fileRef.current?.click()}
+                                onClick={() => { if (locationId) fileRef.current?.click() }}
                             >
-                                <ArrowUpTrayIcon className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-                                <p className="text-sm font-medium text-gray-700">Drop your file here or click to browse</p>
+                                <ArrowUpTrayIcon className={`w-10 h-10 mx-auto mb-3 ${locationId ? 'text-gray-400' : 'text-gray-300'}`} />
+                                <p className={`text-sm font-medium ${locationId ? 'text-gray-700' : 'text-gray-400'}`}>
+                                    {locationId ? 'Drop your file here or click to browse' : 'Choose a workshop above to start'}
+                                </p>
                                 <p className="text-xs text-gray-500 mt-1">Supports .xlsx and .csv</p>
                                 <input
                                     ref={fileRef}
@@ -404,6 +460,9 @@ export default function BulkUploadModal({ onClose }) {
                     {/* ── STEP: VALIDATE ── */}
                     {step === STEPS.VALIDATE && (
                         <div className="space-y-4">
+                            {/* Workshop — still changeable here, before any row is written */}
+                            {workshopField("Every invoice below is received into this workshop's stock.")}
+
                             {/* Summary badges */}
                             <div className="flex gap-3 flex-wrap">
                                 <span className="text-xs px-2 py-1 bg-gray-100 rounded-full text-gray-600">
@@ -613,7 +672,7 @@ export default function BulkUploadModal({ onClose }) {
                             <button
                                 type="button"
                                 onClick={handleImport}
-                                disabled={hasErrors || importing}
+                                disabled={hasErrors || importing || !locationId}
                                 className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                             >
                                 {importing ? 'Importing…' : `Import ${editedRecords.length} rows`}
