@@ -111,7 +111,14 @@ export function useUpdatePurchaseInvoice() {
 
     return useMutation({
         mutationFn: async ({ invoiceId, invoiceData, lineItems, originalItems }) => {
-            // 1. Update invoice header fields
+            // 1. Update invoice header fields.
+            //    location_id must be written here, before any line-item change (MAIN-72):
+            //    trigger_move_invoice_stock_on_location_change moves every quantity this
+            //    invoice inwarded to the new workshop, and refuses if the old workshop has
+            //    already spent it. That raise rolls back this one statement and throws
+            //    before a single line item is touched, so a refused move leaves nothing
+            //    half-saved. Once it succeeds the line-item triggers below read the new
+            //    location off the header, so their deltas land at the right workshop.
             const { error: invErr } = await supabase
                 .from('purchase_invoices')
                 .update({
@@ -120,6 +127,7 @@ export function useUpdatePurchaseInvoice() {
                     invoice_date: invoiceData.invoice_date,
                     notes: invoiceData.notes || null,
                     invoice_file_url: invoiceData.invoice_file_url || null,
+                    location_id: invoiceData.location_id,
                 })
                 .eq('id', invoiceId)
             if (invErr) throw invErr
@@ -188,6 +196,9 @@ export function useUpdatePurchaseInvoice() {
         },
         onSuccess: (_data, { invoiceId }) => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+            // A workshop change moves stock between locations, so the per-workshop
+            // views are stale too, not just the global quantity.
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoice_items', invoiceId] })
         },
