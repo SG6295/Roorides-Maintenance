@@ -17,6 +17,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Tests run first and in the same job, deliberately. A separate job that
+      # `deploy` depended on would leave the required `deploy` check skipped and
+      # unreported whenever a test failed — the same wedge described above. One
+      # job means a test failure simply fails this check, and nothing deploys.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
       - uses: supabase/setup-cli@v1
         with:
           version: latest
