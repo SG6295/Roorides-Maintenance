@@ -21,9 +21,11 @@ jobs:
       # `deploy` depended on would leave the required `deploy` check skipped and
       # unreported whenever a test failed — the same wedge described above. One
       # job means a test failure simply fails this check, and nothing deploys.
+      # 24 to match the Node version Vercel builds this project on, so CI and the
+      # real build never disagree about the runtime.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
