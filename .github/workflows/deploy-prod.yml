@@ -12,9 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not "latest": resolving "latest" costs a GitHub API call that is
+      # rate-limited on shared runners, and a deploy has already failed on
+      # "Failed to resolve latest Supabase CLI release: rate limit exceeded".
+      # Bump deliberately.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.118.0
 
       - name: Run migrations against production
         run: supabase db push --db-url "$PROD_DB_URL"

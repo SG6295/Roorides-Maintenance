@@ -34,9 +34,13 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Pinned, not "latest": resolving "latest" costs a GitHub API call that is
+      # rate-limited on shared runners, and a deploy has already failed on
+      # "Failed to resolve latest Supabase CLI release: rate limit exceeded".
+      # Bump deliberately, and keep in step with deploy-prod.yml.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.118.0
 
       - name: Run migrations against staging
         run: supabase db push --db-url "$STAGING_DB_URL"
