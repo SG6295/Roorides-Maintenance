@@ -1,14 +1,16 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// Keep this in sync when a module adds tables. It had already drifted eight tables
-// behind (the whole scrap module plus outsource invoices) before this was noticed —
-// MAIN-33 replaces it with dynamic discovery so it cannot silently fall behind again.
+// Keep this in sync when a module adds OR drops a table. It has drifted twice: eight
+// tables behind (the whole scrap module plus outsource invoices), and later a phantom
+// `sla_rules` left over after MAIN-47 dropped it. A failed table read is swallowed as
+// [], so both directions fail quietly — and the missing direction costs real data.
+// MAIN-33 would replace this with dynamic discovery; until it lands, this list is manual.
 const TABLES = [
   'sites', 'users', 'user_sites', 'user_settings', 'user_audit_logs',
   'vehicles', 'vehicle_sites',
   'tickets', 'issues', 'job_cards', 'issue_parts',
   'parts', 'part_units', 'purchase_invoices', 'purchase_invoice_items',
-  'finance_entries', 'sla_rules', 'sla_rules_config', 'sla_events',
+  'finance_entries', 'sla_rules_config', 'sla_events',
   'holidays', 'system_settings', 'suppliers', 'audit_logs',
   // Scrap / salvage
   'scrap_inventory', 'scrap_disposal', 'scrap_disposal_items',

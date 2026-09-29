@@ -112,7 +112,9 @@ All written in Deno/TypeScript. Each function uses `SUPABASE_SERVICE_ROLE_KEY` f
 - **purchase_invoices** → has many **purchase_invoice_items** → each references a `parts` row
 
 ### SLA System
-SLA windows are configured in the `sla_rules` table (editable via the SLA Settings page — `super_admin` can write, `maintenance_exec` can view). Database triggers auto-calculate `sla_end_date` and `sla_status` (Pending/Adhered/Violated) per issue. Holiday calendar in `holidays` table and weekly-offs in `system_settings` key `sla_weekly_offs` are used for business-day calculations. Timeline events are stored in `sla_events` and surfaced via `useSLAEvents(ticketId)` in `src/hooks/useSLA.js`.
+SLA windows are configured in the `sla_rules_config` table (editable via the SLA Settings page — `super_admin` can write, `maintenance_exec` can view). Database triggers auto-calculate `sla_end_date` and `sla_status` (Pending/Adhered/Violated) per issue. Holiday calendar in `holidays` table and weekly-offs in `system_settings` key `sla_weekly_offs` are used for business-day calculations. Timeline events are stored in `sla_events` and surfaced via `useSLAEvents(ticketId)` in `src/hooks/useSLA.js`.
+
+> **There is no `sla_rules` table.** Two tables once held SLA day-counts: the settings page wrote `sla_rules` while the triggers always read `sla_rules_config`, so UI edits changed a row nothing consumed and the two drifted. MAIN-47 made `sla_rules_config` the single source and dropped the decoy. Don't re-add `sla_rules` to anything — it lingered in `backup-to-drive`'s table list long afterwards, logging a failed read on every hourly run.
 
 ### Inventory Module
 `src/pages/Inventory.jsx` (accessible to `maintenance_exec` and `finance`) has three tabs managed via local state:
