@@ -19,6 +19,12 @@ import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
  * The trigger caps in the other direction — an untruncated long label stretched the
  * button across the filter bar and reflowed the controls beside it.
  *
+ * The list always opens with a reset row carrying the placeholder text. Without it a
+ * filter was a one-way door: picking a site left no way back to "All Sites" short of
+ * Clear All, which also wiped the vehicle search beside it. `''` is the no-filter value
+ * and this component owns that row — call sites must not pass an option for it, or the
+ * dropdown shows two.
+ *
  * Props:
  *   options     — array of { value, label }
  *   value       — currently selected value ('' = show placeholder)
@@ -101,6 +107,16 @@ export default function FilterSelect({ options = [], value, onChange, placeholde
             </div>
           )}
           <div className="p-1 max-h-72 overflow-y-auto">
+            {/* Outside `filtered` on purpose — a search query must never hide the way back. */}
+            <button
+              type="button"
+              onClick={() => { onChange(''); close() }}
+              className={`w-full text-left px-3 py-2.5 text-sm rounded hover:bg-gray-100 transition-colors ${
+                !value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
+              }`}
+            >
+              {placeholder}
+            </button>
             {filtered.length === 0 && (
               <p className="px-3 py-2.5 text-sm text-gray-500">No matches.</p>
             )}

@@ -30,7 +30,7 @@ export default function Users({ embedded = false }) {
     const queryClient = useQueryClient()
     const [isAddModalOpen, setIsAddModalOpen] = useState(false)
     const [editingUser, setEditingUser] = useState(null)
-    const [filterRole, setFilterRole] = useState('all')
+    const [filterRole, setFilterRole] = useState('')
     const [searchQuery, setSearchQuery] = useState('')
 
     const isSuperAdmin = currentUserProfile?.role === 'super_admin'
@@ -83,7 +83,7 @@ export default function Users({ embedded = false }) {
     })
 
     const filteredUsers = users?.filter(user => {
-        const matchesRole = filterRole === 'all' || user.role === filterRole
+        const matchesRole = !filterRole || user.role === filterRole
         const matchesSearch = user.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             user.email?.toLowerCase().includes(searchQuery.toLowerCase())
         return matchesRole && matchesSearch
@@ -153,7 +153,6 @@ export default function Users({ embedded = false }) {
                         onChange={setFilterRole}
                         placeholder="All Roles"
                         options={[
-                            { value: 'all', label: 'All Roles' },
                             { value: 'super_admin', label: 'Super Admin' },
                             { value: 'maintenance_exec', label: 'Maintenance Exec' },
                             { value: 'supervisor', label: 'Supervisor' },

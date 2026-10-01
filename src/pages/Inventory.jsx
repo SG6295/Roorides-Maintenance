@@ -736,8 +736,8 @@ function ConsumptionHistory() {
                     <FilterSelect
                         value={filters.source}
                         onChange={v => setFilters(p => ({ ...p, source: v }))}
+                        placeholder="All sources"
                         options={[
-                            { value: '', label: 'All sources' },
                             { value: 'job_card', label: 'Job card usage' },
                             { value: 'audit', label: 'Stock audit' },
                         ]}
