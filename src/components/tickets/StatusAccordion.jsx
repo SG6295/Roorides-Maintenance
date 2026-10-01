@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import TicketCard from './TicketCard'
 
-export default function StatusAccordion({ tickets, statusCounts, currentDate }) {
+export default function StatusAccordion({ tickets, currentDate }) {
   const [openStatuses, setOpenStatuses] = useState({
     'New': true,
     'Accepted': false,
@@ -31,17 +31,14 @@ export default function StatusAccordion({ tickets, statusCounts, currentDate }) 
     return tickets.filter(ticket => ticket.status === statusValue)
   }
 
-  const getCount = (status) => {
-    if (!statusCounts) return 0
-    return statusCounts[status] || 0
-  }
-
   return (
     <div className="space-y-3">
       {statuses.map((status) => {
-        const count = getCount(status.value)
         const isOpen = openStatuses[status.label]
         const statusTickets = getTicketsForStatus(status.value)
+        // The badge counts the same list the rows are drawn from, by construction.
+        // A separately-computed count is what let the two disagree (MAIN-82).
+        const count = statusTickets.length
 
         return (
           <div key={status.value} className="bg-white border border-gray-300 rounded-lg overflow-hidden">
