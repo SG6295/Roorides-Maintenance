@@ -81,34 +81,10 @@ export default function Tickets() {
     })
   }, [allTickets, dateRange, filters])
 
-  // Calculate status counts
-  const statusCounts = useMemo(() => {
-    if (!allTickets) return {}
-
-    const counts = {
-      total: 0,
-      New: 0,
-      Accepted: 0,
-      'Work In Progress': 0,
-      Resolved: 0,
-      Closed: 0,
-      Rejected: 0,
-    }
-
-    allTickets.forEach((ticket) => {
-      // Apply date filter for counts
-      const ticketDate = dateKey(ticket.created_at)
-      if (ticketDate >= dateRange.start && ticketDate <= dateRange.end) {
-        counts.total++
-        if (ticket.status in counts) {
-          counts[ticket.status]++
-        }
-      }
-    })
-
-    return counts
-  }, [allTickets, dateRange])
-
+  // Status counts are deliberately not computed here. They used to be, from allTickets
+  // with only the date range applied, while the rows came from filteredTickets — so a
+  // site or vehicle filter narrowed the list but never its badge (MAIN-82). StatusAccordion
+  // counts the tickets it is handed, which makes the badge and the list one computation.
 
   const clearFilters = () => {
     setFilters({
@@ -204,7 +180,6 @@ export default function Tickets() {
         ) : (
           <StatusAccordion
             tickets={filteredTickets}
-            statusCounts={statusCounts}
             currentDate={now}
           />
         )}
