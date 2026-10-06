@@ -6,8 +6,13 @@
  * and SheetJS's own Date conversion lands ten seconds late in IST. So the sheet is written
  * and read back, the way Excel would see it.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import * as XLSX from 'xlsx'
+
+// ticketExport imports the app's Supabase client, which throws at load time without the
+// .env.local settings — present locally, absent in CI. These tests never touch it.
+vi.mock('../../lib/supabase', () => ({ supabase: {} }))
+
 import { buildTicketExportRows, buildTicketWorksheet } from '../ticketExport'
 
 let originalTz
