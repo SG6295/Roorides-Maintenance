@@ -9,9 +9,13 @@ import Navigation from '../components/shared/Navigation'
 import StatusAccordion from '../components/tickets/StatusAccordion'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import FilterSelect from '../components/shared/FilterSelect'
+import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
+import { exportTicketsToExcel } from '../utils/ticketExport'
 
 export default function Tickets() {
-  useAuth()
+  const { userProfile } = useAuth()
+  const canExport = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+  const [exporting, setExporting] = useState(false)
   // All sites, not just active — a departed school's past tickets must stay filterable.
   const { data: sites = [] } = useAllSites()
 
@@ -35,7 +39,10 @@ export default function Tickets() {
 
 
   // The date range is filtered in the database (MAIN-83); site and vehicle stay client-side.
-  const { data: allTickets, isLoading } = useTickets({ dateRange })
+  // isPlaceholderData: the list on screen is still the previous date range's while the new
+  // one loads, so Export is disabled until it arrives — otherwise the file would be named
+  // for the new range but hold the old range's tickets.
+  const { data: allTickets, isLoading, isPlaceholderData } = useTickets({ dateRange })
 
   // Sync timer to next full minute for cleaner updates
   useEffect(() => {
@@ -89,6 +96,18 @@ export default function Tickets() {
 
   const hasActiveFilters = filters.site || filters.vehicle_number
 
+  // Exports exactly what is on screen (MAIN-84).
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      await exportTicketsToExcel(filteredTickets, dateRange)
+    } catch (err) {
+      alert('Export failed: ' + err.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation breadcrumbs={[{ label: 'Tickets' }]} />
@@ -103,12 +122,24 @@ export default function Tickets() {
                 {filteredTickets.length} ticket{filteredTickets.length !== 1 ? 's' : ''} found
               </p>
             </div>
-            <Link
-              to="/tickets/new"
-              className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 transition-colors min-h-[48px] flex items-center whitespace-nowrap shadow-sm"
-            >
-              + New
-            </Link>
+            <div className="flex items-center gap-2">
+              {canExport && (
+                <button
+                  onClick={handleExport}
+                  disabled={exporting || isLoading || isPlaceholderData || filteredTickets.length === 0}
+                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-700 font-medium hover:bg-gray-50 disabled:opacity-40 transition-colors min-h-[48px] whitespace-nowrap shadow-sm"
+                >
+                  <ArrowDownTrayIcon className="w-5 h-5" />
+                  {exporting ? 'Exporting…' : 'Export'}
+                </button>
+              )}
+              <Link
+                to="/tickets/new"
+                className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 transition-colors min-h-[48px] flex items-center whitespace-nowrap shadow-sm"
+              >
+                + New
+              </Link>
+            </div>
           </div>
         </div>
       </div>
