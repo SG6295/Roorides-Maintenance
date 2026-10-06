@@ -1,25 +1,34 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './useAuth'
+import { fetchAllRows } from '../utils/fetchAllRows'
+import { localDayRangeToUtc } from '../utils/datetime'
 
 /**
  * Hook to fetch tickets based on user role
+ *
+ * `filters.dateRange` ({ start, end } as local "yyyy-MM-dd") is applied in the database.
+ * It used to be applied in the browser, after the API had already cut the list to the
+ * newest 1,000 tickets, so no date range could reach further back than that (MAIN-83).
  */
 export function useTickets(filters = {}) {
   const { userProfile } = useAuth()
 
   return useQuery({
     queryKey: ['tickets', filters, userProfile?.id],
-    queryFn: async () => {
+    // Keep the current list on screen while a new date range loads.
+    placeholderData: keepPreviousData,
+    queryFn: () => fetchAllRows(() => {
       let query = supabase
         .from('tickets')
         .select('*')
         .order('created_at', { ascending: false })
+        .order('id')
 
-
-
-
-      // Apply filters
+      if (filters.dateRange) {
+        const { from, to } = localDayRangeToUtc(filters.dateRange.start, filters.dateRange.end)
+        query = query.gte('created_at', from).lt('created_at', to)
+      }
       if (filters.site) {
         query = query.eq('site', filters.site)
       }
@@ -30,11 +39,8 @@ export function useTickets(filters = {}) {
         query = query.ilike('vehicle_number', `%${filters.vehicle_number}%`)
       }
 
-      const { data, error } = await query
-
-      if (error) throw error
-      return data || []
-    },
+      return query
+    }),
     enabled: !!userProfile,
   })
 }
@@ -131,23 +137,21 @@ export function useUpdateTicket() {
 export function useVehicles(site = null) {
   return useQuery({
     queryKey: ['vehicles', site],
-    queryFn: async () => {
+    // registration_number is unique, so it is already a stable order for fetchAllRows.
+    // `id` is selected only so fetchAllRows can de-duplicate.
+    queryFn: () => fetchAllRows(() => {
       if (site) {
-        const { data, error } = await supabase
+        return supabase
           .from('vehicles')
-          .select('registration_number, make, model, is_active, vehicle_sites!inner(site_name)')
+          .select('id, registration_number, make, model, is_active, vehicle_sites!inner(site_name)')
           .eq('vehicle_sites.site_name', site)
           .order('registration_number')
-        if (error) throw error
-        return data || []
       }
 
-      const { data, error } = await supabase
+      return supabase
         .from('vehicles')
-        .select('registration_number, make, model, is_active')
+        .select('id, registration_number, make, model, is_active')
         .order('registration_number')
-      if (error) throw error
-      return data || []
-    },
+    }),
   })
 }

@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
-import { dateKey } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
 import { useTickets } from '../hooks/useTickets'
 import { useAllSites } from '../hooks/useSites'
@@ -35,8 +34,8 @@ export default function Tickets() {
   })
 
 
-  // Fetch all tickets (we'll filter by date on client side)
-  const { data: allTickets, isLoading } = useTickets({})
+  // The date range is filtered in the database (MAIN-83); site and vehicle stay client-side.
+  const { data: allTickets, isLoading } = useTickets({ dateRange })
 
   // Sync timer to next full minute for cleaner updates
   useEffect(() => {
@@ -55,17 +54,11 @@ export default function Tickets() {
     }
   }, [])
 
-  // Filter tickets by date range and other filters
+  // Filter tickets by the non-date filters
   const filteredTickets = useMemo(() => {
     if (!allTickets) return []
 
     return allTickets.filter((ticket) => {
-      // Date range filter
-      const ticketDate = dateKey(ticket.created_at)
-      if (ticketDate < dateRange.start || ticketDate > dateRange.end) {
-        return false
-      }
-
       // Status filter
       if (filters.status && ticket.status !== filters.status) return false
 
@@ -79,7 +72,7 @@ export default function Tickets() {
 
       return true
     })
-  }, [allTickets, dateRange, filters])
+  }, [allTickets, filters])
 
   // Status counts are deliberately not computed here. They used to be, from allTickets
   // with only the date range applied, while the rows came from filteredTickets — so a

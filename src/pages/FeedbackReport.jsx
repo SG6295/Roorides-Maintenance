@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import { dateKey, formatAs, toDate } from '../utils/datetime'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../utils/fetchAllRows'
 import Navigation from '../components/shared/Navigation'
 import { ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { useUpdateIssue } from '../hooks/useIssues'
@@ -90,22 +91,20 @@ export default function FeedbackReport() {
 
     const { data: feedbackData = [], isLoading } = useQuery({
         queryKey: ['feedback-report'],
-        queryFn: async () => {
-            const { data, error } = await supabase
-                .from('issues')
-                .select(`
-                    id, issue_number, description, category, severity, status,
-                    created_at, rating, rating_remarks, rated_at, ticket_id,
-                    ticket:ticket_id (
-                        ticket_number, vehicle_number, site, supervisor_id
-                    )
-                `)
-                .eq('status', 'Done')
-                .order('created_at', { ascending: false })
-
-            if (error) throw error
-            return data || []
-        }
+        // Batched: Done issues outgrew the API's 1,000-row cap (MAIN-83).
+        queryFn: () => fetchAllRows(() => supabase
+            .from('issues')
+            .select(`
+                id, issue_number, description, category, severity, status,
+                created_at, rating, rating_remarks, rated_at, ticket_id,
+                ticket:ticket_id (
+                    ticket_number, vehicle_number, site, supervisor_id
+                )
+            `)
+            .eq('status', 'Done')
+            .order('created_at', { ascending: false })
+            .order('id')
+        )
     })
 
     const filteredAndSortedData = useMemo(() => {
