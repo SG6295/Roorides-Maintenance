@@ -1,4 +1,4 @@
-import { format, parseISO } from 'date-fns'
+import { addDays, format, parseISO } from 'date-fns'
 
 /**
  * Parsing timestamps that come back from Postgres.
@@ -71,4 +71,26 @@ export function dateKey(value) {
  */
 export function todayLocal() {
     return format(new Date(), 'yyyy-MM-dd')
+}
+
+/**
+ * A local date range ("yyyy-MM-dd" to "yyyy-MM-dd", both inclusive) as UTC instants, for
+ * filtering a naive-UTC column in the database: `.gte(col, from).lt(col, to)`.
+ *
+ * `to` is local midnight *after* the end day, so the whole of the last day is included
+ * without guessing at its final millisecond.
+ *
+ * Both are sent as UTC ("…Z") deliberately. Compared against `timestamp without time zone`,
+ * Postgres does not convert an offset — it silently drops it — so "2026-09-01T00:00+05:30"
+ * would be read as midnight UTC and shift the boundary by 5.5 hours.
+ *
+ * @param {string} start
+ * @param {string} end
+ * @returns {{ from: string, to: string }}
+ */
+export function localDayRangeToUtc(start, end) {
+    return {
+        from: parseISO(start).toISOString(),
+        to: addDays(parseISO(end), 1).toISOString(),
+    }
 }

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { logAuditEvent } from '../utils/auditLogger'
+import { fetchAllRows } from '../utils/fetchAllRows'
 
 /**
  * Hook to fetch Job Cards (General list or by ticket?)
@@ -17,7 +18,8 @@ export function useJobCards(filters = {}) {
 
     return useQuery({
         queryKey: ['job_cards', serverFilters],
-        queryFn: async () => {
+        // Batched: job cards outgrew the API's 1,000-row cap (MAIN-83).
+        queryFn: () => fetchAllRows(() => {
             let query = supabase
                 .from('job_cards')
                 .select(`
@@ -28,6 +30,7 @@ export function useJobCards(filters = {}) {
           issues(*)
         `)
                 .order('created_at', { ascending: false })
+                .order('id')
 
             if (serverFilters.status) {
                 query = query.eq('status', serverFilters.status)
@@ -42,10 +45,8 @@ export function useJobCards(filters = {}) {
                 query = query.eq('vehicle_number', serverFilters.vehicle_number)
             }
 
-            const { data, error } = await query
-            if (error) throw error
-            return data || []
-        },
+            return query
+        }),
     })
 }
 

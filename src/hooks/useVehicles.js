@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../utils/fetchAllRows'
 
 
 export function useVehicles(filters = {}) {
@@ -7,7 +8,9 @@ export function useVehicles(filters = {}) {
         queryKey: ['vehicles', filters],
         // Keep the current rows visible while a new search term loads — see useSuppliers.
         placeholderData: keepPreviousData,
-        queryFn: async () => {
+        // Batched: vehicles are never deleted, so this list will outgrow the API's
+        // 1,000-row cap (MAIN-83). registration_number is unique, so the order is stable.
+        queryFn: () => fetchAllRows(() => {
             const joinType = filters.site ? '!inner' : ''
             let query = supabase
                 .from('vehicles')
@@ -28,10 +31,8 @@ export function useVehicles(filters = {}) {
                 query = query.eq('is_active', false)
             }
 
-            const { data, error } = await query
-            if (error) throw error
-            return data || []
-        },
+            return query
+        }),
     })
 }
 

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { logAuditEvent } from '../utils/auditLogger'
+import { fetchAllRows } from '../utils/fetchAllRows'
 
 /**
  * Hook to fetch issues (optionally filtered)
@@ -11,7 +12,9 @@ export function useIssues(filters = {}) {
 
     return useQuery({
         queryKey: ['issues', actualFilters],
-        queryFn: async () => {
+        // Batched: issues outgrew the API's 1,000-row cap, and with this ascending sort the
+        // cap hid the newest issues rather than the oldest (MAIN-83).
+        queryFn: () => fetchAllRows(() => {
             let query = supabase
                 .from('issues')
                 .select(`
@@ -20,6 +23,7 @@ export function useIssues(filters = {}) {
           ticket:ticket_id(ticket_number, vehicle_number, site)
         `)
                 .order('created_at', { ascending: true })
+                .order('id')
 
             if (actualFilters.ticket_id) {
                 query = query.eq('ticket_id', actualFilters.ticket_id)
@@ -31,11 +35,8 @@ export function useIssues(filters = {}) {
                 query = query.eq('category', actualFilters.category)
             }
 
-            const { data, error } = await query
-
-            if (error) throw error
-            return data || []
-        },
+            return query
+        }),
         enabled: true, // Always enabled, filters are optional
     })
 }
