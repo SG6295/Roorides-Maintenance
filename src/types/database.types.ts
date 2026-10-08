@@ -2107,7 +2107,7 @@ export type Database = {
       get_maintenance_stats: {
         Args: {
           end_date_input?: string
-          site_filter?: string
+          site_filter?: string[]
           start_date_input?: string
         }
         Returns: {
