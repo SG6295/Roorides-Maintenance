@@ -5,14 +5,15 @@ import { format, subMonths, endOfMonth } from 'date-fns'
 import Navigation from '../components/shared/Navigation'
 import { useAllSites } from '../hooks/useSites'
 import { formatSiteLabel } from '../utils/siteLabel'
-import FilterSelect from '../components/shared/FilterSelect'
+import MultiFilterSelect from '../components/shared/MultiFilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 export default function Analytics() {
     // All sites, not just active — reporting on a departed school must still be possible.
     const { data: sites = [] } = useAllSites()
-    const [selectedSite, setSelectedSite] = useState('')
+    // [] = all sites. Exact `sites.name` values — matching is case-sensitive.
+    const [selectedSites, setSelectedSites] = useState([])
     const [dateRange, setDateRange] = useState({
         start: format(subMonths(new Date(), 11), 'yyyy-MM-01'), // Default last 12 months
         end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
@@ -20,13 +21,16 @@ export default function Analytics() {
 
     // Fetch Stats using RPC
     const { data: stats = [] } = useQuery({
-        queryKey: ['analytics', dateRange, selectedSite],
+        queryKey: ['analytics', dateRange, selectedSites],
         queryFn: async () => {
+            // One call for the whole selection: the function filters with `= ANY`, so the
+            // counts come back pooled and every rate below is computed from pooled counts.
+            // Never fetch per site and average the percentages (MAIN-86).
             const { data, error } = await supabase
                 .rpc('get_maintenance_stats', {
                     start_date_input: dateRange.start,
                     end_date_input: dateRange.end,
-                    site_filter: selectedSite || null
+                    site_filter: selectedSites.length ? selectedSites : null
                 })
 
             if (error) throw error
@@ -34,15 +38,18 @@ export default function Analytics() {
         }
     })
 
-    // Live overdue count — ignores date range, always reflects right now
+    // Live overdue count — ignores date range, always reflects right now, but follows
+    // the site filter.
     const { data: overdueCount = 0 } = useQuery({
-        queryKey: ['overdue_tickets_live'],
+        queryKey: ['overdue_tickets_live', selectedSites],
         queryFn: async () => {
-            const { count, error } = await supabase
+            let query = supabase
                 .from('tickets')
                 .select('*', { count: 'exact', head: true })
                 .not('status', 'in', '("Resolved","Closed","Rejected")')
                 .lt('final_sla_end_date', new Date().toISOString())
+            if (selectedSites.length) query = query.in('site', selectedSites)
+            const { count, error } = await query
             if (error) throw error
             return count || 0
         },
@@ -248,10 +255,11 @@ export default function Analytics() {
                             <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
 
                             {/* Site Filter */}
-                            <FilterSelect
-                                value={selectedSite}
-                                onChange={setSelectedSite}
+                            <MultiFilterSelect
+                                value={selectedSites}
+                                onChange={setSelectedSites}
                                 placeholder="All Sites"
+                                noun="sites"
                                 options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
                             />
 
@@ -289,7 +297,7 @@ export default function Analytics() {
                         />
                         <SLAKPICard
                             title="Currently Overdue"
-                            subtitle="Live — all open tickets past deadline"
+                            subtitle="Live — open tickets past deadline"
                             count={overdueCount}
                             icon={<ExclamationTriangleIcon className="w-5 h-5" />}
                         />

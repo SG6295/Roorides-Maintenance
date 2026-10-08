@@ -2155,10 +2155,10 @@ $$;
 ALTER FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) OWNER TO postgres;
 
 --
--- Name: get_maintenance_stats(date, date, text); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_maintenance_stats(date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_maintenance_stats(start_date_input date DEFAULT NULL::date, end_date_input date DEFAULT NULL::date, site_filter text DEFAULT NULL::text) RETURNS TABLE(total_tickets bigint, status_new bigint, status_pending bigint, status_accepted bigint, status_wip bigint, status_resolved bigint, status_closed bigint, status_rejected bigint, status_completed bigint, major_total bigint, major_electrical bigint, major_mechanical bigint, major_body bigint, major_tyre bigint, minor_total bigint, minor_electrical bigint, minor_mechanical bigint, minor_body bigint, minor_tyre bigint, type_in_house bigint, type_outsource bigint, accept_pending bigint, accept_adhered bigint, accept_violated bigint, accept_na bigint, comp_in_wip_within bigint, comp_in_adhered bigint, comp_in_violated bigint, comp_in_na bigint, comp_out_wip_within bigint, comp_out_adhered bigint, comp_out_violated bigint, comp_out_na bigint, rating_pending bigint, rating_collected bigint, rating_good bigint, rating_ok bigint, rating_bad bigint, csat_score_sum bigint, total_completed_tickets bigint)
+CREATE FUNCTION public.get_maintenance_stats(start_date_input date DEFAULT NULL::date, end_date_input date DEFAULT NULL::date, site_filter text[] DEFAULT NULL::text[]) RETURNS TABLE(total_tickets bigint, status_new bigint, status_pending bigint, status_accepted bigint, status_wip bigint, status_resolved bigint, status_closed bigint, status_rejected bigint, status_completed bigint, major_total bigint, major_electrical bigint, major_mechanical bigint, major_body bigint, major_tyre bigint, minor_total bigint, minor_electrical bigint, minor_mechanical bigint, minor_body bigint, minor_tyre bigint, type_in_house bigint, type_outsource bigint, accept_pending bigint, accept_adhered bigint, accept_violated bigint, accept_na bigint, comp_in_wip_within bigint, comp_in_adhered bigint, comp_in_violated bigint, comp_in_na bigint, comp_out_wip_within bigint, comp_out_adhered bigint, comp_out_violated bigint, comp_out_na bigint, rating_pending bigint, rating_collected bigint, rating_good bigint, rating_ok bigint, rating_bad bigint, csat_score_sum bigint, total_completed_tickets bigint)
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
@@ -2198,7 +2198,7 @@ BEGIN
     FROM tickets t
     WHERE (start_date_input IS NULL OR t.created_at::date >= start_date_input)
       AND (end_date_input   IS NULL OR t.created_at::date <= end_date_input)
-      AND (site_filter       IS NULL OR t.site = site_filter)
+      AND (site_filter IS NULL OR cardinality(site_filter) = 0 OR t.site = ANY(site_filter))
   ),
   issue_data AS (
     SELECT i.*
@@ -2206,7 +2206,7 @@ BEGIN
     JOIN tickets t ON i.ticket_id = t.id
     WHERE (start_date_input IS NULL OR t.created_at::date >= start_date_input)
       AND (end_date_input   IS NULL OR t.created_at::date <= end_date_input)
-      AND (site_filter       IS NULL OR t.site = site_filter)
+      AND (site_filter IS NULL OR cardinality(site_filter) = 0 OR t.site = ANY(site_filter))
   )
   SELECT
     COUNT(*)::BIGINT AS total_tickets,
@@ -2265,7 +2265,7 @@ END;
 $$;
 
 
-ALTER FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) OWNER TO postgres;
+ALTER FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) OWNER TO postgres;
 
 --
 -- Name: get_outsource_invoice_summary(text[], text[], date, date); Type: FUNCTION; Schema: public; Owner: postgres
@@ -13312,12 +13312,12 @@ GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id u
 
 
 --
--- Name: FUNCTION get_maintenance_stats(start_date_input date, end_date_input date, site_filter text); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) TO anon;
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) TO authenticated;
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text) TO service_role;
+GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO anon;
+GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO authenticated;
+GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO service_role;
 
 
 --
