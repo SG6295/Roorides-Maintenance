@@ -182,6 +182,7 @@ export function useUpdateFinancePaymentStatus() {
             queryClient.invalidateQueries({ queryKey: ['outsource_invoices'] })
             queryClient.invalidateQueries({ queryKey: ['outsource_invoice_summary'] })
             queryClient.invalidateQueries({ queryKey: ['outsource_invoice'] })
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoice_history'] })
         },
     })
 }
@@ -247,6 +248,25 @@ export function useInvoicePayments(outsourceInvoiceId) {
         queryKey: ['outsource_invoice_payments', outsourceInvoiceId],
         queryFn: async () => {
             const { data, error } = await supabase.rpc('get_outsource_invoice_payments', {
+                p_invoice_id: outsourceInvoiceId,
+            })
+            if (error) throw error
+            return data || []
+        },
+        enabled: !!outsourceInvoiceId,
+    })
+}
+
+/**
+ * The dated "who changed what" history of one invoice (MAIN-96), newest first.
+ * Entries come from database triggers, with names attached by
+ * get_outsource_invoice_history because finance cannot read exec/finance profiles.
+ */
+export function useOutsourceInvoiceHistory(outsourceInvoiceId) {
+    return useQuery({
+        queryKey: ['outsource_invoice_history', outsourceInvoiceId],
+        queryFn: async () => {
+            const { data, error } = await supabase.rpc('get_outsource_invoice_history', {
                 p_invoice_id: outsourceInvoiceId,
             })
             if (error) throw error

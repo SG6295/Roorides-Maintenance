@@ -2208,6 +2208,18 @@ export type Database = {
           type_outsource: number
         }[]
       }
+      get_outsource_invoice_history: {
+        Args: { p_invoice_id: string }
+        Returns: {
+          action: string
+          changed_fields: string[]
+          new_data: Json
+          old_data: Json
+          performed_at: string
+          performed_by_name: string
+          source: string
+        }[]
+      }
       get_outsource_invoice_payments: {
         Args: { p_invoice_id: string }
         Returns: {
