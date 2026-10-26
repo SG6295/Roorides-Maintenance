@@ -124,6 +124,8 @@ SLA windows are configured in the `sla_rules_config` table (editable via the SLA
 2. **Purchase History** — invoice list (`usePurchaseInvoices`), record new purchase via `PurchaseModal`; DB trigger auto-restocks parts when invoice items are inserted
 3. **Consumption History** — `usePartConsumption`, shows parts used per job card/mechanic
 
+**Purchase invoices are saved only through `save_purchase_invoice(p_invoice_id, p_invoice, p_items)` (MAIN-97).** Create (`p_invoice_id` null) and edit both go through it, so the header, line deletes/updates/inserts and `total_amount` commit or roll back together — the old five-call sequence left an invoice half-saved when a later line's stock check failed. It is `SECURITY INVOKER`, so the exec/finance RLS policies still decide who may save. It writes the header first so a workshop change moves the stock before any line changes (MAIN-72), and takes `total_amount` from the generated `line_total` column. Lines travel as `jsonb`: **do not add a parameter** — under `CREATE OR REPLACE` that creates a second overload rather than replacing it.
+
 Hooks split across two files:
 - `src/hooks/useInventory.js` — inventory-focused exports: `useParts`, `usePurchaseInvoices`, `usePurchaseInvoiceItems`, `useRecordPurchase`, `useUpdatePart`, `usePartConsumption`, `useVehicleHistory`, `useJobCardParts`, `useMechanicProfile`, `useMechanicActivity`, `useCreatePart`, `usePartUnits`, `useAddPartUnit`, `useDeletePartUnit`
 - `src/hooks/useParts.js` — job-card parts: `useParts` (lightweight list), `useAddIssuePart`, `useDeleteIssuePart` — imported by `JobCardDetail` and `IssueWorkCard`

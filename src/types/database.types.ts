@@ -2189,6 +2189,10 @@ export type Database = {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
       }
+      save_purchase_invoice: {
+        Args: { p_invoice: Json; p_invoice_id: string; p_items: Json }
+        Returns: string
+      }
       seed_get_fk_deps: {
         Args: never
         Returns: {

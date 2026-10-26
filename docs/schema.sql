@@ -3039,6 +3039,96 @@ $$;
 ALTER FUNCTION public.reverse_part_inventory_on_delete() OWNER TO postgres;
 
 --
+-- Name: save_purchase_invoice(uuid, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb) RETURNS uuid
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_invoice_id uuid := p_invoice_id;
+    v_item       jsonb;
+BEGIN
+    IF v_invoice_id IS NULL THEN
+        INSERT INTO public.purchase_invoices
+            (invoice_number, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
+        VALUES (
+            p_invoice->>'invoice_number',
+            p_invoice->>'supplier_name',
+            (p_invoice->>'invoice_date')::date,
+            nullif(p_invoice->>'notes', ''),
+            nullif(p_invoice->>'invoice_file_url', ''),
+            (p_invoice->>'location_id')::uuid,
+            auth.uid()
+        )
+        RETURNING id INTO v_invoice_id;
+    ELSE
+        UPDATE public.purchase_invoices
+        SET    invoice_number   = p_invoice->>'invoice_number',
+               supplier_name    = p_invoice->>'supplier_name',
+               invoice_date     = (p_invoice->>'invoice_date')::date,
+               notes            = nullif(p_invoice->>'notes', ''),
+               invoice_file_url = nullif(p_invoice->>'invoice_file_url', ''),
+               location_id      = (p_invoice->>'location_id')::uuid
+        WHERE  id = v_invoice_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Invoice not found.';
+        END IF;
+
+        DELETE FROM public.purchase_invoice_items
+        WHERE  invoice_id = v_invoice_id
+          AND  id NOT IN (
+                   SELECT (i->>'id')::uuid
+                   FROM   jsonb_array_elements(p_items) i
+                   WHERE  i->>'id' IS NOT NULL
+               );
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+        IF v_item->>'id' IS NOT NULL AND p_invoice_id IS NOT NULL THEN
+            UPDATE public.purchase_invoice_items
+            SET    quantity        = (v_item->>'quantity')::numeric,
+                   unit_price      = (v_item->>'unit_price')::numeric,
+                   gst_rate        = coalesce((v_item->>'gst_rate')::numeric, 0),
+                   discount_amount = coalesce((v_item->>'discount_amount')::numeric, 0)
+            WHERE  id = (v_item->>'id')::uuid
+              AND  invoice_id = v_invoice_id;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Line item does not belong to this invoice.';
+            END IF;
+        ELSE
+            INSERT INTO public.purchase_invoice_items
+                (invoice_id, part_id, quantity, unit_price, gst_rate, discount_amount)
+            VALUES (
+                v_invoice_id,
+                (v_item->>'part_id')::uuid,
+                (v_item->>'quantity')::numeric,
+                (v_item->>'unit_price')::numeric,
+                coalesce((v_item->>'gst_rate')::numeric, 0),
+                coalesce((v_item->>'discount_amount')::numeric, 0)
+            );
+        END IF;
+    END LOOP;
+
+    UPDATE public.purchase_invoices
+    SET    total_amount = (
+               SELECT coalesce(sum(line_total), 0)
+               FROM   public.purchase_invoice_items
+               WHERE  invoice_id = v_invoice_id
+           )
+    WHERE  id = v_invoice_id;
+
+    RETURN v_invoice_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb) OWNER TO postgres;
+
+--
 -- Name: seed_get_fk_deps(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -13552,6 +13642,15 @@ GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO anon;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO authenticated;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
+
+
+--
+-- Name: FUNCTION save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb) TO anon;
+GRANT ALL ON FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb) TO service_role;
 
 
 --
