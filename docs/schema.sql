@@ -2054,14 +2054,14 @@ BEGIN
     WHERE  job_card_id = p_job_card_id;
 
     IF NOT FOUND
-       OR v_invoice.invoice_no       IS NULL
-       OR v_invoice.invoice_value    IS NULL
-       OR v_invoice.approved_amount  IS NULL
-       OR v_invoice.advance_amount   IS NULL
-       OR v_invoice.date_of_activity IS NULL
-       OR v_invoice.payby_date       IS NULL
-       OR v_invoice.payment_status   IS NULL
-       OR v_invoice.paid_by          IS NULL
+       OR v_invoice.invoice_no                 IS NULL
+       OR v_invoice.invoice_value              IS NULL
+       OR v_invoice.approved_amount            IS NULL
+       OR v_invoice.advance_amount             IS NULL
+       OR v_invoice.date_of_activity           IS NULL
+       OR v_invoice.payby_date                 IS NULL
+       OR v_invoice.maintenance_payment_status IS NULL
+       OR v_invoice.paid_by                    IS NULL
     THEN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_DETAILS_INCOMPLETE',
@@ -2268,10 +2268,10 @@ $$;
 ALTER FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) OWNER TO postgres;
 
 --
--- Name: get_outsource_invoice_summary(text[], text[], date, date); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_outsource_invoice_summary(text[], text[], date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_outsource_invoice_summary(p_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date) RETURNS TABLE(total_unpaid_payable numeric, overdue_count bigint, pending_approval_count bigint)
+CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date, p_finance_payment_status text[] DEFAULT NULL::text[]) RETURNS TABLE(total_unpaid_payable numeric, overdue_count bigint, pending_approval_count bigint)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -2295,20 +2295,21 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_payment_status text[] DEF
             AND COALESCE(ps.total_paid, 0) < (oi.approved_amount - oi.advance_amount)
         )                                                        AS overdue_count,
 
-        COUNT(*) FILTER (WHERE oi.payment_status = 'Hold')      AS pending_approval_count
+        COUNT(*) FILTER (WHERE oi.maintenance_payment_status = 'Hold') AS pending_approval_count
 
     FROM  outsource_invoices     oi
     JOIN  job_cards              jc ON jc.id = oi.job_card_id
     LEFT JOIN paid_sums          ps ON ps.outsource_invoice_id = oi.id
     WHERE jc.status = 'Completed'
-      AND (p_payment_status IS NULL OR oi.payment_status   = ANY(p_payment_status))
-      AND (p_paid_by        IS NULL OR oi.paid_by          = ANY(p_paid_by))
-      AND (p_date_from      IS NULL OR oi.date_of_activity >= p_date_from)
-      AND (p_date_to        IS NULL OR oi.date_of_activity <= p_date_to)
+      AND (p_maintenance_payment_status IS NULL OR oi.maintenance_payment_status = ANY(p_maintenance_payment_status))
+      AND (p_finance_payment_status     IS NULL OR oi.finance_payment_status     = ANY(p_finance_payment_status))
+      AND (p_paid_by                    IS NULL OR oi.paid_by                    = ANY(p_paid_by))
+      AND (p_date_from                  IS NULL OR oi.date_of_activity >= p_date_from)
+      AND (p_date_to                    IS NULL OR oi.date_of_activity <= p_date_to)
 $$;
 
 
-ALTER FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) OWNER TO postgres;
+ALTER FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) OWNER TO postgres;
 
 --
 -- Name: guard_job_card_location_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2346,6 +2347,51 @@ $$;
 
 
 ALTER FUNCTION public.guard_job_card_location_change() OWNER TO postgres;
+
+--
+-- Name: guard_outsource_invoice_status_owners(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_outsource_invoice_status_owners() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role text;
+    v_finance_changed boolean;
+    v_maintenance_changed boolean;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
+
+    IF TG_OP = 'INSERT' THEN
+        v_finance_changed     := NEW.finance_payment_status <> 'Due' OR NEW.finance_remark IS NOT NULL;
+        v_maintenance_changed := NEW.maintenance_payment_status IS NOT NULL;
+    ELSE
+        v_finance_changed     := NEW.finance_payment_status IS DISTINCT FROM OLD.finance_payment_status
+                              OR NEW.finance_remark         IS DISTINCT FROM OLD.finance_remark;
+        v_maintenance_changed := NEW.maintenance_payment_status IS DISTINCT FROM OLD.maintenance_payment_status;
+    END IF;
+
+    IF v_finance_changed AND v_role IS DISTINCT FROM 'finance' AND v_role IS DISTINCT FROM 'super_admin' THEN
+        RAISE EXCEPTION 'Only finance can change the payment status reported by finance.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    IF v_maintenance_changed AND v_role = 'finance' THEN
+        RAISE EXCEPTION 'Finance cannot change the payment status reported by maintenance.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_outsource_invoice_status_owners() OWNER TO postgres;
 
 --
 -- Name: is_finance(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -7506,13 +7552,16 @@ CREATE TABLE public.outsource_invoices (
     invoice_value numeric(12,2),
     approved_amount numeric(12,2),
     advance_amount numeric(12,2),
-    payment_status text,
+    maintenance_payment_status text,
     payby_date date,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavannan'::text, 'NVS Maintenance account'::text]))),
-    CONSTRAINT outsource_invoices_payment_status_check CHECK ((payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text])))
+    finance_payment_status text DEFAULT 'Due'::text NOT NULL,
+    finance_remark text,
+    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['Due'::text, 'Paid'::text, 'Hold - on request'::text, 'Hold - further details required'::text, 'Reject - duplicate'::text, 'Reject - incorrect/insufficient details'::text, 'Reject - other'::text]))),
+    CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
+    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavannan'::text, 'NVS Maintenance account'::text])))
 );
 
 
@@ -10100,10 +10149,24 @@ CREATE INDEX outsource_invoice_payments_invoice_id_idx ON public.outsource_invoi
 
 
 --
+-- Name: outsource_invoices_finance_payment_status_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX outsource_invoices_finance_payment_status_idx ON public.outsource_invoices USING btree (finance_payment_status);
+
+
+--
 -- Name: outsource_invoices_job_card_id_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
 CREATE INDEX outsource_invoices_job_card_id_idx ON public.outsource_invoices USING btree (job_card_id);
+
+
+--
+-- Name: outsource_invoices_maintenance_payment_status_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX outsource_invoices_maintenance_payment_status_idx ON public.outsource_invoices USING btree (maintenance_payment_status);
 
 
 --
@@ -10118,13 +10181,6 @@ CREATE INDEX outsource_invoices_paid_by_idx ON public.outsource_invoices USING b
 --
 
 CREATE INDEX outsource_invoices_payby_date_idx ON public.outsource_invoices USING btree (payby_date);
-
-
---
--- Name: outsource_invoices_payment_status_idx; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX outsource_invoices_payment_status_idx ON public.outsource_invoices USING btree (payment_status);
 
 
 --
@@ -10349,6 +10405,13 @@ CREATE UNIQUE INDEX objects_bucket_id_name_version_key ON storage.objects USING 
 --
 
 CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes USING btree (name, bucket_id);
+
+
+--
+-- Name: outsource_invoices outsource_invoices_guard_status_owners; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER outsource_invoices_guard_status_owners BEFORE INSERT OR UPDATE ON public.outsource_invoices FOR EACH ROW EXECUTE FUNCTION public.guard_outsource_invoice_status_owners();
 
 
 --
@@ -13366,12 +13429,12 @@ GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_da
 
 
 --
--- Name: FUNCTION get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) TO anon;
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) TO authenticated;
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date) TO service_role;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO anon;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO authenticated;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO service_role;
 
 
 --
@@ -13381,6 +13444,15 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text
 GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO anon;
 GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_outsource_invoice_status_owners(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO anon;
+GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO service_role;
 
 
 --

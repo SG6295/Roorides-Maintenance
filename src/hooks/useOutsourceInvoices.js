@@ -53,11 +53,12 @@ const PAGE_SIZE = 50
  * Fetches paginated closed outsource invoices for the list page.
  *
  * filters:
- *   paymentStatus  — string[]        server-side IN filter on payment_status
- *   paidBy         — string[]        server-side IN filter on paid_by
- *   dateFrom       — string          ISO date, gte date_of_activity
- *   dateTo         — string          ISO date, lte date_of_activity
- *   page           — number | null   0-based page index; null = fetch all (search mode)
+ *   maintenancePaymentStatus — string[]       server-side IN filter on maintenance_payment_status
+ *   financePaymentStatus     — string[]       server-side IN filter on finance_payment_status
+ *   paidBy                   — string[]       server-side IN filter on paid_by
+ *   dateFrom                 — string         ISO date, gte date_of_activity
+ *   dateTo                   — string         ISO date, lte date_of_activity
+ *   page                     — number | null  0-based page index; null = fetch all (search mode)
  *
  * Returns { invoices: [], totalCount: number | null }.
  * totalCount is null when page=null (search mode — client handles count).
@@ -74,7 +75,7 @@ export function useOutsourceInvoices(filters = {}) {
                 .select(
                     `*,
                     job_card:job_cards!job_card_id!inner(
-                        id, job_card_number, vehicle_number, status, completed_at,
+                        id, job_card_number, vehicle_number, status, completed_at, invoice_url,
                         supplier:suppliers!supplier_id(id, entity_name)
                     ),
                     payments:outsource_invoice_payments(id, amount_paid)`,
@@ -83,8 +84,10 @@ export function useOutsourceInvoices(filters = {}) {
                 .eq('job_cards.status', 'Completed')
                 .order('payby_date', { ascending: true })
 
-            if (filters.paymentStatus?.length)
-                query = query.in('payment_status', filters.paymentStatus)
+            if (filters.maintenancePaymentStatus?.length)
+                query = query.in('maintenance_payment_status', filters.maintenancePaymentStatus)
+            if (filters.financePaymentStatus?.length)
+                query = query.in('finance_payment_status', filters.financePaymentStatus)
             if (filters.paidBy?.length)
                 query = query.in('paid_by', filters.paidBy)
             if (filters.dateFrom)
@@ -114,10 +117,11 @@ export function useOutsourceInvoiceSummary(filters = {}) {
         queryKey: ['outsource_invoice_summary', filters],
         queryFn: async () => {
             const { data, error } = await supabase.rpc('get_outsource_invoice_summary', {
-                p_payment_status: filters.paymentStatus?.length ? filters.paymentStatus : null,
-                p_paid_by:        filters.paidBy?.length        ? filters.paidBy        : null,
-                p_date_from:      filters.dateFrom || null,
-                p_date_to:        filters.dateTo   || null,
+                p_maintenance_payment_status: filters.maintenancePaymentStatus?.length ? filters.maintenancePaymentStatus : null,
+                p_finance_payment_status:     filters.financePaymentStatus?.length     ? filters.financePaymentStatus     : null,
+                p_paid_by:                    filters.paidBy?.length                   ? filters.paidBy                   : null,
+                p_date_from:                  filters.dateFrom || null,
+                p_date_to:                    filters.dateTo   || null,
             })
             if (error) throw error
             const row = data?.[0] ?? {}
@@ -149,6 +153,34 @@ export function useFinalizeOutsourceInvoice() {
             queryClient.invalidateQueries({ queryKey: ['job_card'] })
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['outsource_invoice', jobCardId] })
+        },
+    })
+}
+
+/**
+ * Sets finance's own status and remark on an outsource invoice. Only finance and
+ * super_admin may change these; the DB trigger rejects anyone else.
+ */
+export function useUpdateFinancePaymentStatus() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async ({ id, financePaymentStatus, financeRemark }) => {
+            const { data, error } = await supabase
+                .from('outsource_invoices')
+                .update({
+                    finance_payment_status: financePaymentStatus,
+                    finance_remark: financeRemark?.trim() || null,
+                })
+                .eq('id', id)
+                .select()
+                .single()
+            if (error) throw error
+            return data
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoices'] })
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoice_summary'] })
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoice'] })
         },
     })
 }
