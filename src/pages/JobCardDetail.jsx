@@ -900,14 +900,13 @@ export default function JobCardDetail() {
                                         <label className="block text-xs font-medium text-gray-600 mb-1">
                                             Payment status reported by maintenance <span className="text-red-500">*</span>
                                         </label>
-                                        <select
+                                        <CustomSelect
                                             value={invoiceForm.maintenancePaymentStatus}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, maintenancePaymentStatus: e.target.value }))}
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.maintenancePaymentStatus ? 'border-red-400' : 'border-gray-300'}`}
-                                        >
-                                            <option value="">Select…</option>
-                                            {MAINTENANCE_PAYMENT_STATUSES.map(s => <option key={s}>{s}</option>)}
-                                        </select>
+                                            onChange={maintenancePaymentStatus => setInvoiceForm(f => ({ ...f, maintenancePaymentStatus }))}
+                                            options={MAINTENANCE_PAYMENT_STATUSES}
+                                            placeholder="Select…"
+                                            error={showInvoiceErrors && invoiceErrs.maintenancePaymentStatus}
+                                        />
                                         {showInvoiceErrors && invoiceErrs.maintenancePaymentStatus && (
                                             <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.maintenancePaymentStatus}</p>
                                         )}
