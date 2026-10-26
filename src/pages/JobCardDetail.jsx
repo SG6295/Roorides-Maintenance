@@ -14,7 +14,7 @@ import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
 import CustomSelect from '../components/shared/CustomSelect'
-import { PAID_BY_OPTIONS } from '../constants/outsourceInvoices'
+import { PAID_BY_OPTIONS, MAINTENANCE_PAYMENT_STATUSES } from '../constants/outsourceInvoices'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
 import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
 import ScrapDecisionModal from '../components/job-cards/ScrapDecisionModal'
@@ -53,7 +53,7 @@ function validateInvoiceForm(f, today) {
     const adv = parseFloat(f.advanceAmount)
     if (f.advanceAmount === '' || isNaN(adv) || adv < 0) errors.advanceAmount = 'Must be ≥ 0'
     else if (!isNaN(aa) && adv > aa) errors.advanceAmount = 'Must be ≤ approved amount'
-    if (!f.paymentStatus) errors.paymentStatus = 'Required'
+    if (!f.maintenancePaymentStatus) errors.maintenancePaymentStatus = 'Required'
     if (!f.paybyDate) errors.paybyDate = 'Required'
     else if (f.dateOfActivity && f.paybyDate < f.dateOfActivity) errors.paybyDate = 'Must be ≥ date of activity'
     return errors
@@ -106,7 +106,7 @@ export default function JobCardDetail() {
         invoiceValue: '',
         approvedAmount: '',
         advanceAmount: '',
-        paymentStatus: '',
+        maintenancePaymentStatus: '',
         paybyDate: '',
     })
     const [showInvoiceErrors, setShowInvoiceErrors] = useState(false)
@@ -154,7 +154,7 @@ export default function JobCardDetail() {
             invoiceValue: existingInvoice.invoice_value != null ? String(existingInvoice.invoice_value) : '',
             approvedAmount: existingInvoice.approved_amount != null ? String(existingInvoice.approved_amount) : '',
             advanceAmount: existingInvoice.advance_amount != null ? String(existingInvoice.advance_amount) : '',
-            paymentStatus: existingInvoice.payment_status || '',
+            maintenancePaymentStatus: existingInvoice.maintenance_payment_status || '',
             paybyDate: existingInvoice.payby_date || '',
         })
     }, [existingInvoice])
@@ -273,7 +273,7 @@ export default function JobCardDetail() {
                         invoice_value: parseFloat(invoiceForm.invoiceValue),
                         approved_amount: parseFloat(invoiceForm.approvedAmount),
                         advance_amount: parseFloat(invoiceForm.advanceAmount),
-                        payment_status: invoiceForm.paymentStatus,
+                        maintenance_payment_status: invoiceForm.maintenancePaymentStatus,
                         payby_date: invoiceForm.paybyDate,
                     },
                 })
@@ -307,7 +307,7 @@ export default function JobCardDetail() {
                     invoice_value:    parseFloat(invoiceForm.invoiceValue),
                     approved_amount:  parseFloat(invoiceForm.approvedAmount),
                     advance_amount:   parseFloat(invoiceForm.advanceAmount),
-                    payment_status:   invoiceForm.paymentStatus,
+                    maintenance_payment_status: invoiceForm.maintenancePaymentStatus,
                     payby_date:       invoiceForm.paybyDate,
                 },
             })
@@ -819,7 +819,8 @@ export default function JobCardDetail() {
                                         : '—'],
                                     ['Invoice No', existingInvoice?.invoice_no || '—'],
                                     ['Paid By', existingInvoice?.paid_by || '—'],
-                                    ['Payment Status', existingInvoice?.payment_status || '—'],
+                                    ['Payment status reported by maintenance', existingInvoice?.maintenance_payment_status || '—'],
+                                    ['Payment status reported by finance', existingInvoice?.finance_payment_status || '—'],
                                     ['Invoice Value', existingInvoice?.invoice_value != null
                                         ? `₹${Number(existingInvoice.invoice_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
                                         : '—'],
@@ -897,20 +898,18 @@ export default function JobCardDetail() {
                                     </div>
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Payment Status <span className="text-red-500">*</span>
+                                            Payment status reported by maintenance <span className="text-red-500">*</span>
                                         </label>
                                         <select
-                                            value={invoiceForm.paymentStatus}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, paymentStatus: e.target.value }))}
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.paymentStatus ? 'border-red-400' : 'border-gray-300'}`}
+                                            value={invoiceForm.maintenancePaymentStatus}
+                                            onChange={e => setInvoiceForm(f => ({ ...f, maintenancePaymentStatus: e.target.value }))}
+                                            className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.maintenancePaymentStatus ? 'border-red-400' : 'border-gray-300'}`}
                                         >
                                             <option value="">Select…</option>
-                                            <option>Approved</option>
-                                            <option>Hold</option>
-                                            <option>Reject</option>
+                                            {MAINTENANCE_PAYMENT_STATUSES.map(s => <option key={s}>{s}</option>)}
                                         </select>
-                                        {showInvoiceErrors && invoiceErrs.paymentStatus && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paymentStatus}</p>
+                                        {showInvoiceErrors && invoiceErrs.maintenancePaymentStatus && (
+                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.maintenancePaymentStatus}</p>
                                         )}
                                     </div>
                                 </div>

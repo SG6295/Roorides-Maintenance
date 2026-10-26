@@ -458,13 +458,15 @@ export type Database = {
           created_at: string
           created_by: string | null
           date_of_activity: string | null
+          finance_payment_status: string
+          finance_remark: string | null
           id: string
           invoice_no: string | null
           invoice_value: number | null
           job_card_id: string | null
+          maintenance_payment_status: string | null
           paid_by: string | null
           payby_date: string | null
-          payment_status: string | null
           updated_at: string
         }
         Insert: {
@@ -473,13 +475,15 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           date_of_activity?: string | null
+          finance_payment_status?: string
+          finance_remark?: string | null
           id?: string
           invoice_no?: string | null
           invoice_value?: number | null
           job_card_id?: string | null
+          maintenance_payment_status?: string | null
           paid_by?: string | null
           payby_date?: string | null
-          payment_status?: string | null
           updated_at?: string
         }
         Update: {
@@ -488,13 +492,15 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           date_of_activity?: string | null
+          finance_payment_status?: string
+          finance_remark?: string | null
           id?: string
           invoice_no?: string | null
           invoice_value?: number | null
           job_card_id?: string | null
+          maintenance_payment_status?: string | null
           paid_by?: string | null
           payby_date?: string | null
-          payment_status?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -2157,8 +2163,9 @@ export type Database = {
         Args: {
           p_date_from?: string
           p_date_to?: string
+          p_finance_payment_status?: string[]
+          p_maintenance_payment_status?: string[]
           p_paid_by?: string[]
-          p_payment_status?: string[]
         }
         Returns: {
           overdue_count: number
