@@ -8,6 +8,7 @@ import {
 } from '../../constants/outsourceInvoices'
 import RecordPaymentForm from './RecordPaymentForm'
 import PaymentList from './PaymentList'
+import InvoiceHistory from './InvoiceHistory'
 import {
     fmtMoney,
     fmtPaise,
@@ -261,6 +262,11 @@ export default function InvoiceDrawer({ invoice, role, onClose, onInvoiceSaved }
                                 <p className="font-medium text-gray-900">{value}</p>
                             </div>
                         ))}
+                    </div>
+
+                    <div className="pt-4 border-t border-gray-100 space-y-3">
+                        <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">History</h3>
+                        <InvoiceHistory invoiceId={invoice.id} />
                     </div>
                 </div>
             </div>
