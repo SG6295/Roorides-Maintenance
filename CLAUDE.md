@@ -59,7 +59,9 @@ Roles:
 | `super_admin` | Everything `maintenance_exec` can do + SLA rules, system_settings, holidays |
 | `mechanic` | Assigned job cards only |
 | `electrician` | Same scope as `mechanic` (job cards only) |
-| `finance` | Finance entries, inventory, purchase invoices, vehicles |
+| `finance` | Finance entries, inventory, purchase invoices, vehicles; read-only job cards (MAIN-88) |
+
+**Finance reads job cards through SELECT-only policies (MAIN-88).** `"Finance view job cards"` alone left a card's issues, parts, ticket numbers and mechanic name invisible, because each lives in its own RLS-protected table. Finance therefore also has SELECT on `issues`, `issue_parts` and `tickets`, plus `users` rows whose role is `mechanic`/`electrician` — all via `is_finance()`, which exists because a `users` policy that queries `users` recurses. Finance has no write path onto a job card; `JobCardDetail` shows the invoice details and file read-only to every non-exec (`invoiceReadOnly`).
 
 **When adding a new role**, update: (1) `users_role_check` constraint in a migration, (2) relevant RLS policies / DB helper functions, (3) `ProtectedRoute allowedRoles` arrays in `src/App.jsx`, (4) `MANAGEABLE_BY` + `ROLE_LABELS` + `ROLE_COLORS` in `src/constants/userRoles.js`, (5) the role matrices in the `create-user` and `update-user` edge functions, (6) any role-conditional UI in pages/components.
 

@@ -147,7 +147,7 @@ function App() {
             <Route
               path="/job-cards"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'mechanic', 'electrician']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'mechanic', 'electrician', 'finance']}>
                   <JobCards />
                 </ProtectedRoute>
               }
@@ -155,7 +155,7 @@ function App() {
             <Route
               path="/job-cards/:id"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'mechanic', 'electrician']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'mechanic', 'electrician', 'finance']}>
                   <JobCardDetail />
                 </ProtectedRoute>
               }
