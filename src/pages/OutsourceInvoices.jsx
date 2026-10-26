@@ -4,9 +4,9 @@ import { format, isValid } from 'date-fns'
 import { toDate, todayLocal } from '../utils/datetime'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
+import { PAID_BY_OPTIONS } from '../constants/outsourceInvoices'
 
 const PAYMENT_STATUSES = ['Approved', 'Hold', 'Reject']
-const PAID_BY_OPTIONS  = ['Accounts', 'Nithin', 'Manjunath']
 
 const PAYMENT_STATUS_COLORS = {
     Approved: 'bg-green-100 text-green-800',

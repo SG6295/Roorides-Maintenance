@@ -7511,7 +7511,7 @@ CREATE TABLE public.outsource_invoices (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text]))),
+    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavannan'::text, 'NVS Maintenance account'::text]))),
     CONSTRAINT outsource_invoices_payment_status_check CHECK ((payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text])))
 );
 

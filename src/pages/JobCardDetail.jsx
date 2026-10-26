@@ -13,6 +13,8 @@ import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
+import CustomSelect from '../components/shared/CustomSelect'
+import { PAID_BY_OPTIONS } from '../constants/outsourceInvoices'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
 import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
 import ScrapDecisionModal from '../components/job-cards/ScrapDecisionModal'
@@ -882,16 +884,13 @@ export default function JobCardDetail() {
                                         <label className="block text-xs font-medium text-gray-600 mb-1">
                                             Paid By <span className="text-red-500">*</span>
                                         </label>
-                                        <select
+                                        <CustomSelect
                                             value={invoiceForm.paidBy}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, paidBy: e.target.value }))}
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.paidBy ? 'border-red-400' : 'border-gray-300'}`}
-                                        >
-                                            <option value="">Select…</option>
-                                            <option>Accounts</option>
-                                            <option>Nithin</option>
-                                            <option>Manjunath</option>
-                                        </select>
+                                            onChange={paidBy => setInvoiceForm(f => ({ ...f, paidBy }))}
+                                            options={PAID_BY_OPTIONS}
+                                            placeholder="Select…"
+                                            error={showInvoiceErrors && invoiceErrs.paidBy}
+                                        />
                                         {showInvoiceErrors && invoiceErrs.paidBy && (
                                             <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paidBy}</p>
                                         )}
