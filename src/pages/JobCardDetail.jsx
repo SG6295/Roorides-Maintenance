@@ -373,6 +373,9 @@ export default function JobCardDetail() {
     const canCloseInvoicePending = isOutsource && isAllDone && hasSupplier
     const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
     const canFinalize = isInvoicePending && !needsInvoiceFile && invoiceValid
+    // Only an exec can save the invoice details or upload the file (finance can view
+    // the card but not write to it), so everyone else sees both read-only.
+    const invoiceReadOnly = jobCard.status === 'Completed' || !isExec
 
     const jobLocationLabel = jobCard.type === 'InHouse' ? 'In-house' : 'Outsource'
 
@@ -805,8 +808,8 @@ export default function JobCardDetail() {
                             Invoice Details
                         </h2>
 
-                        {jobCard.status === 'Completed' ? (
-                            /* Read-only display after full closure */
+                        {invoiceReadOnly ? (
+                            /* Read-only display after full closure, or for non-execs */
                             <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                                 {[
                                     ['Date of Activity', existingInvoice?.date_of_activity
@@ -1015,7 +1018,7 @@ export default function JobCardDetail() {
                         <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-3">
                             Invoice
                         </h2>
-                        {jobCard.status === 'Completed' ? (
+                        {invoiceReadOnly ? (
                             jobCard.invoice_url ? (
                                 <a
                                     href={jobCard.invoice_url}

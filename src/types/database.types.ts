@@ -2166,6 +2166,7 @@ export type Database = {
           total_unpaid_payable: number
         }[]
       }
+      is_finance: { Args: never; Returns: boolean }
       is_maintenance_exec: { Args: never; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
       job_card_site_accessible_to_user: {

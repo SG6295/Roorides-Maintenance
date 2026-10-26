@@ -2348,6 +2348,23 @@ $$;
 ALTER FUNCTION public.guard_job_card_location_change() OWNER TO postgres;
 
 --
+-- Name: is_finance(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.is_finance() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select exists (
+    select 1 from public.users
+    where id = auth.uid() and role = 'finance'
+  )
+$$;
+
+
+ALTER FUNCTION public.is_finance() OWNER TO postgres;
+
+--
 -- Name: is_maintenance_exec(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -11764,12 +11781,33 @@ CREATE POLICY "Finance updates entries" ON public.finance_entries FOR UPDATE USI
 
 
 --
+-- Name: issue_parts Finance view issue parts; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view issue parts" ON public.issue_parts FOR SELECT USING (public.is_finance());
+
+
+--
+-- Name: issues Finance view issues; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view issues" ON public.issues FOR SELECT USING (public.is_finance());
+
+
+--
 -- Name: job_cards Finance view job cards; Type: POLICY; Schema: public; Owner: postgres
 --
 
 CREATE POLICY "Finance view job cards" ON public.job_cards FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = 'finance'::text)))));
+
+
+--
+-- Name: users Finance view mechanic profiles; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view mechanic profiles" ON public.users FOR SELECT USING ((public.is_finance() AND (role = ANY (ARRAY['mechanic'::text, 'electrician'::text]))));
 
 
 --
@@ -11824,6 +11862,13 @@ CREATE POLICY "Finance view scrap_writeoff" ON public.scrap_writeoff FOR SELECT 
 CREATE POLICY "Finance view scrap_writeoff_items" ON public.scrap_writeoff_items FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = 'finance'::text)))));
+
+
+--
+-- Name: tickets Finance view tickets; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view tickets" ON public.tickets FOR SELECT USING (public.is_finance());
 
 
 --
@@ -13336,6 +13381,15 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_payment_status text
 GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO anon;
 GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_job_card_location_change() TO service_role;
+
+
+--
+-- Name: FUNCTION is_finance(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.is_finance() TO anon;
+GRANT ALL ON FUNCTION public.is_finance() TO authenticated;
+GRANT ALL ON FUNCTION public.is_finance() TO service_role;
 
 
 --
