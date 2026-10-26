@@ -445,7 +445,7 @@ export default function OutsourceInvoices() {
                                         >
                                             <td className="px-3 py-3 whitespace-nowrap">
                                                 <Link
-                                                    to={`/job-cards/${inv.job_card_id}`}
+                                                    to={`/job-cards/${inv.job_card?.job_card_number}`}
                                                     onClick={e => e.stopPropagation()}
                                                     className="text-blue-600 hover:underline font-medium"
                                                 >
