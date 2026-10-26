@@ -365,7 +365,8 @@ export default function JobCardDetail() {
     const invoiceErrs = isOutsource ? validateInvoiceForm(invoiceForm, todayStr) : {}
     const invoiceValid = Object.keys(invoiceErrs).length === 0
     const hasSupplier = isOutsource ? !!jobCard.supplier_id : true
-    const hasPayments = (existingInvoice?.payments?.length ?? 0) > 0
+    // A cancelled payment (failed transaction, refunded) does not lock the card.
+    const hasPayments = (existingInvoice?.payments ?? []).some(p => p.status !== 'Cancelled')
     const payableAmount = (() => {
         const aa = parseFloat(invoiceForm.approvedAmount)
         const adv = parseFloat(invoiceForm.advanceAmount)

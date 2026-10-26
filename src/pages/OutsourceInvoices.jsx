@@ -1,159 +1,27 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { format, isValid } from 'date-fns'
-import { toDate, todayLocal } from '../utils/datetime'
+import { todayLocal } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
-import {
-    useOutsourceInvoices,
-    useOutsourceInvoiceSummary,
-    useUpdateFinancePaymentStatus,
-} from '../hooks/useOutsourceInvoices'
+import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
-import CustomSelect from '../components/shared/CustomSelect'
+import InvoiceDrawer from '../components/outsource-invoices/InvoiceDrawer'
+import {
+    fmtPaise,
+    fmtDate,
+    MAINTENANCE_STATUS_COLORS,
+    financeStatusColor,
+} from '../components/outsource-invoices/format'
+import { invoiceSettlement } from '../utils/settlement'
 import {
     PAID_BY_OPTIONS,
     MAINTENANCE_PAYMENT_STATUSES,
     FINANCE_PAYMENT_STATUSES,
 } from '../constants/outsourceInvoices'
 
-const MAINTENANCE_STATUS_COLORS = {
-    Approved: 'bg-green-100 text-green-800',
-    Hold:     'bg-amber-100 text-amber-800',
-    Reject:   'bg-red-100 text-red-800',
-}
-
-// Finance's Hold and Reject statuses each come in several reasons; colour by the family.
-function financeStatusColor(status) {
-    if (status === 'Paid') return 'bg-green-100 text-green-800'
-    if (status?.startsWith('Hold')) return 'bg-amber-100 text-amber-800'
-    if (status?.startsWith('Reject')) return 'bg-red-100 text-red-800'
-    return 'bg-gray-100 text-gray-700'
-}
-
-// finance_payment_status and finance_remark belong to finance; the DB trigger
-// guard_outsource_invoice_status_owners rejects anyone else, super_admin aside.
-const FINANCE_STATUS_EDITORS = ['finance', 'super_admin']
-
-const PAYMENT_STATE_COLORS = {
-    Paid:             'bg-green-100 text-green-800',
-    'Partially Paid': 'bg-amber-100 text-amber-800',
-    Unpaid:           'bg-red-100 text-red-800',
-}
-
-function computePaymentState(inv) {
-    const payable = (inv.approved_amount ?? 0) - (inv.advance_amount ?? 0)
-    const paid    = inv.payments?.reduce((s, p) => s + Number(p.amount_paid), 0) ?? 0
-    if (payable > 0 && paid >= payable) return 'Paid'
-    if (paid > 0) return 'Partially Paid'
-    return 'Unpaid'
-}
-
-function fmtMoney(v) {
-    if (v == null || v === '') return '—'
-    return `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-}
-
-function fmtDate(d) {
-    if (!d) return '—'
-    const parsed = toDate(d)
-    return parsed && isValid(parsed) ? format(parsed, 'dd MMM yyyy') : '—'
-}
-
-function InvoiceFileLink({ url }) {
-    const [copied, setCopied] = useState(false)
-
-    if (!url) return <span className="text-gray-400 italic">No invoice file</span>
-
-    const copy = async () => {
-        try {
-            await navigator.clipboard.writeText(url)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 2000)
-        } catch {
-            // Clipboard access can be refused (permissions, insecure context); the
-            // View link still works, so there is nothing to recover.
-        }
-    }
-
-    return (
-        <div className="flex items-center gap-2 shrink-0">
-            <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline font-medium"
-            >
-                View invoice →
-            </a>
-            <button
-                type="button"
-                onClick={copy}
-                className="text-xs px-2 py-1 text-gray-600 border border-gray-300 rounded-lg hover:bg-white transition-colors"
-            >
-                {copied ? 'Copied ✓' : 'Copy link'}
-            </button>
-        </div>
-    )
-}
-
-function FinanceStatusForm({ invoice, onSaved }) {
-    const [status, setStatus] = useState(invoice.finance_payment_status)
-    const [remark, setRemark] = useState(invoice.finance_remark ?? '')
-    const update = useUpdateFinancePaymentStatus()
-
-    const dirty =
-        status !== invoice.finance_payment_status ||
-        (remark.trim() || null) !== (invoice.finance_remark ?? null)
-
-    const save = () =>
-        update.mutate(
-            { id: invoice.id, financePaymentStatus: status, financeRemark: remark },
-            { onSuccess: onSaved },
-        )
-
-    return (
-        <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50/40 p-4">
-            <CustomSelect
-                label="Payment status reported by finance"
-                value={status}
-                onChange={setStatus}
-                options={FINANCE_PAYMENT_STATUSES}
-            />
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Finance remark</label>
-                <textarea
-                    rows={2}
-                    value={remark}
-                    onChange={e => setRemark(e.target.value)}
-                    placeholder="Optional"
-                    className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-            </div>
-            {update.error && (
-                <p className="text-sm text-red-600">{update.error.message}</p>
-            )}
-            <div className="flex items-center justify-end gap-3">
-                {update.isSuccess && !dirty && (
-                    <span className="text-xs text-green-700">Saved ✓</span>
-                )}
-                <button
-                    type="button"
-                    onClick={save}
-                    disabled={!dirty || update.isPending}
-                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {update.isPending ? 'Saving…' : 'Save'}
-                </button>
-            </div>
-        </div>
-    )
-}
-
 export default function OutsourceInvoices() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { userProfile } = useAuth()
     const [openedInvoice, setOpenedInvoice] = useState(null)
-    const canEditFinanceStatus = FINANCE_STATUS_EDITORS.includes(userProfile?.role)
 
     // ── Parse URL params ──────────────────────────────────────────────────────
     const search   = searchParams.get('q')    || ''
@@ -191,9 +59,9 @@ export default function OutsourceInvoices() {
     // ── Client-side enrich + search filter ───────────────────────────────────
     const invoices = rawInvoices
         .map(inv => {
-            const payable   = (inv.approved_amount ?? 0) - (inv.advance_amount ?? 0)
-            const totalPaid = inv.payments?.reduce((s, p) => s + Number(p.amount_paid), 0) ?? 0
-            return { ...inv, payableAmount: payable, totalPaid, paymentState: computePaymentState(inv) }
+            const active = (inv.payments ?? []).filter(p => p.status !== 'Cancelled')
+            const lastPaidOn = active.reduce((latest, p) => (p.paid_on > latest ? p.paid_on : latest), '')
+            return { ...inv, settlement: invoiceSettlement(inv, inv.payments), lastPaidOn }
         })
         .filter(inv => {
             if (!search) return true
@@ -418,8 +286,8 @@ export default function OutsourceInvoices() {
                                     {[
                                         'Job Card', 'Vehicle', 'Supplier', 'Invoice No',
                                         'Activity Date', 'Paid By',
-                                        'Invoice Value', 'Approved', 'Advance', 'Payable',
-                                        'Maintenance Status', 'Finance Status', 'Pmt State', 'Pay By', '',
+                                        'Payable', 'Paid', 'TDS',
+                                        'Maintenance Status', 'Finance Status', 'Last Paid On', 'Pay By', '',
                                     ].map(h => (
                                         <th
                                             key={h}
@@ -435,7 +303,7 @@ export default function OutsourceInvoices() {
                                     const isOverdue = !!(
                                         inv.payby_date &&
                                         inv.payby_date < todayStr &&
-                                        inv.paymentState !== 'Paid'
+                                        inv.finance_payment_status !== 'Paid'
                                     )
                                     return (
                                         <tr
@@ -467,17 +335,14 @@ export default function OutsourceInvoices() {
                                             <td className="px-3 py-3 whitespace-nowrap text-gray-700">
                                                 {inv.paid_by || '—'}
                                             </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
-                                                {fmtMoney(inv.invoice_value)}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
-                                                {fmtMoney(inv.approved_amount)}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
-                                                {fmtMoney(inv.advance_amount)}
-                                            </td>
                                             <td className="px-3 py-3 whitespace-nowrap text-right font-medium text-gray-900">
-                                                {fmtMoney(inv.payableAmount)}
+                                                {fmtPaise(inv.settlement.payable)}
+                                            </td>
+                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
+                                                {fmtPaise(inv.settlement.paid)}
+                                            </td>
+                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
+                                                {fmtPaise(inv.settlement.tds)}
                                             </td>
                                             <td className="px-3 py-3 whitespace-nowrap">
                                                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${MAINTENANCE_STATUS_COLORS[inv.maintenance_payment_status] ?? 'bg-gray-100 text-gray-600'}`}>
@@ -485,14 +350,15 @@ export default function OutsourceInvoices() {
                                                 </span>
                                             </td>
                                             <td className="px-3 py-3 whitespace-nowrap">
-                                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${financeStatusColor(inv.finance_payment_status)}`}>
+                                                <span
+                                                    title={inv.finance_remark || undefined}
+                                                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${financeStatusColor(inv.finance_payment_status)}`}
+                                                >
                                                     {inv.finance_payment_status}
                                                 </span>
                                             </td>
-                                            <td className="px-3 py-3 whitespace-nowrap">
-                                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PAYMENT_STATE_COLORS[inv.paymentState]}`}>
-                                                    {inv.paymentState}
-                                                </span>
+                                            <td className="px-3 py-3 whitespace-nowrap text-gray-700">
+                                                {fmtDate(inv.lastPaidOn)}
                                             </td>
                                             <td className={`px-3 py-3 whitespace-nowrap font-medium ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}>
                                                 {fmtDate(inv.payby_date)}
@@ -555,90 +421,14 @@ export default function OutsourceInvoices() {
                 )}
             </div>
 
-            {/* ── Payment drawer (Phase 4B) ─────────────────────────────────── */}
+            {/* ── Invoice drawer: statuses, payments, details ─────────────── */}
             {selectedInvoice && (
-                <div className="fixed inset-0 z-40 flex" onClick={() => setOpenedInvoice(null)}>
-                    <div className="flex-1 bg-black/30" />
-                    <div
-                        className="w-full max-w-lg bg-white shadow-2xl overflow-y-auto"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-                            <h2 className="text-lg font-semibold text-gray-900">
-                                Invoice #{selectedInvoice.invoice_no || selectedInvoice.id.slice(0, 8)}
-                            </h2>
-                            <button
-                                onClick={() => setOpenedInvoice(null)}
-                                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-                            >
-                                &times;
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            {/* Invoice file — what finance reads for Tally entry */}
-                            <div className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm">
-                                <div>
-                                    <p className="text-xs text-gray-500 mb-0.5">Invoice submitted</p>
-                                    <p className="font-medium text-gray-900">{fmtDate(selectedInvoice.created_at)}</p>
-                                </div>
-                                <InvoiceFileLink url={selectedInvoice.job_card?.invoice_url} />
-                            </div>
-
-                            {/* Both statuses, each owned by one side */}
-                            <div className="space-y-4">
-                                <div>
-                                    <p className="text-xs text-gray-500 mb-1">Payment status reported by maintenance</p>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${MAINTENANCE_STATUS_COLORS[selectedInvoice.maintenance_payment_status] ?? 'bg-gray-100 text-gray-600'}`}>
-                                        {selectedInvoice.maintenance_payment_status || '—'}
-                                    </span>
-                                </div>
-                                {canEditFinanceStatus ? (
-                                    <FinanceStatusForm
-                                        key={selectedInvoice.id}
-                                        invoice={selectedInvoice}
-                                        onSaved={saved => setOpenedInvoice(prev => ({ ...prev, ...saved }))}
-                                    />
-                                ) : (
-                                    <div>
-                                        <p className="text-xs text-gray-500 mb-1">Payment status reported by finance</p>
-                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${financeStatusColor(selectedInvoice.finance_payment_status)}`}>
-                                            {selectedInvoice.finance_payment_status}
-                                        </span>
-                                        {selectedInvoice.finance_remark && (
-                                            <p className="mt-1.5 text-sm text-gray-700 whitespace-pre-line">{selectedInvoice.finance_remark}</p>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm pt-4 border-t border-gray-100">
-                                {[
-                                    ['Job Card',        `#${selectedInvoice.job_card?.job_card_number}`],
-                                    ['Vehicle',          selectedInvoice.job_card?.vehicle_number || '—'],
-                                    ['Supplier',         selectedInvoice.job_card?.supplier?.entity_name || '—'],
-                                    ['Completed',        fmtDate(selectedInvoice.job_card?.completed_at)],
-                                    ['Activity Date',    fmtDate(selectedInvoice.date_of_activity)],
-                                    ['Invoice No',       selectedInvoice.invoice_no || '—'],
-                                    ['Paid By',          selectedInvoice.paid_by || '—'],
-                                    ['Invoice Value',    fmtMoney(selectedInvoice.invoice_value)],
-                                    ['Approved Amount',  fmtMoney(selectedInvoice.approved_amount)],
-                                    ['Advance Amount',   fmtMoney(selectedInvoice.advance_amount)],
-                                    ['Payable Amount',   fmtMoney(selectedInvoice.payableAmount)],
-                                    ['Pay By Date',      fmtDate(selectedInvoice.payby_date)],
-                                    ['Payment State',    selectedInvoice.paymentState],
-                                ].map(([label, value]) => (
-                                    <div key={label}>
-                                        <p className="text-xs text-gray-500 mb-0.5">{label}</p>
-                                        <p className="font-medium text-gray-900">{value}</p>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="pt-4 border-t border-gray-100 text-sm text-gray-400 italic">
-                                Payment history and recording — coming in Phase 4B.
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <InvoiceDrawer
+                    invoice={selectedInvoice}
+                    role={userProfile?.role}
+                    onClose={() => setOpenedInvoice(null)}
+                    onInvoiceSaved={saved => setOpenedInvoice(prev => ({ ...prev, ...saved }))}
+                />
             )}
         </div>
     )

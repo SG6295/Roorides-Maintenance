@@ -407,34 +407,71 @@ export type Database = {
         Row: {
           amount_paid: number
           attachment_urls: string[]
+          bank: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           created_at: string
           id: string
+          ledger: string | null
           notes: string | null
           outsource_invoice_id: string
           paid_on: string
+          payment_method: string | null
           recorded_by: string | null
+          round_off: number
+          status: string
+          tds_amount: number
+          utr: string | null
         }
         Insert: {
           amount_paid: number
           attachment_urls?: string[]
+          bank?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           id?: string
+          ledger?: string | null
           notes?: string | null
           outsource_invoice_id: string
           paid_on: string
+          payment_method?: string | null
           recorded_by?: string | null
+          round_off?: number
+          status?: string
+          tds_amount?: number
+          utr?: string | null
         }
         Update: {
           amount_paid?: number
           attachment_urls?: string[]
+          bank?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           id?: string
+          ledger?: string | null
           notes?: string | null
           outsource_invoice_id?: string
           paid_on?: string
+          payment_method?: string | null
           recorded_by?: string | null
+          round_off?: number
+          status?: string
+          tds_amount?: number
+          utr?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "outsource_invoice_payments_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "outsource_invoice_payments_outsource_invoice_id_fkey"
             columns: ["outsource_invoice_id"]
@@ -2075,8 +2112,16 @@ export type Database = {
         Args: { n_days: number; start_ts: string }
         Returns: string
       }
+      apply_finance_status_recalc: {
+        Args: { p_invoice_id: string }
+        Returns: undefined
+      }
       apply_part_stock_delta: {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
+        Returns: undefined
+      }
+      cancel_outsource_invoice_payment: {
+        Args: { p_payment_id: string; p_reason: string }
         Returns: undefined
       }
       cancel_stock_audit: {
@@ -2097,6 +2142,10 @@ export type Database = {
       delete_issue_part_with_scrap_check: {
         Args: { p_issue_part_id: string }
         Returns: Json
+      }
+      derive_finance_payment_status: {
+        Args: { p_payable: number; p_settled: number }
+        Returns: string
       }
       evaluate_acceptance_sla: {
         Args: { p_first_issue_created: string; p_ticket_id: string }
@@ -2159,6 +2208,26 @@ export type Database = {
           type_outsource: number
         }[]
       }
+      get_outsource_invoice_payments: {
+        Args: { p_invoice_id: string }
+        Returns: {
+          amount_paid: number
+          bank: string
+          cancel_reason: string
+          cancelled_at: string
+          cancelled_by_name: string
+          created_at: string
+          id: string
+          ledger: string
+          paid_on: string
+          payment_method: string
+          recorded_by_name: string
+          round_off: number
+          status: string
+          tds_amount: number
+          utr: string
+        }[]
+      }
       get_outsource_invoice_summary: {
         Args: {
           p_date_from?: string
@@ -2180,7 +2249,15 @@ export type Database = {
         Args: { p_job_card_id: string }
         Returns: boolean
       }
+      outsource_invoice_settled: {
+        Args: { p_invoice_id: string }
+        Returns: number
+      }
       recalculate_open_slas: { Args: never; Returns: undefined }
+      record_outsource_invoice_payment: {
+        Args: { p_invoice_id: string; p_payment: Json }
+        Returns: string
+      }
       record_scrap_disposal: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json

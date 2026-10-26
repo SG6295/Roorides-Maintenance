@@ -1167,6 +1167,30 @@ $$;
 ALTER FUNCTION public.adjust_part_inventory_on_update() OWNER TO postgres;
 
 --
+-- Name: apply_finance_status_recalc(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.apply_finance_status_recalc(p_invoice_id uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    PERFORM set_config('app.finance_status_recalc', 'on', true);
+
+    UPDATE public.outsource_invoices oi
+    SET    finance_payment_status = public.derive_finance_payment_status(
+               coalesce(oi.approved_amount, 0) - coalesce(oi.advance_amount, 0),
+               public.outsource_invoice_settled(oi.id))
+    WHERE  oi.id = p_invoice_id;
+
+    PERFORM set_config('app.finance_status_recalc', 'off', true);
+END;
+$$;
+
+
+ALTER FUNCTION public.apply_finance_status_recalc(p_invoice_id uuid) OWNER TO postgres;
+
+--
 -- Name: apply_part_stock_delta(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1289,6 +1313,54 @@ $$;
 
 
 ALTER FUNCTION public.calculate_ticket_overall_sla() OWNER TO postgres;
+
+--
+-- Name: cancel_outsource_invoice_payment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.cancel_outsource_invoice_payment(p_payment_id uuid, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role    text;
+    v_payment public.outsource_invoice_payments%ROWTYPE;
+BEGIN
+    SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance can cancel payments.' USING ERRCODE = '42501';
+    END IF;
+
+    IF nullif(btrim(p_reason), '') IS NULL THEN
+        RAISE EXCEPTION 'Give a reason for cancelling this payment.';
+    END IF;
+
+    SELECT * INTO v_payment FROM public.outsource_invoice_payments WHERE id = p_payment_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Payment not found.';
+    END IF;
+
+    -- Same lock order as recording: invoice first, then its payments.
+    PERFORM 1 FROM public.outsource_invoices WHERE id = v_payment.outsource_invoice_id FOR UPDATE;
+    SELECT * INTO v_payment FROM public.outsource_invoice_payments WHERE id = p_payment_id FOR UPDATE;
+
+    IF v_payment.status = 'Cancelled' THEN
+        RAISE EXCEPTION 'This payment is already cancelled.';
+    END IF;
+
+    UPDATE public.outsource_invoice_payments
+    SET    status        = 'Cancelled',
+           cancelled_at  = now(),
+           cancelled_by  = auth.uid(),
+           cancel_reason = btrim(p_reason)
+    WHERE  id = p_payment_id;
+
+    PERFORM public.apply_finance_status_recalc(v_payment.outsource_invoice_id);
+END;
+$$;
+
+
+ALTER FUNCTION public.cancel_outsource_invoice_payment(p_payment_id uuid, p_reason text) OWNER TO postgres;
 
 --
 -- Name: cancel_stock_audit(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -1982,6 +2054,23 @@ $$;
 ALTER FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) OWNER TO postgres;
 
 --
+-- Name: derive_finance_payment_status(numeric, numeric); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.derive_finance_payment_status(p_payable numeric, p_settled numeric) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+           when p_settled <= 0       then 'Due'
+           when p_settled < p_payable then 'Partly Paid'
+           else                           'Paid'
+         end
+$$;
+
+
+ALTER FUNCTION public.derive_finance_payment_status(p_payable numeric, p_settled numeric) OWNER TO postgres;
+
+--
 -- Name: evaluate_acceptance_sla(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2268,6 +2357,28 @@ $$;
 ALTER FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) OWNER TO postgres;
 
 --
+-- Name: get_outsource_invoice_payments(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_outsource_invoice_payments(p_invoice_id uuid) RETURNS TABLE(id uuid, paid_on date, amount_paid numeric, tds_amount numeric, round_off numeric, ledger text, payment_method text, bank text, utr text, status text, created_at timestamp with time zone, recorded_by_name text, cancelled_at timestamp with time zone, cancelled_by_name text, cancel_reason text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select p.id, p.paid_on, p.amount_paid, p.tds_amount, p.round_off,
+         p.ledger, p.payment_method, p.bank, p.utr, p.status, p.created_at,
+         ru.name, p.cancelled_at, cu.name, p.cancel_reason
+  from   public.outsource_invoice_payments p
+  left join public.users ru on ru.id = p.recorded_by
+  left join public.users cu on cu.id = p.cancelled_by
+  where  p.outsource_invoice_id = p_invoice_id
+    and  auth.uid() is not null
+  order  by p.paid_on, p.created_at
+$$;
+
+
+ALTER FUNCTION public.get_outsource_invoice_payments(p_invoice_id uuid) OWNER TO postgres;
+
+--
 -- Name: get_outsource_invoice_summary(text[], text[], date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2277,22 +2388,21 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
     AS $$
     WITH paid_sums AS (
         SELECT outsource_invoice_id,
-               SUM(amount_paid) AS total_paid
+               SUM(amount_paid + tds_amount + round_off) AS total_settled
         FROM   outsource_invoice_payments
+        WHERE  status = 'Active'
         GROUP  BY outsource_invoice_id
     )
     SELECT
         COALESCE(SUM(
             GREATEST(0,
-                (oi.approved_amount - oi.advance_amount) - COALESCE(ps.total_paid, 0)
+                (oi.approved_amount - oi.advance_amount) - COALESCE(ps.total_settled, 0)
             )
-        ) FILTER (WHERE
-            COALESCE(ps.total_paid, 0) < (oi.approved_amount - oi.advance_amount)
         ), 0)                                                    AS total_unpaid_payable,
 
         COUNT(*) FILTER (WHERE
             oi.payby_date < CURRENT_DATE
-            AND COALESCE(ps.total_paid, 0) < (oi.approved_amount - oi.advance_amount)
+            AND oi.finance_payment_status <> 'Paid'
         )                                                        AS overdue_count,
 
         COUNT(*) FILTER (WHERE oi.maintenance_payment_status = 'Hold') AS pending_approval_count
@@ -2365,6 +2475,10 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    IF current_setting('app.finance_status_recalc', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
+
     SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
 
     IF TG_OP = 'INSERT' THEN
@@ -2383,6 +2497,12 @@ BEGIN
 
     IF v_maintenance_changed AND v_role = 'finance' THEN
         RAISE EXCEPTION 'Finance cannot change the payment status reported by maintenance.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    IF NEW.finance_payment_status IN ('Paid', 'Partly Paid')
+       AND (TG_OP = 'INSERT' OR NEW.finance_payment_status IS DISTINCT FROM OLD.finance_payment_status) THEN
+        RAISE EXCEPTION 'Paid and Partly Paid are set by recording payments, not by hand.'
             USING ERRCODE = '42501';
     END IF;
 
@@ -2495,6 +2615,53 @@ $$;
 ALTER FUNCTION public.move_invoice_stock_on_location_change() OWNER TO postgres;
 
 --
+-- Name: outsource_invoice_settled(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.outsource_invoice_settled(p_invoice_id uuid) RETURNS numeric
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select coalesce(sum(amount_paid + tds_amount + round_off), 0)
+  from   public.outsource_invoice_payments
+  where  outsource_invoice_id = p_invoice_id
+    and  status = 'Active'
+$$;
+
+
+ALTER FUNCTION public.outsource_invoice_settled(p_invoice_id uuid) OWNER TO postgres;
+
+--
+-- Name: recalc_finance_status_on_amount_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.recalc_finance_status_on_amount_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_settled numeric;
+BEGIN
+    IF NEW.approved_amount IS NOT DISTINCT FROM OLD.approved_amount
+       AND NEW.advance_amount IS NOT DISTINCT FROM OLD.advance_amount THEN
+        RETURN NEW;
+    END IF;
+
+    v_settled := public.outsource_invoice_settled(NEW.id);
+
+    IF v_settled > 0 OR OLD.finance_payment_status IN ('Paid', 'Partly Paid') THEN
+        NEW.finance_payment_status := public.derive_finance_payment_status(
+            coalesce(NEW.approved_amount, 0) - coalesce(NEW.advance_amount, 0), v_settled);
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.recalc_finance_status_on_amount_change() OWNER TO postgres;
+
+--
 -- Name: recalculate_open_slas(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2574,6 +2741,100 @@ $$;
 
 
 ALTER FUNCTION public.recalculate_ticket_sla_on_status_change() OWNER TO postgres;
+
+--
+-- Name: record_outsource_invoice_payment(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.record_outsource_invoice_payment(p_invoice_id uuid, p_payment jsonb) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_role      text;
+    v_invoice   public.outsource_invoices%ROWTYPE;
+    v_amount    numeric := coalesce(nullif(p_payment->>'amount_paid', '')::numeric, 0);
+    v_tds       numeric := coalesce(nullif(p_payment->>'tds_amount', '')::numeric, 0);
+    v_round_off numeric := coalesce(nullif(p_payment->>'round_off', '')::numeric, 0);
+    v_paid_on   date    := nullif(p_payment->>'paid_on', '')::date;
+    v_method    text    := nullif(p_payment->>'payment_method', '');
+    v_payable   numeric;
+    v_settled   numeric;
+    v_after     numeric;
+    v_id        uuid;
+BEGIN
+    SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
+    IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
+        RAISE EXCEPTION 'Only finance can record payments.' USING ERRCODE = '42501';
+    END IF;
+
+    SELECT * INTO v_invoice FROM public.outsource_invoices WHERE id = p_invoice_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Invoice not found.';
+    END IF;
+
+    IF v_amount <> round(v_amount, 2) OR v_tds <> round(v_tds, 2) OR v_round_off <> round(v_round_off, 2) THEN
+        RAISE EXCEPTION 'Amounts can have at most two decimals.';
+    END IF;
+    IF v_amount < 0 OR v_tds < 0 THEN
+        RAISE EXCEPTION 'Amounts cannot be negative.';
+    END IF;
+    IF v_amount + v_tds <= 0 THEN
+        RAISE EXCEPTION 'Enter a paid value or a TDS amount.';
+    END IF;
+    IF v_paid_on IS NULL THEN
+        RAISE EXCEPTION 'Enter the date the payment was made.';
+    END IF;
+    -- India time: the server's date is still yesterday until 05:30 IST.
+    IF v_paid_on > (now() AT TIME ZONE 'Asia/Kolkata')::date THEN
+        RAISE EXCEPTION 'The payment date cannot be in the future.';
+    END IF;
+    IF nullif(p_payment->>'ledger', '') IS NULL THEN
+        RAISE EXCEPTION 'Choose the ledger the payment was posted to.';
+    END IF;
+    IF v_method IS NULL THEN
+        RAISE EXCEPTION 'Choose the payment method.';
+    END IF;
+    IF v_method <> 'Cash' AND (nullif(p_payment->>'bank', '') IS NULL OR nullif(btrim(p_payment->>'utr'), '') IS NULL) THEN
+        RAISE EXCEPTION 'Bank and UTR are required for every method except Cash.';
+    END IF;
+
+    v_payable := coalesce(v_invoice.approved_amount, 0) - coalesce(v_invoice.advance_amount, 0);
+    v_settled := public.outsource_invoice_settled(p_invoice_id);
+    v_after   := v_settled + v_amount + v_tds + v_round_off;
+
+    IF v_after > v_payable THEN
+        RAISE EXCEPTION 'This would overpay by ₹%; the balance is ₹%.',
+            to_char(v_after - v_payable, 'FM99,99,99,99,990.00'),
+            to_char(greatest(v_payable - v_settled, 0), 'FM99,99,99,99,990.00');
+    END IF;
+
+    -- Round-off only closes a sub-rupee remainder.
+    IF v_round_off > 0 AND (v_round_off >= 1 OR v_after <> v_payable) THEN
+        RAISE EXCEPTION 'Round-off can only write off a remainder of less than ₹1 that settles the invoice.';
+    END IF;
+
+    INSERT INTO public.outsource_invoice_payments
+        (outsource_invoice_id, paid_on, amount_paid, tds_amount, round_off,
+         ledger, payment_method, bank, utr, recorded_by)
+    VALUES (
+        p_invoice_id, v_paid_on, v_amount, v_tds, v_round_off,
+        p_payment->>'ledger',
+        v_method,
+        CASE WHEN v_method = 'Cash' THEN NULL ELSE p_payment->>'bank' END,
+        CASE WHEN v_method = 'Cash' THEN NULL ELSE btrim(p_payment->>'utr') END,
+        auth.uid()
+    )
+    RETURNING id INTO v_id;
+
+    PERFORM public.apply_finance_status_recalc(p_invoice_id);
+
+    RETURN v_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.record_outsource_invoice_payment(p_invoice_id uuid, p_payment jsonb) OWNER TO postgres;
 
 --
 -- Name: record_scrap_disposal(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
@@ -7623,7 +7884,25 @@ CREATE TABLE public.outsource_invoice_payments (
     notes text,
     attachment_urls text[] DEFAULT '{}'::text[] NOT NULL,
     recorded_by uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    tds_amount numeric(12,2) DEFAULT 0 NOT NULL,
+    round_off numeric(12,2) DEFAULT 0 NOT NULL,
+    ledger text,
+    payment_method text,
+    bank text,
+    utr text,
+    status text DEFAULT 'Active'::text NOT NULL,
+    cancelled_at timestamp with time zone,
+    cancelled_by uuid,
+    cancel_reason text,
+    CONSTRAINT outsource_invoice_payments_amounts_check CHECK (((amount_paid >= (0)::numeric) AND (tds_amount >= (0)::numeric) AND ((amount_paid + tds_amount) > (0)::numeric))),
+    CONSTRAINT outsource_invoice_payments_bank_check CHECK ((bank = ANY (ARRAY['Union Bank of India'::text, 'Kotak Mahindra'::text]))),
+    CONSTRAINT outsource_invoice_payments_bank_trail_check CHECK (((payment_method IS NULL) OR (payment_method = 'Cash'::text) OR ((bank IS NOT NULL) AND (NULLIF(btrim(utr), ''::text) IS NOT NULL)))),
+    CONSTRAINT outsource_invoice_payments_cancel_reason_check CHECK (((status = 'Active'::text) OR ((cancelled_at IS NOT NULL) AND (NULLIF(btrim(cancel_reason), ''::text) IS NOT NULL)))),
+    CONSTRAINT outsource_invoice_payments_ledger_check CHECK ((ledger = ANY (ARRAY['Bill accounted'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
+    CONSTRAINT outsource_invoice_payments_method_check CHECK ((payment_method = ANY (ARRAY['UPI'::text, 'NEFT'::text, 'RTGS'::text, 'IMPS'::text, 'Cash'::text]))),
+    CONSTRAINT outsource_invoice_payments_round_off_check CHECK (((round_off >= (0)::numeric) AND (round_off < (1)::numeric))),
+    CONSTRAINT outsource_invoice_payments_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Cancelled'::text])))
 );
 
 
@@ -7649,9 +7928,9 @@ CREATE TABLE public.outsource_invoices (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     finance_payment_status text DEFAULT 'Due'::text NOT NULL,
     finance_remark text,
-    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['Due'::text, 'Paid'::text, 'Hold - on request'::text, 'Hold - further details required'::text, 'Reject - duplicate'::text, 'Reject - incorrect/insufficient details'::text, 'Reject - other'::text]))),
+    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['Due'::text, 'Partly Paid'::text, 'Paid'::text, 'Hold - on request'::text, 'Hold - further details required'::text, 'Reject - duplicate'::text, 'Reject - incorrect/insufficient details'::text, 'Reject - other'::text]))),
     CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
-    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavannan'::text, 'NVS Maintenance account'::text])))
+    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavanan'::text, 'NVS Maintenance account'::text])))
 );
 
 
@@ -10505,6 +10784,13 @@ CREATE TRIGGER outsource_invoices_guard_status_owners BEFORE INSERT OR UPDATE ON
 
 
 --
+-- Name: outsource_invoices outsource_invoices_recalc_finance_status; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER outsource_invoices_recalc_finance_status BEFORE UPDATE ON public.outsource_invoices FOR EACH ROW EXECUTE FUNCTION public.recalc_finance_status_on_amount_change();
+
+
+--
 -- Name: outsource_invoices outsource_invoices_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -11000,6 +11286,14 @@ ALTER TABLE ONLY public.job_cards
 
 ALTER TABLE ONLY public.job_cards
     ADD CONSTRAINT job_cards_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
+
+
+--
+-- Name: outsource_invoice_payments outsource_invoice_payments_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.outsource_invoice_payments
+    ADD CONSTRAINT outsource_invoice_payments_cancelled_by_fkey FOREIGN KEY (cancelled_by) REFERENCES public.users(id);
 
 
 --
@@ -11784,15 +12078,6 @@ CREATE POLICY "Exec and finance view stock_transfer_items" ON public.stock_trans
 CREATE POLICY "Exec and finance view stock_transfers" ON public.stock_transfers FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.users u
   WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['maintenance_exec'::text, 'super_admin'::text, 'finance'::text]))))));
-
-
---
--- Name: outsource_invoice_payments Exec finance insert invoice payments; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Exec finance insert invoice payments" ON public.outsource_invoice_payments FOR INSERT WITH CHECK ((public.is_maintenance_exec() OR (EXISTS ( SELECT 1
-   FROM public.users u
-  WHERE ((u.id = auth.uid()) AND (u.role = 'finance'::text))))));
 
 
 --
@@ -13384,6 +13669,14 @@ GRANT ALL ON FUNCTION public.adjust_part_inventory_on_update() TO service_role;
 
 
 --
+-- Name: FUNCTION apply_finance_status_recalc(p_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.apply_finance_status_recalc(p_invoice_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.apply_finance_status_recalc(p_invoice_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -13408,6 +13701,15 @@ GRANT ALL ON FUNCTION public.calculate_issue_sla_dynamic() TO service_role;
 GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO anon;
 GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO authenticated;
 GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO service_role;
+
+
+--
+-- Name: FUNCTION cancel_outsource_invoice_payment(p_payment_id uuid, p_reason text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.cancel_outsource_invoice_payment(p_payment_id uuid, p_reason text) TO anon;
+GRANT ALL ON FUNCTION public.cancel_outsource_invoice_payment(p_payment_id uuid, p_reason text) TO authenticated;
+GRANT ALL ON FUNCTION public.cancel_outsource_invoice_payment(p_payment_id uuid, p_reason text) TO service_role;
 
 
 --
@@ -13474,6 +13776,15 @@ GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id 
 
 
 --
+-- Name: FUNCTION derive_finance_payment_status(p_payable numeric, p_settled numeric); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.derive_finance_payment_status(p_payable numeric, p_settled numeric) TO anon;
+GRANT ALL ON FUNCTION public.derive_finance_payment_status(p_payable numeric, p_settled numeric) TO authenticated;
+GRANT ALL ON FUNCTION public.derive_finance_payment_status(p_payable numeric, p_settled numeric) TO service_role;
+
+
+--
 -- Name: FUNCTION evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -13516,6 +13827,15 @@ GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id u
 GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO anon;
 GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO authenticated;
 GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO service_role;
+
+
+--
+-- Name: FUNCTION get_outsource_invoice_payments(p_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_outsource_invoice_payments(p_invoice_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_payments(p_invoice_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_payments(p_invoice_id uuid) TO service_role;
 
 
 --
@@ -13591,6 +13911,23 @@ GRANT ALL ON FUNCTION public.move_invoice_stock_on_location_change() TO service_
 
 
 --
+-- Name: FUNCTION outsource_invoice_settled(p_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.outsource_invoice_settled(p_invoice_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.outsource_invoice_settled(p_invoice_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION recalc_finance_status_on_amount_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.recalc_finance_status_on_amount_change() TO anon;
+GRANT ALL ON FUNCTION public.recalc_finance_status_on_amount_change() TO authenticated;
+GRANT ALL ON FUNCTION public.recalc_finance_status_on_amount_change() TO service_role;
+
+
+--
 -- Name: FUNCTION recalculate_open_slas(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -13606,6 +13943,15 @@ GRANT ALL ON FUNCTION public.recalculate_open_slas() TO service_role;
 GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO anon;
 GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO authenticated;
 GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO service_role;
+
+
+--
+-- Name: FUNCTION record_outsource_invoice_payment(p_invoice_id uuid, p_payment jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.record_outsource_invoice_payment(p_invoice_id uuid, p_payment jsonb) TO anon;
+GRANT ALL ON FUNCTION public.record_outsource_invoice_payment(p_invoice_id uuid, p_payment jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.record_outsource_invoice_payment(p_invoice_id uuid, p_payment jsonb) TO service_role;
 
 
 --
