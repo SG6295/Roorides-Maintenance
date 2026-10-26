@@ -50,7 +50,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
     // lines = mix of existing items (have id) and new items (id: null)
     const [lines, setLines] = useState(null)
-    const [originalItems, setOriginalItems] = useState([])
 
     // keyed by line index — only for new (id: null) lines
     const [newPartForms, setNewPartForms] = useState({})
@@ -83,7 +82,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                 }
             })
             setLines(mapped)
-            setOriginalItems(mapped.map(m => ({ id: m.id })))
         }
     }, [existingItems, lines])
 
@@ -211,7 +209,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                     invoice_file_url: invoiceFile?.url || null,
                 },
                 lineItems: activeLines,
-                originalItems,
             })
             onClose()
         } catch (err) {

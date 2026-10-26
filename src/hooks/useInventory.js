@@ -100,99 +100,45 @@ export function usePurchaseInvoiceItems(invoiceId) {
     })
 }
 
+// Line items as save_purchase_invoice expects them. An id marks an existing line
+// to update; a line without one is inserted.
+const toInvoiceItem = item => ({
+    ...(item.id ? { id: item.id } : {}),
+    part_id: item.part_id,
+    quantity: parseFloat(item.quantity),
+    unit_price: parseFloat(item.unit_price),
+    gst_rate: parseFloat(item.gst_rate) || 0,
+    discount_amount: parseFloat(item.discount_amount) || 0,
+})
+
 /**
  * Update a purchase invoice header and its line items, adjusting inventory accordingly.
- * - Existing items that were removed are deleted (trigger reverses stock).
- * - Existing items that were kept are updated (trigger adjusts stock delta).
- * - New items are inserted (trigger adds stock).
+ *
+ * One call to save_purchase_invoice, which applies the header, deletes the lines no
+ * longer present, updates the kept ones, inserts the new ones and recomputes the total
+ * in a single transaction (MAIN-97). It used to be five separate calls, so a stock
+ * check failing on a later line left the earlier changes saved. The function writes
+ * the header first, so a workshop change still moves the stock before any line
+ * changes (MAIN-72).
  */
 export function useUpdatePurchaseInvoice() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ invoiceId, invoiceData, lineItems, originalItems }) => {
-            // 1. Update invoice header fields.
-            //    location_id must be written here, before any line-item change (MAIN-72):
-            //    trigger_move_invoice_stock_on_location_change moves every quantity this
-            //    invoice inwarded to the new workshop, and refuses if the old workshop has
-            //    already spent it. That raise rolls back this one statement and throws
-            //    before a single line item is touched, so a refused move leaves nothing
-            //    half-saved. Once it succeeds the line-item triggers below read the new
-            //    location off the header, so their deltas land at the right workshop.
-            const { error: invErr } = await supabase
-                .from('purchase_invoices')
-                .update({
+        mutationFn: async ({ invoiceId, invoiceData, lineItems }) => {
+            const { error } = await supabase.rpc('save_purchase_invoice', {
+                p_invoice_id: invoiceId,
+                p_invoice: {
                     invoice_number: invoiceData.invoice_number,
                     supplier_name: invoiceData.supplier_name,
                     invoice_date: invoiceData.invoice_date,
                     notes: invoiceData.notes || null,
                     invoice_file_url: invoiceData.invoice_file_url || null,
                     location_id: invoiceData.location_id,
-                })
-                .eq('id', invoiceId)
-            if (invErr) throw invErr
-
-            // Categorise line items
-            const originalIds = new Set(originalItems.map(i => i.id))
-            const keptIds = new Set(lineItems.filter(l => l.id).map(l => l.id))
-            const toDelete = [...originalIds].filter(id => !keptIds.has(id))
-            const toUpdate = lineItems.filter(l => l.id)
-            const toInsert = lineItems.filter(l => !l.id)
-
-            // 2. Delete removed items — trigger reverses stock
-            if (toDelete.length > 0) {
-                const { error } = await supabase
-                    .from('purchase_invoice_items')
-                    .delete()
-                    .in('id', toDelete)
-                if (error) throw error
-            }
-
-            // 3. Update existing items — trigger adjusts stock delta
-            for (const item of toUpdate) {
-                const { error } = await supabase
-                    .from('purchase_invoice_items')
-                    .update({
-                        quantity: parseFloat(item.quantity),
-                        unit_price: parseFloat(item.unit_price),
-                        gst_rate: parseFloat(item.gst_rate) || 0,
-                        discount_amount: parseFloat(item.discount_amount) || 0,
-                    })
-                    .eq('id', item.id)
-                if (error) throw error
-            }
-
-            // 4. Insert new items — trigger adds stock
-            if (toInsert.length > 0) {
-                const { error } = await supabase
-                    .from('purchase_invoice_items')
-                    .insert(toInsert.map(item => ({
-                        invoice_id: invoiceId,
-                        part_id: item.part_id,
-                        quantity: parseFloat(item.quantity),
-                        unit_price: parseFloat(item.unit_price),
-                        gst_rate: parseFloat(item.gst_rate) || 0,
-                        discount_amount: parseFloat(item.discount_amount) || 0,
-                    })))
-                if (error) throw error
-            }
-
-            // 5. Recalculate and persist total_amount as the sum of line totals
-            //    (GST- and discount-inclusive), matching the DB generated line_total.
-            //    Also fixes MAIN-25: the old recompute dropped GST from the total.
-            const newTotal = [...toUpdate, ...toInsert].reduce((sum, i) => {
-                const qty = parseFloat(i.quantity) || 0
-                const price = parseFloat(i.unit_price) || 0
-                const gst = parseFloat(i.gst_rate) || 0
-                const discount = parseFloat(i.discount_amount) || 0
-                const lineTotal = Math.round((qty * price - discount) * (1 + gst / 100) * 100) / 100
-                return sum + lineTotal
-            }, 0)
-            const { error: totalErr } = await supabase
-                .from('purchase_invoices')
-                .update({ total_amount: newTotal })
-                .eq('id', invoiceId)
-            if (totalErr) throw totalErr
+                },
+                p_items: lineItems.map(toInvoiceItem),
+            })
+            if (error) throw error
         },
         onSuccess: (_data, { invoiceId }) => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
@@ -206,41 +152,35 @@ export function useUpdatePurchaseInvoice() {
 }
 
 /**
- * Record a purchase: insert invoice + all line items in sequence.
- * The DB trigger on purchase_invoice_items will restock parts automatically.
+ * Record a purchase: the invoice and all its line items in one call to
+ * save_purchase_invoice, so a failing line leaves no empty invoice behind (MAIN-97).
+ * The DB trigger on purchase_invoice_items restocks parts; created_by and
+ * total_amount are set by the function.
  */
 export function useRecordPurchase() {
     const queryClient = useQueryClient()
 
     return useMutation({
         mutationFn: async ({ invoice, lineItems }) => {
-            // Insert invoice header
-            const { data: inv, error: invErr } = await supabase
-                .from('purchase_invoices')
-                .insert([invoice])
-                .select()
-                .single()
-            if (invErr) throw invErr
-
-            // Insert all line items
-            const items = lineItems.map(item => ({
-                invoice_id: inv.id,
-                part_id: item.part_id,
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                gst_rate: item.gst_rate ?? 0,
-                discount_amount: item.discount_amount ?? 0,
-            }))
-
-            const { error: itemsErr } = await supabase
-                .from('purchase_invoice_items')
-                .insert(items)
-            if (itemsErr) throw itemsErr
-
-            return inv
+            const { data: id, error } = await supabase.rpc('save_purchase_invoice', {
+                p_invoice_id: null,
+                p_invoice: {
+                    invoice_number: invoice.invoice_number,
+                    supplier_name: invoice.supplier_name,
+                    invoice_date: invoice.invoice_date,
+                    notes: invoice.notes || null,
+                    invoice_file_url: invoice.invoice_file_url || null,
+                    location_id: invoice.location_id,
+                },
+                p_items: lineItems.map(toInvoiceItem),
+            })
+            if (error) throw error
+            return { id }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
+            // The new stock lands at one workshop, so the per-workshop views are stale too.
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
         },
     })
