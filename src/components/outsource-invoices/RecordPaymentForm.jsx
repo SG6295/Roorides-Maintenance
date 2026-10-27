@@ -133,7 +133,7 @@ export default function RecordPaymentForm({ invoiceId, balancePaise, onRecorded 
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                <span className="text-gray-600">Balance {fmtPaise(balancePaise)}</span>
+                <span className="font-medium text-gray-800">Balance {fmtPaise(balancePaise)}</span>
                 {offer > 0 && (
                     <label className="flex items-center gap-1.5 text-gray-700">
                         <input
@@ -145,7 +145,7 @@ export default function RecordPaymentForm({ invoiceId, balancePaise, onRecorded 
                         Write off {fmtPaise(offer)} as round-off
                     </label>
                 )}
-                {error && <span className="text-red-600">{error}</span>}
+                {error && <span className="font-medium text-red-700">{error}</span>}
             </div>
         </div>
     )
@@ -154,7 +154,7 @@ export default function RecordPaymentForm({ invoiceId, balancePaise, onRecorded 
 function Field({ label, className, children }) {
     return (
         <div className={className}>
-            <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
             {children}
         </div>
     )

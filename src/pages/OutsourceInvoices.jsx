@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ChevronRightIcon } from '@heroicons/react/20/solid'
 import { todayLocal } from '../utils/datetime'
@@ -27,6 +27,21 @@ export default function OutsourceInvoices() {
     const [expandedIds, setExpandedIds] = useState(() => new Set())
     const canEdit = FINANCE_ROLES.includes(userProfile?.role)
     const visibleColumns = COLUMNS.filter(c => visibleKeys.includes(c.key))
+
+    // The payment strip is pinned to the visible part of the table: it is as wide as
+    // what the scroll box shows and sticks to its left edge, so it stays in view
+    // however far the table is scrolled sideways.
+    const tableScrollRef = useRef(null)
+    const [visibleTableWidth, setVisibleTableWidth] = useState(null)
+    useEffect(() => {
+        const el = tableScrollRef.current
+        if (!el) return
+        const measure = () => setVisibleTableWidth(el.clientWidth)
+        measure()
+        const observer = new ResizeObserver(measure)
+        observer.observe(el)
+        return () => observer.disconnect()
+    }, [])
 
     const toggleExpanded = id => setExpandedIds(prev => {
         const next = new Set(prev)
@@ -285,7 +300,7 @@ export default function OutsourceInvoices() {
                 <div className="flex justify-end">
                     <ColumnManager visibleKeys={visibleKeys} onChange={setVisibleKeys} />
                 </div>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+                <div ref={tableScrollRef} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
                     {isLoading ? (
                         <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
                     ) : invoices.length === 0 ? (
@@ -348,10 +363,14 @@ export default function OutsourceInvoices() {
                                                 </td>
                                             </tr>
                                             {expanded && (
-                                                <tr className="bg-gray-50">
-                                                    <td />
-                                                    <td colSpan={visibleColumns.length + 1} className="px-3 py-3">
-                                                        <PaymentStrip invoice={inv} canManage={canEdit} />
+                                                <tr>
+                                                    <td colSpan={visibleColumns.length + 2} className="p-0">
+                                                        <div
+                                                            className="sticky left-0 px-3 py-3"
+                                                            style={visibleTableWidth ? { width: visibleTableWidth } : undefined}
+                                                        >
+                                                            <PaymentStrip invoice={inv} canManage={canEdit} />
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             )}
