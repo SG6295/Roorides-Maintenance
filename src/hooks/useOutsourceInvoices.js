@@ -79,7 +79,7 @@ export function useOutsourceInvoices(filters = {}) {
                         id, job_card_number, vehicle_number, status, completed_at, invoice_url,
                         supplier:suppliers!supplier_id(id, entity_name)
                     ),
-                    payments:outsource_invoice_payments(id, amount_paid, tds_amount, round_off, paid_on, status)`,
+                    payments:outsource_invoice_payments(id, amount_paid, tds_amount, round_off, paid_on, ledger, status, created_at)`,
                     isPaginated ? { count: 'exact' } : undefined,
                 )
                 .eq('job_cards.status', 'Completed')
@@ -159,19 +159,23 @@ export function useFinalizeOutsourceInvoice() {
 }
 
 /**
- * Sets finance's own status and remark on an outsource invoice. Only finance and
+ * Sets finance's own status and/or remark on an outsource invoice. Only finance and
  * super_admin may change these; the DB trigger rejects anyone else.
+ *
+ * Only the fields passed are written, so editing the remark in its table cell
+ * cannot overwrite a status changed a moment earlier in the next cell, or the
+ * reverse.
  */
 export function useUpdateFinancePaymentStatus() {
     const queryClient = useQueryClient()
     return useMutation({
         mutationFn: async ({ id, financePaymentStatus, financeRemark }) => {
+            const patch = {}
+            if (financePaymentStatus !== undefined) patch.finance_payment_status = financePaymentStatus
+            if (financeRemark !== undefined) patch.finance_remark = financeRemark?.trim() || null
             const { data, error } = await supabase
                 .from('outsource_invoices')
-                .update({
-                    finance_payment_status: financePaymentStatus,
-                    finance_remark: financeRemark?.trim() || null,
-                })
+                .update(patch)
                 .eq('id', id)
                 .select()
                 .single()

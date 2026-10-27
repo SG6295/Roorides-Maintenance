@@ -1,17 +1,17 @@
-import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Fragment, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { ChevronRightIcon } from '@heroicons/react/20/solid'
 import { todayLocal } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
 import InvoiceDrawer from '../components/outsource-invoices/InvoiceDrawer'
-import {
-    fmtPaise,
-    fmtDate,
-    MAINTENANCE_STATUS_COLORS,
-    financeStatusColor,
-} from '../components/outsource-invoices/format'
-import { invoiceSettlement } from '../utils/settlement'
+import PaymentStrip from '../components/outsource-invoices/PaymentStrip'
+import ColumnManager from '../components/outsource-invoices/ColumnManager'
+import InvoiceCell from '../components/outsource-invoices/InvoiceCell'
+import { COLUMNS, DEFAULT_COLUMN_KEYS } from '../components/outsource-invoices/columns'
+import { enrichInvoice } from '../components/outsource-invoices/invoiceRows'
+import { FINANCE_ROLES } from '../components/outsource-invoices/format'
 import {
     PAID_BY_OPTIONS,
     MAINTENANCE_PAYMENT_STATUSES,
@@ -22,6 +22,18 @@ export default function OutsourceInvoices() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { userProfile } = useAuth()
     const [openedInvoice, setOpenedInvoice] = useState(null)
+    // Not saved: a reload returns everyone to the default set (MAIN-98).
+    const [visibleKeys, setVisibleKeys] = useState(DEFAULT_COLUMN_KEYS)
+    const [expandedIds, setExpandedIds] = useState(() => new Set())
+    const canEdit = FINANCE_ROLES.includes(userProfile?.role)
+    const visibleColumns = COLUMNS.filter(c => visibleKeys.includes(c.key))
+
+    const toggleExpanded = id => setExpandedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+    })
 
     // ── Parse URL params ──────────────────────────────────────────────────────
     const search   = searchParams.get('q')    || ''
@@ -58,11 +70,7 @@ export default function OutsourceInvoices() {
 
     // ── Client-side enrich + search filter ───────────────────────────────────
     const invoices = rawInvoices
-        .map(inv => {
-            const active = (inv.payments ?? []).filter(p => p.status !== 'Cancelled')
-            const lastPaidOn = active.reduce((latest, p) => (p.paid_on > latest ? p.paid_on : latest), '')
-            return { ...inv, settlement: invoiceSettlement(inv, inv.payments), lastPaidOn }
-        })
+        .map(enrichInvoice)
         .filter(inv => {
             if (!search) return true
             const q = search.toLowerCase()
@@ -73,9 +81,9 @@ export default function OutsourceInvoices() {
             )
         })
 
-    // Re-read from the list so the drawer shows fresh values after a save refetches it.
-    // Falls back to the row as opened, in case the save moved it out of the current
-    // Finance Status filter — the drawer stays open rather than vanishing on Save.
+    // Re-read from the list so the drawer shows fresh values after an inline edit
+    // refetches it. Falls back to the row as opened, in case that edit moved it out of
+    // the current Finance Status filter.
     const selectedInvoice = openedInvoice
         ? invoices.find(inv => inv.id === openedInvoice.id) ?? openedInvoice
         : null
@@ -274,6 +282,9 @@ export default function OutsourceInvoices() {
                 </div>
 
                 {/* ── Table ────────────────────────────────────────────────── */}
+                <div className="flex justify-end">
+                    <ColumnManager visibleKeys={visibleKeys} onChange={setVisibleKeys} />
+                </div>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
                     {isLoading ? (
                         <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
@@ -283,98 +294,61 @@ export default function OutsourceInvoices() {
                         <table className="min-w-full divide-y divide-gray-200 text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    {[
-                                        'Job Card', 'Vehicle', 'Supplier', 'Invoice No',
-                                        'Activity Date', 'Paid By',
-                                        'Payable', 'Paid', 'TDS',
-                                        'Maintenance Status', 'Finance Status', 'Last Paid On', 'Pay By', '',
-                                    ].map(h => (
+                                    <th className="w-8 px-2" aria-label="Payments" />
+                                    {visibleColumns.map(c => (
                                         <th
-                                            key={h}
-                                            className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
+                                            key={c.key}
+                                            className={`px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap ${c.align === 'right' ? 'text-right' : 'text-left'}`}
                                         >
-                                            {h}
+                                            {c.label}
                                         </th>
                                     ))}
+                                    <th className="px-3 py-3" aria-label="View" />
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {invoices.map(inv => {
-                                    const isOverdue = !!(
-                                        inv.payby_date &&
-                                        inv.payby_date < todayStr &&
-                                        inv.finance_payment_status !== 'Paid'
-                                    )
+                                    const expanded = expandedIds.has(inv.id)
                                     return (
-                                        <tr
-                                            key={inv.id}
-                                            className="hover:bg-gray-50 cursor-pointer"
-                                            onClick={() => setOpenedInvoice(inv)}
-                                        >
-                                            <td className="px-3 py-3 whitespace-nowrap">
-                                                <Link
-                                                    to={`/job-cards/${inv.job_card?.job_card_number}`}
-                                                    onClick={e => e.stopPropagation()}
-                                                    className="text-blue-600 hover:underline font-medium"
-                                                >
-                                                    #{inv.job_card?.job_card_number}
-                                                </Link>
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-gray-700">
-                                                {inv.job_card?.vehicle_number || '—'}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-gray-700">
-                                                {inv.job_card?.supplier?.entity_name || '—'}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap font-mono text-gray-900">
-                                                {inv.invoice_no || '—'}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-gray-700">
-                                                {fmtDate(inv.date_of_activity)}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-gray-700">
-                                                {inv.paid_by || '—'}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-right font-medium text-gray-900">
-                                                {fmtPaise(inv.settlement.payable)}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
-                                                {fmtPaise(inv.settlement.paid)}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-right text-gray-900">
-                                                {fmtPaise(inv.settlement.tds)}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap">
-                                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${MAINTENANCE_STATUS_COLORS[inv.maintenance_payment_status] ?? 'bg-gray-100 text-gray-600'}`}>
-                                                    {inv.maintenance_payment_status || '—'}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap">
-                                                <span
-                                                    title={inv.finance_remark || undefined}
-                                                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${financeStatusColor(inv.finance_payment_status)}`}
-                                                >
-                                                    {inv.finance_payment_status}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap text-gray-700">
-                                                {fmtDate(inv.lastPaidOn)}
-                                            </td>
-                                            <td className={`px-3 py-3 whitespace-nowrap font-medium ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}>
-                                                {fmtDate(inv.payby_date)}
-                                                {isOverdue && (
-                                                    <span className="ml-1 text-xs" title="Overdue">⚠</span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-3 whitespace-nowrap">
-                                                <button
-                                                    onClick={e => { e.stopPropagation(); setOpenedInvoice(inv) }}
-                                                    className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
-                                                >
-                                                    View
-                                                </button>
-                                            </td>
-                                        </tr>
+                                        <Fragment key={inv.id}>
+                                            <tr className={expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}>
+                                                <td className="px-2 py-3">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleExpanded(inv.id)}
+                                                        aria-expanded={expanded}
+                                                        aria-label={expanded ? 'Hide payments' : 'Show payments'}
+                                                        className="p-1 rounded text-gray-500 hover:bg-gray-200"
+                                                    >
+                                                        <ChevronRightIcon className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                                                    </button>
+                                                </td>
+                                                {visibleColumns.map(c => (
+                                                    <td
+                                                        key={c.key}
+                                                        className={`px-3 py-3 whitespace-nowrap text-gray-700 align-top ${c.align === 'right' ? 'text-right' : ''}`}
+                                                    >
+                                                        <InvoiceCell columnKey={c.key} invoice={inv} canEdit={canEdit} todayStr={todayStr} />
+                                                    </td>
+                                                ))}
+                                                <td className="px-3 py-3 whitespace-nowrap align-top">
+                                                    <button
+                                                        onClick={() => setOpenedInvoice(inv)}
+                                                        className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                                                    >
+                                                        View
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {expanded && (
+                                                <tr className="bg-gray-50">
+                                                    <td />
+                                                    <td colSpan={visibleColumns.length + 1} className="px-3 py-3">
+                                                        <PaymentStrip invoice={inv} canManage={canEdit} />
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </Fragment>
                                     )
                                 })}
                             </tbody>
@@ -425,9 +399,7 @@ export default function OutsourceInvoices() {
             {selectedInvoice && (
                 <InvoiceDrawer
                     invoice={selectedInvoice}
-                    role={userProfile?.role}
                     onClose={() => setOpenedInvoice(null)}
-                    onInvoiceSaved={saved => setOpenedInvoice(prev => ({ ...prev, ...saved }))}
                 />
             )}
         </div>

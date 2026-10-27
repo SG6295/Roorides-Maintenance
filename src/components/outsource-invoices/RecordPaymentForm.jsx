@@ -7,16 +7,17 @@ import { LEDGER_OPTIONS, PAYMENT_METHODS, BANK_OPTIONS } from '../../constants/o
 import { fmtPaise } from './format'
 
 const inputClass =
-    'w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
+    'w-full text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 /**
- * Records one payment against an outsource invoice (MAIN-95).
+ * Records one payment against an outsource invoice (MAIN-95), laid out as a single
+ * entry line in the row's payment strip (MAIN-98).
  *
  * The Paid value follows Balance − TDS until finance types into it, so a payment
  * that settles the invoice needs no arithmetic. Amounts are checked in paise; the
  * database makes the binding checks and its messages are shown as they come.
  */
-export default function RecordPaymentForm({ invoiceId, balancePaise, onDone }) {
+export default function RecordPaymentForm({ invoiceId, balancePaise, onRecorded }) {
     const todayStr = todayLocal()
     const [tds, setTds] = useState('0')
     const [amount, setAmount] = useState('')
@@ -66,123 +67,95 @@ export default function RecordPaymentForm({ invoiceId, balancePaise, onDone }) {
                     utr: isCash ? null : utr.trim(),
                 },
             },
-            { onSuccess: onDone, onError: err => setError(err.message) },
+            { onSuccess: onRecorded, onError: err => setError(err.message) },
         )
     }
 
     return (
-        <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50/40 p-4">
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Paid value (₹)</label>
+        <div className="space-y-2">
+            <div className="flex flex-wrap items-end gap-2">
+                <Field label="Paid value (₹)" className="w-28">
                     <input
                         type="text"
                         inputMode="decimal"
                         value={shownAmount}
                         onChange={e => { setAmountTouched(true); setAmount(e.target.value) }}
-                        className={`${inputClass} border-gray-300`}
+                        className={inputClass}
                     />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">TDS (₹)</label>
+                </Field>
+                <Field label="TDS (₹)" className="w-24">
                     <input
                         type="text"
                         inputMode="decimal"
                         value={tds}
                         onChange={e => setTds(e.target.value)}
-                        className={`${inputClass} border-gray-300`}
+                        className={inputClass}
                     />
-                </div>
-            </div>
-
-            {offer > 0 && (
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                        type="checkbox"
-                        checked={writeOff}
-                        onChange={e => setWriteOff(e.target.checked)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    Write off {fmtPaise(offer)} as round-off
-                </label>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Payment made on</label>
+                </Field>
+                <Field label="Paid on" className="w-36">
                     <input
                         type="date"
                         value={paidOn}
                         max={todayStr}
                         onChange={e => setPaidOn(e.target.value)}
-                        className={`${inputClass} border-gray-300`}
+                        className={inputClass}
                     />
-                </div>
-                <div>
-                    <CustomSelect
-                        label="Posted ledger"
-                        value={ledger}
-                        onChange={setLedger}
-                        options={LEDGER_OPTIONS}
-                        placeholder="Select…"
-                    />
-                </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <CustomSelect
-                        label="Payment method"
-                        value={method}
-                        onChange={setMethod}
-                        options={PAYMENT_METHODS}
-                        placeholder="Select…"
-                    />
-                </div>
+                </Field>
+                <Field label="Posted ledger" className="w-48">
+                    <CustomSelect value={ledger} onChange={setLedger} options={LEDGER_OPTIONS} placeholder="Select…" compact />
+                </Field>
+                <Field label="Method" className="w-28">
+                    <CustomSelect value={method} onChange={setMethod} options={PAYMENT_METHODS} placeholder="Select…" compact />
+                </Field>
                 {!isCash && (
-                    <div>
-                        <CustomSelect
-                            label="Bank"
-                            value={bank}
-                            onChange={setBank}
-                            options={BANK_OPTIONS}
-                            placeholder="Select…"
-                        />
-                    </div>
+                    <>
+                        <Field label="Bank" className="w-44">
+                            <CustomSelect value={bank} onChange={setBank} options={BANK_OPTIONS} placeholder="Select…" compact />
+                        </Field>
+                        <Field label="UTR" className="w-40">
+                            <input
+                                type="text"
+                                value={utr}
+                                onChange={e => setUtr(e.target.value)}
+                                className={inputClass}
+                            />
+                        </Field>
+                    </>
                 )}
-            </div>
-
-            {!isCash && (
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Transaction identifier (UTR)</label>
-                    <input
-                        type="text"
-                        value={utr}
-                        onChange={e => setUtr(e.target.value)}
-                        className={`${inputClass} border-gray-300`}
-                    />
-                </div>
-            )}
-
-            {error && <p className="text-sm text-red-600">{error}</p>}
-
-            <div className="flex justify-end gap-2">
-                <button
-                    type="button"
-                    onClick={onDone}
-                    className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-white"
-                >
-                    Cancel
-                </button>
                 <button
                     type="button"
                     onClick={submit}
                     disabled={record.isPending}
-                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
-                    {record.isPending ? 'Saving…' : 'Record payment'}
+                    {record.isPending ? 'Saving…' : 'Save payment'}
                 </button>
             </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                <span className="text-gray-600">Balance {fmtPaise(balancePaise)}</span>
+                {offer > 0 && (
+                    <label className="flex items-center gap-1.5 text-gray-700">
+                        <input
+                            type="checkbox"
+                            checked={writeOff}
+                            onChange={e => setWriteOff(e.target.checked)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Write off {fmtPaise(offer)} as round-off
+                    </label>
+                )}
+                {error && <span className="text-red-600">{error}</span>}
+            </div>
+        </div>
+    )
+}
+
+function Field({ label, className, children }) {
+    return (
+        <div className={className}>
+            <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+            {children}
         </div>
     )
 }

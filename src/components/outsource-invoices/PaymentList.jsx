@@ -19,67 +19,61 @@ function PaymentRow({ payment, invoiceId, canManage }) {
         )
 
     return (
-        <li className="py-3 text-sm">
-            <div className="flex items-start justify-between gap-3">
-                <div className={isCancelled ? 'line-through text-gray-400' : 'text-gray-900'}>
-                    <p className="font-medium">
-                        {fmtDate(payment.paid_on)} · {fmtMoney(payment.amount_paid)}
-                        {Number(payment.tds_amount) > 0 && <> + TDS {fmtMoney(payment.tds_amount)}</>}
-                        {Number(payment.round_off) > 0 && <> + round-off {fmtMoney(payment.round_off)}</>}
-                    </p>
-                    <p className={`text-xs ${isCancelled ? '' : 'text-gray-600'}`}>
-                        {payment.ledger} · {payment.payment_method}
+        <li className="py-1.5 text-xs">
+            <div className="flex items-center justify-between gap-3">
+                <p className={isCancelled ? 'line-through text-gray-400' : 'text-gray-800'}>
+                    <span className="font-medium">{fmtDate(payment.paid_on)} · {fmtMoney(payment.amount_paid)}</span>
+                    {Number(payment.tds_amount) > 0 && <> + TDS {fmtMoney(payment.tds_amount)}</>}
+                    {Number(payment.round_off) > 0 && <> + round-off {fmtMoney(payment.round_off)}</>}
+                    <span className="text-gray-500">
+                        {' · '}{payment.ledger} · {payment.payment_method}
                         {payment.bank && <> · {payment.bank}</>}
                         {payment.utr && <> · UTR {payment.utr}</>}
-                    </p>
-                </div>
+                        {' · by '}{payment.recorded_by_name || '—'}
+                    </span>
+                </p>
                 {canManage && !isCancelled && !cancelling && (
                     <button
                         type="button"
                         onClick={() => setCancelling(true)}
-                        className="shrink-0 text-xs px-2 py-1 text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+                        className="shrink-0 px-2 py-0.5 text-red-600 border border-red-200 rounded-md hover:bg-red-50"
                     >
-                        Cancel payment
+                        Cancel
                     </button>
                 )}
             </div>
-            <p className="text-xs text-gray-500 mt-0.5">Recorded by {payment.recorded_by_name || '—'}</p>
             {isCancelled && (
-                <p className="text-xs text-red-700 mt-0.5">
+                <p className="text-red-700">
                     Cancelled {fmtDate(payment.cancelled_at)} by {payment.cancelled_by_name || '—'}: {payment.cancel_reason}
                 </p>
             )}
 
             {cancelling && (
-                <div className="mt-2 space-y-2 rounded-lg border border-red-100 bg-red-50/40 p-3">
-                    <label className="block text-xs font-medium text-gray-700">
-                        Why is this payment being cancelled?
-                    </label>
-                    <textarea
-                        rows={2}
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <input
+                        autoFocus
                         value={reason}
                         onChange={e => setReason(e.target.value)}
-                        placeholder="e.g. UTR failed, refund received 28 Oct"
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
+                        placeholder="Why? e.g. UTR failed, refund received 28 Oct"
+                        aria-label="Reason for cancelling"
+                        className="flex-1 min-w-[16rem] border border-gray-300 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
                     />
-                    {cancel.error && <p className="text-xs text-red-600">{cancel.error.message}</p>}
-                    <div className="flex justify-end gap-2">
-                        <button
-                            type="button"
-                            onClick={() => { setCancelling(false); setReason('') }}
-                            className="text-xs px-3 py-1.5 text-gray-600 border border-gray-300 rounded-lg hover:bg-white"
-                        >
-                            Keep payment
-                        </button>
-                        <button
-                            type="button"
-                            onClick={confirm}
-                            disabled={!reason.trim() || cancel.isPending}
-                            className="text-xs px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                        >
-                            {cancel.isPending ? 'Cancelling…' : 'Cancel payment'}
-                        </button>
-                    </div>
+                    <button
+                        type="button"
+                        onClick={confirm}
+                        disabled={!reason.trim() || cancel.isPending}
+                        className="px-2.5 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+                    >
+                        {cancel.isPending ? 'Cancelling…' : 'Cancel payment'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setCancelling(false); setReason('') }}
+                        className="px-2.5 py-1 text-gray-600 border border-gray-300 rounded-md hover:bg-white"
+                    >
+                        Keep
+                    </button>
+                    {cancel.error && <span className="w-full text-red-600">{cancel.error.message}</span>}
                 </div>
             )}
         </li>
@@ -88,7 +82,7 @@ function PaymentRow({ payment, invoiceId, canManage }) {
 
 export default function PaymentList({ payments, invoiceId, canManage }) {
     if (payments.length === 0) {
-        return <p className="text-sm text-gray-400 italic">No payments recorded yet.</p>
+        return <p className="text-xs text-gray-400 italic">No payments recorded yet.</p>
     }
     return (
         <ul className="divide-y divide-gray-100">
