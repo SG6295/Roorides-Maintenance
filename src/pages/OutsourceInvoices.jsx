@@ -5,12 +5,12 @@ import { todayLocal } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
-import InvoiceDrawer from '../components/outsource-invoices/InvoiceDrawer'
+import HistoryDrawer from '../components/outsource-invoices/HistoryDrawer'
 import PaymentStrip from '../components/outsource-invoices/PaymentStrip'
 import ColumnManager from '../components/outsource-invoices/ColumnManager'
 import InvoiceCell from '../components/outsource-invoices/InvoiceCell'
 import { COLUMNS, DEFAULT_COLUMN_KEYS } from '../components/outsource-invoices/columns'
-import { enrichInvoice } from '../components/outsource-invoices/invoiceRows'
+import { enrichInvoice, isInteractiveClick } from '../components/outsource-invoices/invoiceRows'
 import { FINANCE_ROLES } from '../components/outsource-invoices/format'
 import {
     PAID_BY_OPTIONS,
@@ -303,7 +303,7 @@ export default function OutsourceInvoices() {
                                             {c.label}
                                         </th>
                                     ))}
-                                    <th className="px-3 py-3" aria-label="View" />
+                                    <th className="px-3 py-3" aria-label="History" />
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
@@ -311,7 +311,14 @@ export default function OutsourceInvoices() {
                                     const expanded = expandedIds.has(inv.id)
                                     return (
                                         <Fragment key={inv.id}>
-                                            <tr className={expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}>
+                                            <tr
+                                                className={`cursor-pointer ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}`}
+                                                onClick={e => {
+                                                    // Selecting text to copy it should not toggle the row.
+                                                    if (isInteractiveClick(e.target) || window.getSelection()?.toString()) return
+                                                    toggleExpanded(inv.id)
+                                                }}
+                                            >
                                                 <td className="px-2 py-3">
                                                     <button
                                                         type="button"
@@ -336,7 +343,7 @@ export default function OutsourceInvoices() {
                                                         onClick={() => setOpenedInvoice(inv)}
                                                         className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
                                                     >
-                                                        View
+                                                        View history
                                                     </button>
                                                 </td>
                                             </tr>
@@ -395,9 +402,9 @@ export default function OutsourceInvoices() {
                 )}
             </div>
 
-            {/* ── Invoice drawer: statuses, payments, details ─────────────── */}
+            {/* ── History drawer ──────────────────────────────────────────── */}
             {selectedInvoice && (
-                <InvoiceDrawer
+                <HistoryDrawer
                     invoice={selectedInvoice}
                     onClose={() => setOpenedInvoice(null)}
                 />

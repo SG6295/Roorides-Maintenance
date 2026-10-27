@@ -25,3 +25,13 @@ export function enrichInvoice(inv) {
         lastLedger: latest?.ledger ?? null,
     }
 }
+
+/**
+ * Whether a click on an invoice row landed on something with its own job — a
+ * button, link, input or dropdown option — rather than on the row itself. Only a
+ * click on the row expands it (MAIN-98). Dropdown options render in a portal but
+ * their clicks still bubble through React to the row, hence the role checks.
+ */
+export function isInteractiveClick(target) {
+    return !!target?.closest?.('button, a, input, textarea, select, label, [role="option"], [role="listbox"]')
+}

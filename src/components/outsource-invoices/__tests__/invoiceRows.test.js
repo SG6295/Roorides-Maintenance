@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { enrichInvoice } from '../invoiceRows'
+import { enrichInvoice, isInteractiveClick } from '../invoiceRows'
 
 const invoice = {
     invoice_value: '4500.00',
@@ -41,5 +41,30 @@ describe('enrichInvoice', () => {
         expect(row.lastPaidOn).toBeNull()
         expect(row.lastLedger).toBeNull()
         expect(row.settlement.balance).toBe(420000)
+    })
+})
+
+describe('isInteractiveClick', () => {
+    const el = html => {
+        const root = document.createElement('div')
+        root.innerHTML = html
+        return root
+    }
+
+    it('lets a click on plain row text expand the row', () => {
+        const root = el('<span>KA-01-AB-1234</span>')
+        expect(isInteractiveClick(root.querySelector('span'))).toBe(false)
+    })
+
+    it('leaves buttons, links, inputs and their contents to do their own job', () => {
+        const root = el('<button><svg><path/></svg></button><a href="#">#2820</a><input />')
+        expect(isInteractiveClick(root.querySelector('path'))).toBe(true)
+        expect(isInteractiveClick(root.querySelector('a'))).toBe(true)
+        expect(isInteractiveClick(root.querySelector('input'))).toBe(true)
+    })
+
+    it('treats a dropdown option as interactive', () => {
+        const root = el('<div role="listbox"><div role="option"><span>Hold - on request</span></div></div>')
+        expect(isInteractiveClick(root.querySelector('span'))).toBe(true)
     })
 })

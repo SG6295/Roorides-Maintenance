@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import FinanceStatusCell from './FinanceStatusCell'
 import RemarkCell from './RemarkCell'
+import InvoiceFileLink from './InvoiceFileLink'
 import { fmtMoney, fmtPaise, fmtDate, MAINTENANCE_STATUS_COLORS } from './format'
 
 /**
@@ -20,6 +21,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr
         case 'vehicle':       return inv.job_card?.vehicle_number || '—'
         case 'supplier':      return inv.job_card?.supplier?.entity_name || '—'
         case 'invoice_no':    return <span className="font-mono">{inv.invoice_no || '—'}</span>
+        case 'invoice_link':  return <InvoiceFileLink url={inv.job_card?.invoice_url} />
         case 'activity_date': return fmtDate(inv.date_of_activity)
         case 'completed':     return fmtDate(inv.job_card?.completed_at)
         case 'submitted':     return fmtDate(inv.created_at)

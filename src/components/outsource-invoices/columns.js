@@ -10,6 +10,7 @@ export const COLUMNS = [
     { key: 'vehicle',            label: 'Vehicle',            default: true },
     { key: 'supplier',           label: 'Supplier',           default: true },
     { key: 'invoice_no',         label: 'Invoice No',         default: true },
+    { key: 'invoice_link',       label: 'Invoice Link',       default: true },
     { key: 'activity_date',      label: 'Activity Date',      default: true },
     { key: 'completed',          label: 'Completed',          default: false },
     { key: 'submitted',          label: 'Invoice Submitted',  default: false },
