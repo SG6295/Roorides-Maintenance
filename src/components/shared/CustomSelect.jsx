@@ -45,8 +45,10 @@ export default function CustomSelect({
                     )}
                     <div className="relative mt-1">
                         <ListboxButton className={classNames(
-                            "relative w-full cursor-default rounded-lg bg-white text-left border shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:text-sm",
-                            compact ? "py-1.5 pl-2 pr-8 text-xs" : "py-2.5 pl-4 pr-10",
+                            "relative w-full cursor-default rounded-lg bg-white text-left border shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
+                            // sm:text-sm used to sit in the shared classes, where it outranked
+                            // compact's text-xs on every screen wider than a phone.
+                            compact ? "py-1.5 pl-2 pr-8 text-xs" : "py-2.5 pl-4 pr-10 sm:text-sm",
                             error ? "border-red-300 focus:ring-red-500" : "border-gray-300 focus:ring-blue-500",
                             disabled ? "bg-gray-100 cursor-not-allowed opacity-75" : "bg-white"
                         )}>
@@ -54,7 +56,7 @@ export default function CustomSelect({
                                 {selectedOption ? getDisplayLabel(selectedOption) : placeholder}
                             </span>
                             <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
-                                <ChevronUpDownIcon className="h-5 w-5 text-gray-500" aria-hidden="true" />
+                                <ChevronUpDownIcon className={compact ? 'h-4 w-4 text-gray-500' : 'h-5 w-5 text-gray-500'} aria-hidden="true" />
                             </span>
                         </ListboxButton>
 
