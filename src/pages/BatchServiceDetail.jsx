@@ -50,8 +50,9 @@ export default function BatchServiceDetail() {
                 {error ? (
                     <p className="text-sm text-red-600">Could not load this invoice: {error.message}</p>
                 ) : (
-                    // Keyed so a saved edit (which refetches) starts the form from the saved values.
-                    <BatchForm key={batch?.updated_at ?? 'new'} batch={isNew ? null : batch} />
+                    // Keyed by batch, not by its updated_at: the form already holds what it just
+                    // saved, and a remount on every save would drop the "Saved." confirmation.
+                    <BatchForm key={batch?.id ?? 'new'} batch={isNew ? null : batch} />
                 )}
             </div>
         </div>
