@@ -17,6 +17,8 @@ const TABLES = [
   'scrap_writeoff', 'scrap_writeoff_items', 'scrap_excluded_parts',
   // Outsource invoice payments
   'outsource_invoices', 'outsource_invoice_payments',
+  // Multi-vehicle outsource invoices (MAIN-99)
+  'batch_services', 'batch_service_vehicles',
   // Workshop locations
   'workshop_locations', 'part_stock', 'stock_transfers', 'stock_transfer_items',
   // Stock audits

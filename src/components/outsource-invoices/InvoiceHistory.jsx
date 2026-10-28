@@ -1,6 +1,6 @@
 import { useOutsourceInvoiceHistory } from '../../hooks/useOutsourceInvoices'
 import { fmtMoney, fmtDate, fmtDateTime } from './format'
-import { foldStatusChanges } from './historyEntries'
+import { foldStatusChanges, groupBatchLines } from './historyEntries'
 
 const FIELD_LABELS = {
     maintenance_payment_status: 'Maintenance status',
@@ -31,8 +31,52 @@ function StatusChange({ change }) {
     )
 }
 
+// What one vehicle-line change on a multi-vehicle invoice did (MAIN-99).
+function lineChange(line) {
+    const vehicle = line.new_data?.vehicle_number ?? line.old_data?.vehicle_number
+    if (line.action === 'INSERT') return `Added ${vehicle} — ${fmtMoney(line.new_data?.amount)}`
+    if (line.action === 'DELETE') return `Removed ${vehicle} (was ${fmtMoney(line.old_data?.amount)})`
+    return `${vehicle}: ${fmtMoney(line.old_data?.amount)} → ${fmtMoney(line.new_data?.amount)}`
+}
+
+// A change to a multi-vehicle invoice's work details. The vendor and the file are
+// stored as an id and a link, so they are named rather than shown.
+function batchFieldChange(field, entry) {
+    if (field === 'supplier_id') return 'Vendor changed'
+    if (field === 'invoice_url') return 'Invoice file replaced'
+    const label = field === 'description' ? 'Work' : 'Site'
+    return `${label}: ${entry.old_data?.[field] ?? '—'} → ${entry.new_data?.[field] ?? '—'}`
+}
+
 function Entry({ entry }) {
     const who = entry.performed_by_name || 'Someone'
+
+    if (entry.source === 'batch_lines') {
+        return (
+            <>
+                <p className="text-sm text-gray-900">{who} changed the vehicles</p>
+                {entry.lines.map((line, i) => (
+                    <p key={i} className="text-xs text-gray-600">{lineChange(line)}</p>
+                ))}
+            </>
+        )
+    }
+
+    if (entry.source === 'batch') {
+        return entry.action === 'INSERT' ? (
+            <>
+                <p className="text-sm text-gray-900">{who} recorded the work</p>
+                <p className="text-xs text-gray-600">{entry.new_data?.description} · {entry.new_data?.site}</p>
+            </>
+        ) : (
+            <>
+                <p className="text-sm text-gray-900">{who} changed the work details</p>
+                {(entry.changed_fields ?? []).map(f => (
+                    <p key={f} className="text-xs text-gray-600">{batchFieldChange(f, entry)}</p>
+                ))}
+            </>
+        )
+    }
 
     if (entry.source === 'created') {
         return (
@@ -99,7 +143,7 @@ export default function InvoiceHistory({ invoiceId }) {
 
     return (
         <ol className="space-y-3 border-l-2 border-gray-100 pl-4">
-            {foldStatusChanges(entries).map((e, i) => (
+            {groupBatchLines(foldStatusChanges(entries)).map((e, i) => (
                 <li key={`${e.performed_at}-${e.source}-${e.action}-${i}`}>
                     <p className="text-xs text-gray-400">{fmtDateTime(e.performed_at)}</p>
                     <Entry entry={e} />

@@ -2383,6 +2383,19 @@ CREATE FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) RETURNS 
 
   union all
 
+  select a.performed_at, u.name,
+         case a.table_name when 'batch_services' then 'batch' else 'batch_vehicle' end,
+         a.action, a.changed_fields, a.old_data, a.new_data
+  from   public.outsource_invoices oi
+  join   public.audit_logs a
+         on a.table_name in ('batch_services', 'batch_service_vehicles')
+        and a.record_id = oi.batch_service_id
+  left join public.users u on u.id = a.performed_by
+  where  oi.id = p_invoice_id
+    and  auth.uid() is not null
+
+  union all
+
   select oi.created_at, u.name, 'created', 'INSERT', null, null,
          jsonb_build_object('maintenance_payment_status', coalesce(
              (select a.old_data->>'maintenance_payment_status'
@@ -2461,9 +2474,9 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
         COUNT(*) FILTER (WHERE oi.maintenance_payment_status = 'Hold') AS pending_approval_count
 
     FROM  outsource_invoices     oi
-    JOIN  job_cards              jc ON jc.id = oi.job_card_id
+    LEFT JOIN job_cards          jc ON jc.id = oi.job_card_id
     LEFT JOIN paid_sums          ps ON ps.outsource_invoice_id = oi.id
-    WHERE jc.status = 'Completed'
+    WHERE (oi.batch_service_id IS NOT NULL OR jc.status = 'Completed')
       AND (p_maintenance_payment_status IS NULL OR oi.maintenance_payment_status = ANY(p_maintenance_payment_status))
       AND (p_finance_payment_status     IS NULL OR oi.finance_payment_status     = ANY(p_finance_payment_status))
       AND (p_paid_by                    IS NULL OR oi.paid_by                    = ANY(p_paid_by))
@@ -2637,6 +2650,83 @@ $$;
 
 
 ALTER FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) OWNER TO postgres;
+
+--
+-- Name: log_batch_service_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.log_batch_service_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_fields  text[];
+    v_new     jsonb;
+    v_old     jsonb;
+    v_changed text[];
+    v_batch   uuid;
+BEGIN
+    IF TG_TABLE_NAME = 'batch_services' THEN
+        v_fields := array['description', 'supplier_id', 'site', 'invoice_url'];
+        v_batch  := coalesce(NEW.id, OLD.id);
+    ELSE
+        v_fields := array['vehicle_number', 'amount'];
+        v_batch  := coalesce(NEW.batch_service_id, OLD.batch_service_id);
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        v_new := to_jsonb(NEW);
+        INSERT INTO public.audit_logs (table_name, record_id, action, new_data, performed_by)
+        VALUES (TG_TABLE_NAME, v_batch, 'INSERT',
+                (SELECT jsonb_object_agg(f, v_new->f) FROM unnest(v_fields) f),
+                auth.uid());
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        v_old := to_jsonb(OLD);
+        INSERT INTO public.audit_logs (table_name, record_id, action, old_data, performed_by)
+        VALUES (TG_TABLE_NAME, v_batch, 'DELETE',
+                (SELECT jsonb_object_agg(f, v_old->f) FROM unnest(v_fields) f),
+                auth.uid());
+        RETURN OLD;
+    END IF;
+
+    v_new := to_jsonb(NEW);
+    v_old := to_jsonb(OLD);
+    SELECT array_agg(f) INTO v_changed
+    FROM   unnest(v_fields) f
+    WHERE  v_new->f IS DISTINCT FROM v_old->f;
+
+    IF v_changed IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    -- A line update logs its vehicle too, so the entry says which bus changed.
+    IF TG_TABLE_NAME = 'batch_service_vehicles' AND NOT 'vehicle_number' = any (v_changed) THEN
+        v_old := v_old || jsonb_build_object('vehicle_number', OLD.vehicle_number);
+        v_new := v_new || jsonb_build_object('vehicle_number', NEW.vehicle_number);
+        INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
+        VALUES (TG_TABLE_NAME, v_batch, 'UPDATE',
+                (SELECT jsonb_object_agg(f, v_old->f) FROM unnest(v_changed || 'vehicle_number'::text) f),
+                (SELECT jsonb_object_agg(f, v_new->f) FROM unnest(v_changed || 'vehicle_number'::text) f),
+                v_changed,
+                auth.uid());
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
+    VALUES (TG_TABLE_NAME, v_batch, 'UPDATE',
+            (SELECT jsonb_object_agg(f, v_old->f) FROM unnest(v_changed) f),
+            (SELECT jsonb_object_agg(f, v_new->f) FROM unnest(v_changed) f),
+            v_changed,
+            auth.uid());
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.log_batch_service_change() OWNER TO postgres;
 
 --
 -- Name: log_outsource_invoice_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3422,6 +3512,168 @@ $$;
 
 
 ALTER FUNCTION public.reverse_part_inventory_on_delete() OWNER TO postgres;
+
+--
+-- Name: save_batch_service_invoice(uuid, jsonb, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_batch_id   uuid := p_batch_id;
+    v_invoice_id uuid;
+    v_approved   numeric;
+    v_lines_sum  numeric;
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'UNAUTHORIZED',
+            'error_message', 'Only maintenance executives can save a multi-vehicle invoice.'
+        )::text;
+    END IF;
+
+    IF nullif(btrim(p_batch->>'description'), '') IS NULL
+       OR nullif(p_batch->>'supplier_id', '') IS NULL
+       OR nullif(btrim(p_batch->>'site'), '') IS NULL
+       OR nullif(btrim(p_batch->>'invoice_url'), '') IS NULL
+       OR nullif(btrim(p_invoice->>'invoice_no'), '') IS NULL
+       OR nullif(p_invoice->>'date_of_activity', '') IS NULL
+       OR nullif(p_invoice->>'paid_by', '') IS NULL
+       OR nullif(p_invoice->>'invoice_value', '') IS NULL
+       OR nullif(p_invoice->>'approved_amount', '') IS NULL
+       OR nullif(p_invoice->>'advance_amount', '') IS NULL
+       OR nullif(p_invoice->>'maintenance_payment_status', '') IS NULL
+       OR nullif(p_invoice->>'payby_date', '') IS NULL
+    THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_DETAILS_INCOMPLETE',
+            'error_message', 'Fill in the work details, every invoice field and the invoice file.'
+        )::text;
+    END IF;
+
+    IF jsonb_array_length(coalesce(p_lines, '[]'::jsonb)) = 0 THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'NO_VEHICLES',
+            'error_message', 'Add at least one vehicle.'
+        )::text;
+    END IF;
+
+    IF (SELECT count(*) <> count(DISTINCT l->>'vehicle_number')
+        FROM jsonb_array_elements(p_lines) l) THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'DUPLICATE_VEHICLE',
+            'error_message', 'A vehicle appears on more than one line.'
+        )::text;
+    END IF;
+
+    v_approved := (p_invoice->>'approved_amount')::numeric;
+    SELECT sum((l->>'amount')::numeric) INTO v_lines_sum FROM jsonb_array_elements(p_lines) l;
+
+    IF v_lines_sum IS DISTINCT FROM v_approved THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'LINES_MISMATCH',
+            'error_message', format('Vehicle amounts add up to %s but the approved amount is %s.',
+                                    v_lines_sum, v_approved)
+        )::text;
+    END IF;
+
+    IF v_batch_id IS NULL THEN
+        INSERT INTO public.batch_services (description, supplier_id, site, invoice_url)
+        VALUES (
+            btrim(p_batch->>'description'),
+            (p_batch->>'supplier_id')::uuid,
+            btrim(p_batch->>'site'),
+            btrim(p_batch->>'invoice_url')
+        )
+        RETURNING id INTO v_batch_id;
+
+        INSERT INTO public.outsource_invoices
+            (batch_service_id, date_of_activity, invoice_no, paid_by, invoice_value,
+             approved_amount, advance_amount, maintenance_payment_status, payby_date, created_by)
+        VALUES (
+            v_batch_id,
+            (p_invoice->>'date_of_activity')::date,
+            btrim(p_invoice->>'invoice_no'),
+            p_invoice->>'paid_by',
+            (p_invoice->>'invoice_value')::numeric,
+            v_approved,
+            (p_invoice->>'advance_amount')::numeric,
+            p_invoice->>'maintenance_payment_status',
+            (p_invoice->>'payby_date')::date,
+            auth.uid()
+        );
+    ELSE
+        -- Lock the invoice first so a payment cannot be recorded between the check and
+        -- the edit; record_outsource_invoice_payment takes the same lock.
+        SELECT id INTO v_invoice_id
+        FROM   public.outsource_invoices
+        WHERE  batch_service_id = v_batch_id
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'BATCH_NOT_FOUND',
+                'error_message', 'Multi-vehicle invoice not found.'
+            )::text;
+        END IF;
+
+        IF EXISTS (SELECT 1 FROM public.outsource_invoice_payments
+                   WHERE outsource_invoice_id = v_invoice_id AND status = 'Active') THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'BATCH_LOCKED',
+                'error_message', 'Finance has recorded a payment against this invoice, so it can no longer be edited.'
+            )::text;
+        END IF;
+
+        UPDATE public.batch_services
+        SET    description = btrim(p_batch->>'description'),
+               supplier_id = (p_batch->>'supplier_id')::uuid,
+               site        = btrim(p_batch->>'site'),
+               invoice_url = btrim(p_batch->>'invoice_url')
+        WHERE  id = v_batch_id;
+
+        UPDATE public.outsource_invoices
+        SET    date_of_activity           = (p_invoice->>'date_of_activity')::date,
+               invoice_no                 = btrim(p_invoice->>'invoice_no'),
+               paid_by                    = p_invoice->>'paid_by',
+               invoice_value              = (p_invoice->>'invoice_value')::numeric,
+               approved_amount            = v_approved,
+               advance_amount             = (p_invoice->>'advance_amount')::numeric,
+               maintenance_payment_status = p_invoice->>'maintenance_payment_status',
+               payby_date                 = (p_invoice->>'payby_date')::date
+        WHERE  id = v_invoice_id;
+
+        DELETE FROM public.batch_service_vehicles
+        WHERE  batch_service_id = v_batch_id
+          AND  vehicle_number NOT IN (
+                   SELECT l->>'vehicle_number' FROM jsonb_array_elements(p_lines) l
+               );
+
+        UPDATE public.batch_service_vehicles v
+        SET    amount = (l->>'amount')::numeric
+        FROM   jsonb_array_elements(p_lines) l
+        WHERE  v.batch_service_id = v_batch_id
+          AND  v.vehicle_number   = l->>'vehicle_number'
+          AND  v.amount IS DISTINCT FROM (l->>'amount')::numeric;
+    END IF;
+
+    INSERT INTO public.batch_service_vehicles (batch_service_id, vehicle_number, amount)
+    SELECT v_batch_id, l->>'vehicle_number', (l->>'amount')::numeric
+    FROM   jsonb_array_elements(p_lines) l
+    WHERE  NOT EXISTS (
+               SELECT 1 FROM public.batch_service_vehicles v
+               WHERE  v.batch_service_id = v_batch_id
+                 AND  v.vehicle_number   = l->>'vehicle_number'
+           );
+
+    RETURN v_batch_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) OWNER TO postgres;
 
 --
 -- Name: save_purchase_invoice(uuid, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
@@ -7776,6 +8028,41 @@ CREATE TABLE public.audit_logs (
 ALTER TABLE public.audit_logs OWNER TO postgres;
 
 --
+-- Name: batch_service_vehicles; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.batch_service_vehicles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    batch_service_id uuid NOT NULL,
+    vehicle_number text NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT batch_service_vehicles_amount_check CHECK ((amount > (0)::numeric))
+);
+
+
+ALTER TABLE public.batch_service_vehicles OWNER TO postgres;
+
+--
+-- Name: batch_services; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.batch_services (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    description text NOT NULL,
+    supplier_id uuid NOT NULL,
+    site text NOT NULL,
+    invoice_url text NOT NULL,
+    created_by uuid DEFAULT auth.uid(),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT batch_services_description_check CHECK ((btrim(description) <> ''::text))
+);
+
+
+ALTER TABLE public.batch_services OWNER TO postgres;
+
+--
 -- Name: finance_entries; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -8052,8 +8339,10 @@ CREATE TABLE public.outsource_invoices (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     finance_payment_status text DEFAULT 'Due'::text NOT NULL,
     finance_remark text,
+    batch_service_id uuid,
     CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['Due'::text, 'Partly Paid'::text, 'Paid'::text, 'Hold - on request'::text, 'Hold - further details required'::text, 'Reject - duplicate'::text, 'Reject - incorrect/insufficient details'::text, 'Reject - other'::text]))),
     CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
+    CONSTRAINT outsource_invoices_one_owner_check CHECK (((job_card_id IS NULL) <> (batch_service_id IS NULL))),
     CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavanan'::text, 'NVS Maintenance account'::text])))
 );
 
@@ -9397,6 +9686,30 @@ ALTER TABLE ONLY public.audit_logs
 
 
 --
+-- Name: batch_service_vehicles batch_service_vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.batch_service_vehicles
+    ADD CONSTRAINT batch_service_vehicles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: batch_service_vehicles batch_service_vehicles_vehicle_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.batch_service_vehicles
+    ADD CONSTRAINT batch_service_vehicles_vehicle_key UNIQUE (batch_service_id, vehicle_number);
+
+
+--
+-- Name: batch_services batch_services_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.batch_services
+    ADD CONSTRAINT batch_services_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: finance_entries finance_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -9450,6 +9763,14 @@ ALTER TABLE ONLY public.job_cards
 
 ALTER TABLE ONLY public.outsource_invoice_payments
     ADD CONSTRAINT outsource_invoice_payments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outsource_invoices outsource_invoices_batch_service_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.outsource_invoices
+    ADD CONSTRAINT outsource_invoices_batch_service_id_key UNIQUE (batch_service_id);
 
 
 --
@@ -10418,6 +10739,13 @@ CREATE INDEX audit_logs_table_record_idx ON public.audit_logs USING btree (table
 
 
 --
+-- Name: batch_service_vehicles_vehicle_number_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX batch_service_vehicles_vehicle_number_idx ON public.batch_service_vehicles USING btree (vehicle_number);
+
+
+--
 -- Name: idx_finance_job_sheet_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -10908,6 +11236,27 @@ CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes 
 
 
 --
+-- Name: batch_service_vehicles batch_service_vehicles_audit; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER batch_service_vehicles_audit AFTER INSERT OR DELETE OR UPDATE ON public.batch_service_vehicles FOR EACH ROW EXECUTE FUNCTION public.log_batch_service_change();
+
+
+--
+-- Name: batch_services batch_services_audit; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER batch_services_audit AFTER INSERT OR UPDATE ON public.batch_services FOR EACH ROW EXECUTE FUNCTION public.log_batch_service_change();
+
+
+--
+-- Name: batch_services batch_services_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER batch_services_set_updated_at BEFORE UPDATE ON public.batch_services FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: outsource_invoice_payments outsource_invoice_payments_audit; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -11346,6 +11695,22 @@ ALTER TABLE ONLY public.audit_logs
 
 
 --
+-- Name: batch_service_vehicles batch_service_vehicles_batch_service_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.batch_service_vehicles
+    ADD CONSTRAINT batch_service_vehicles_batch_service_id_fkey FOREIGN KEY (batch_service_id) REFERENCES public.batch_services(id);
+
+
+--
+-- Name: batch_services batch_services_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.batch_services
+    ADD CONSTRAINT batch_services_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id);
+
+
+--
 -- Name: finance_entries finance_entries_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -11455,6 +11820,14 @@ ALTER TABLE ONLY public.outsource_invoice_payments
 
 ALTER TABLE ONLY public.outsource_invoice_payments
     ADD CONSTRAINT outsource_invoice_payments_recorded_by_fkey FOREIGN KEY (recorded_by) REFERENCES public.users(id);
+
+
+--
+-- Name: outsource_invoices outsource_invoices_batch_service_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.outsource_invoices
+    ADD CONSTRAINT outsource_invoices_batch_service_id_fkey FOREIGN KEY (batch_service_id) REFERENCES public.batch_services(id);
 
 
 --
@@ -12172,6 +12545,20 @@ CREATE POLICY "Exec and finance update vehicles" ON public.vehicles FOR UPDATE U
 
 
 --
+-- Name: batch_service_vehicles Exec and finance view batch service vehicles; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view batch service vehicles" ON public.batch_service_vehicles FOR SELECT USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
+-- Name: batch_services Exec and finance view batch services; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view batch services" ON public.batch_services FOR SELECT USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
 -- Name: purchase_invoice_items Exec and finance view invoice items; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -12779,6 +13166,18 @@ CREATE POLICY "View issue parts" ON public.issue_parts FOR SELECT USING ((EXISTS
 --
 
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: batch_service_vehicles; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.batch_service_vehicles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: batch_services; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.batch_services ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: finance_entries; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -14056,6 +14455,15 @@ GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid
 
 
 --
+-- Name: FUNCTION log_batch_service_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.log_batch_service_change() TO anon;
+GRANT ALL ON FUNCTION public.log_batch_service_change() TO authenticated;
+GRANT ALL ON FUNCTION public.log_batch_service_change() TO service_role;
+
+
+--
 -- Name: FUNCTION log_outsource_invoice_change(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -14160,6 +14568,15 @@ GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO anon;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO authenticated;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
+
+
+--
+-- Name: FUNCTION save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) TO anon;
+GRANT ALL ON FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) TO service_role;
 
 
 --
@@ -14762,6 +15179,24 @@ GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 GRANT ALL ON TABLE public.audit_logs TO anon;
 GRANT ALL ON TABLE public.audit_logs TO authenticated;
 GRANT ALL ON TABLE public.audit_logs TO service_role;
+
+
+--
+-- Name: TABLE batch_service_vehicles; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.batch_service_vehicles TO anon;
+GRANT ALL ON TABLE public.batch_service_vehicles TO authenticated;
+GRANT ALL ON TABLE public.batch_service_vehicles TO service_role;
+
+
+--
+-- Name: TABLE batch_services; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.batch_services TO anon;
+GRANT ALL ON TABLE public.batch_services TO authenticated;
+GRANT ALL ON TABLE public.batch_services TO service_role;
 
 
 --

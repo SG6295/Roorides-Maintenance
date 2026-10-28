@@ -58,6 +58,79 @@ export type Database = {
           },
         ]
       }
+      batch_service_vehicles: {
+        Row: {
+          amount: number
+          batch_service_id: string
+          created_at: string
+          id: string
+          vehicle_number: string
+        }
+        Insert: {
+          amount: number
+          batch_service_id: string
+          created_at?: string
+          id?: string
+          vehicle_number: string
+        }
+        Update: {
+          amount?: number
+          batch_service_id?: string
+          created_at?: string
+          id?: string
+          vehicle_number?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "batch_service_vehicles_batch_service_id_fkey"
+            columns: ["batch_service_id"]
+            isOneToOne: false
+            referencedRelation: "batch_services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      batch_services: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          invoice_url: string
+          site: string
+          supplier_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description: string
+          id?: string
+          invoice_url: string
+          site: string
+          supplier_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          invoice_url?: string
+          site?: string
+          supplier_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "batch_services_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       finance_entries: {
         Row: {
           accounting_status: string | null
@@ -492,6 +565,7 @@ export type Database = {
         Row: {
           advance_amount: number | null
           approved_amount: number | null
+          batch_service_id: string | null
           created_at: string
           created_by: string | null
           date_of_activity: string | null
@@ -509,6 +583,7 @@ export type Database = {
         Insert: {
           advance_amount?: number | null
           approved_amount?: number | null
+          batch_service_id?: string | null
           created_at?: string
           created_by?: string | null
           date_of_activity?: string | null
@@ -526,6 +601,7 @@ export type Database = {
         Update: {
           advance_amount?: number | null
           approved_amount?: number | null
+          batch_service_id?: string | null
           created_at?: string
           created_by?: string | null
           date_of_activity?: string | null
@@ -541,6 +617,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "outsource_invoices_batch_service_id_fkey"
+            columns: ["batch_service_id"]
+            isOneToOne: true
+            referencedRelation: "batch_services"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "outsource_invoices_created_by_fkey"
             columns: ["created_by"]
@@ -2277,6 +2360,15 @@ export type Database = {
       record_scrap_writeoff: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
+      }
+      save_batch_service_invoice: {
+        Args: {
+          p_batch: Json
+          p_batch_id: string
+          p_invoice: Json
+          p_lines: Json
+        }
+        Returns: string
       }
       save_purchase_invoice: {
         Args: { p_invoice: Json; p_invoice_id: string; p_items: Json }

@@ -63,7 +63,11 @@ const PAGE_SIZE = 50
  *
  * Returns { invoices: [], totalCount: number | null }.
  * totalCount is null when page=null (search mode — client handles count).
- * Only job cards with status='Completed' are returned (enforced via inner join).
+ * Returns invoices of completed job cards and every multi-vehicle invoice (MAIN-99) —
+ * a batch is complete by construction, its invoice being mandatory at save. The
+ * job_card embed is filtered to Completed, so it comes back null for an unfinished card,
+ * and the or() keeps a row only if it is a batch or its job card survived that filter.
+ * (PostgREST cannot put job_card.status itself inside an or().)
  */
 export function useOutsourceInvoices(filters = {}) {
     return useQuery({
@@ -75,14 +79,20 @@ export function useOutsourceInvoices(filters = {}) {
                 .from('outsource_invoices')
                 .select(
                     `*,
-                    job_card:job_cards!job_card_id!inner(
+                    job_card:job_cards!job_card_id(
                         id, job_card_number, vehicle_number, status, completed_at, invoice_url,
                         supplier:suppliers!supplier_id(id, entity_name)
+                    ),
+                    batch_service:batch_services!batch_service_id(
+                        id, description, invoice_url,
+                        supplier:suppliers!supplier_id(id, entity_name),
+                        vehicles:batch_service_vehicles(vehicle_number, amount)
                     ),
                     payments:outsource_invoice_payments(id, amount_paid, tds_amount, round_off, paid_on, ledger, status, created_at)`,
                     isPaginated ? { count: 'exact' } : undefined,
                 )
-                .eq('job_cards.status', 'Completed')
+                .eq('job_card.status', 'Completed')
+                .or('batch_service_id.not.is.null,job_card.not.is.null')
                 .order('payby_date', { ascending: true })
 
             if (filters.maintenancePaymentStatus?.length)

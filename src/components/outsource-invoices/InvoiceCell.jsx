@@ -10,20 +10,31 @@ import { fmtMoney, fmtPaise, fmtDate, MAINTENANCE_STATUS_COLORS } from './format
  */
 export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr }) {
     const s = inv.settlement
+    // A multi-vehicle invoice (MAIN-99) has a batch in place of a job card.
+    const batch = inv.batch_service
+    const owner = batch ?? inv.job_card
 
     switch (columnKey) {
         case 'job_card':
-            return (
+            return batch ? (
+                <Link to={`/batch-invoices/${batch.id}`} className="text-blue-600 hover:underline font-medium" title={batch.description}>
+                    Batch
+                </Link>
+            ) : (
                 <Link to={`/job-cards/${inv.job_card?.job_card_number}`} className="text-blue-600 hover:underline font-medium">
                     #{inv.job_card?.job_card_number}
                 </Link>
             )
-        case 'vehicle':       return inv.job_card?.vehicle_number || '—'
-        case 'supplier':      return inv.job_card?.supplier?.entity_name || '—'
+        case 'vehicle':
+            return batch
+                ? `${batch.vehicles?.length ?? 0} vehicle${batch.vehicles?.length === 1 ? '' : 's'}`
+                : inv.job_card?.vehicle_number || '—'
+        case 'supplier':      return owner?.supplier?.entity_name || '—'
         case 'invoice_no':    return <span className="font-mono">{inv.invoice_no || '—'}</span>
-        case 'invoice_link':  return <InvoiceFileLink url={inv.job_card?.invoice_url} />
+        case 'invoice_link':  return <InvoiceFileLink url={owner?.invoice_url} />
         case 'activity_date': return fmtDate(inv.date_of_activity)
-        case 'completed':     return fmtDate(inv.job_card?.completed_at)
+        // A batch is complete when it is saved.
+        case 'completed':     return fmtDate(batch ? inv.created_at : inv.job_card?.completed_at)
         case 'submitted':     return fmtDate(inv.created_at)
         case 'paid_by':       return inv.paid_by || '—'
         case 'invoice_value': return fmtMoney(inv.invoice_value)

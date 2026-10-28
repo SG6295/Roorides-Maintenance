@@ -2,7 +2,7 @@ import { useInvoicePayments } from '../../hooks/useOutsourceInvoices'
 import { invoiceSettlement } from '../../utils/settlement'
 import RecordPaymentForm from './RecordPaymentForm'
 import PaymentList from './PaymentList'
-import { fmtPaise } from './format'
+import { fmtMoney, fmtPaise } from './format'
 
 /**
  * The strip under an expanded invoice row (MAIN-98): its payments as a small table,
@@ -15,6 +15,7 @@ export default function PaymentStrip({ invoice, canManage }) {
 
     return (
         <div className="rounded-lg border border-blue-200 border-l-4 border-l-blue-500 bg-blue-50 px-4 py-3 space-y-3">
+            {invoice.batch_service && <BatchVehicles batch={invoice.batch_service} />}
             <div>
                 <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide mb-1.5">
                     Payments — Invoice #{invoice.invoice_no || '—'}
@@ -45,6 +46,26 @@ export default function PaymentStrip({ invoice, canManage }) {
                     {balance < 0 ? `Overpaid by ${fmtPaise(-balance)}` : 'Fully settled'}
                 </p>
             )}
+        </div>
+    )
+}
+
+/** What a multi-vehicle invoice (MAIN-99) covered: its work and each vehicle's share. */
+function BatchVehicles({ batch }) {
+    return (
+        <div className="pb-3 border-b border-blue-200">
+            <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide mb-1.5">
+                {batch.description} — {batch.vehicles?.length ?? 0} vehicles
+            </h4>
+            <div className="flex flex-wrap gap-1.5">
+                {[...(batch.vehicles ?? [])]
+                    .sort((a, b) => a.vehicle_number.localeCompare(b.vehicle_number))
+                    .map(v => (
+                        <span key={v.vehicle_number} className="bg-white border border-blue-200 rounded px-2 py-0.5 text-xs text-gray-700">
+                            <span className="font-mono">{v.vehicle_number}</span> {fmtMoney(v.amount)}
+                        </span>
+                    ))}
+            </div>
         </div>
     )
 }

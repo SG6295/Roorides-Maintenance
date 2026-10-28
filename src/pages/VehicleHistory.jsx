@@ -4,6 +4,8 @@ import { formatDate } from '../utils/datetime'
 import Navigation from '../components/shared/Navigation'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useVehicleHistory, useJobCardParts } from '../hooks/useInventory'
+import { useVehicleBatchServices } from '../hooks/useBatchServices'
+import { fmtMoney } from '../components/outsource-invoices/format'
 import { ChevronDownIcon, ChevronUpIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
 
 const STATUS_BADGE = {
@@ -107,10 +109,47 @@ function JobCardRow({ jc }) {
     )
 }
 
+/**
+ * This vehicle's share of a multi-vehicle invoice (MAIN-99): outsourced work done to
+ * several vehicles on one invoice, with no job card. Laid out in the job card columns.
+ */
+function BatchRow({ line }) {
+    const b = line.batch
+    const date = b.invoice?.date_of_activity ?? b.created_at
+    return (
+        <tr className="hover:bg-gray-50">
+            <td className="px-4 py-3 text-xs">
+                <Link to={`/batch-invoices/${b.id}`} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium hover:underline">
+                    Batch
+                </Link>
+            </td>
+            <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{formatDate(date)}</td>
+            <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{formatDate(date)}</td>
+            <td className="px-4 py-3 text-gray-700 text-sm">{b.supplier?.entity_name || '—'}</td>
+            <td colSpan={2} className="px-4 py-3 text-gray-700 text-sm">
+                {b.description}
+                <span className="text-gray-400 text-xs"> · Inv {b.invoice?.invoice_no || '—'} · </span>
+                <span className="font-medium">{fmtMoney(line.amount)}</span>
+            </td>
+            <td className="px-4 py-3">
+                <span className={`px-2 py-0.5 text-xs rounded-full ${STATUS_BADGE.Completed}`}>Completed</span>
+            </td>
+            <td className="px-4 py-3" />
+        </tr>
+    )
+}
+
 export default function VehicleHistory() {
     const { vehicleNumber } = useParams()
     const decoded = decodeURIComponent(vehicleNumber)
     const { data: jobCards = [], isLoading } = useVehicleHistory(decoded)
+    const { data: batchLines = [], isLoading: batchesLoading } = useVehicleBatchServices(decoded)
+
+    // Job cards and multi-vehicle invoices in one list, newest first.
+    const rows = [
+        ...jobCards.map(jc => ({ kind: 'job_card', date: jc.created_at, jc })),
+        ...batchLines.map(line => ({ kind: 'batch', date: line.batch.invoice?.date_of_activity ?? line.batch.created_at, line })),
+    ].sort((a, b) => (a.date < b.date ? 1 : -1))
 
     const totalJobCards = jobCards.length
     const openJobCards = jobCards.filter(jc => jc.status === 'Open').length
@@ -137,7 +176,7 @@ export default function VehicleHistory() {
                     </div>
                 </div>
 
-                {isLoading ? (
+                {isLoading || batchesLoading ? (
                     <TicketListSkeleton />
                 ) : (
                     <>
@@ -156,7 +195,7 @@ export default function VehicleHistory() {
                         </div>
 
                         {/* Job cards table */}
-                        {jobCards.length === 0 ? (
+                        {rows.length === 0 ? (
                             <div className="bg-white rounded-lg shadow-sm p-12 text-center text-gray-400 text-sm">
                                 No job cards found for this vehicle.
                             </div>
@@ -176,13 +215,14 @@ export default function VehicleHistory() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-50">
-                                        {jobCards.map(jc => (
-                                            <JobCardRow key={jc.id} jc={jc} />
-                                        ))}
+                                        {rows.map(r => r.kind === 'job_card'
+                                            ? <JobCardRow key={r.jc.id} jc={r.jc} />
+                                            : <BatchRow key={r.line.id} line={r.line} />)}
                                     </tbody>
                                 </table>
                                 <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t">
                                     {totalJobCards} job card{totalJobCards !== 1 ? 's' : ''}
+                                    {batchLines.length > 0 && ` · ${batchLines.length} multi-vehicle invoice${batchLines.length !== 1 ? 's' : ''}`}
                                 </div>
                             </div>
                         )}

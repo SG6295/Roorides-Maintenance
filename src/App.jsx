@@ -19,6 +19,7 @@ import MechanicDetail from './pages/MechanicDetail'
 import Vehicles from './pages/Vehicles'
 
 import OutsourceInvoices from './pages/OutsourceInvoices'
+import BatchServiceDetail from './pages/BatchServiceDetail'
 import Suppliers from './pages/Suppliers'
 import SupplierDetail from './pages/SupplierDetail'
 import SupplierRegistration from './pages/SupplierRegistration'
@@ -248,6 +249,14 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance', 'supervisor']}>
                   <OutsourceInvoices />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/batch-invoices/:id"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <BatchServiceDetail />
                 </ProtectedRoute>
               }
             />
