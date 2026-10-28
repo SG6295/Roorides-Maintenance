@@ -64,6 +64,7 @@ export type Database = {
           batch_service_id: string
           created_at: string
           id: string
+          site: string | null
           vehicle_number: string
         }
         Insert: {
@@ -71,6 +72,7 @@ export type Database = {
           batch_service_id: string
           created_at?: string
           id?: string
+          site?: string | null
           vehicle_number: string
         }
         Update: {
@@ -78,6 +80,7 @@ export type Database = {
           batch_service_id?: string
           created_at?: string
           id?: string
+          site?: string | null
           vehicle_number?: string
         }
         Relationships: [
@@ -97,7 +100,6 @@ export type Database = {
           description: string
           id: string
           invoice_url: string
-          site: string
           supplier_id: string
           updated_at: string
         }
@@ -107,7 +109,6 @@ export type Database = {
           description: string
           id?: string
           invoice_url: string
-          site: string
           supplier_id: string
           updated_at?: string
         }
@@ -117,7 +118,6 @@ export type Database = {
           description?: string
           id?: string
           invoice_url?: string
-          site?: string
           supplier_id?: string
           updated_at?: string
         }

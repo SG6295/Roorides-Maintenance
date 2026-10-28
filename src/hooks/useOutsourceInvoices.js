@@ -86,7 +86,7 @@ export function useOutsourceInvoices(filters = {}) {
                     batch_service:batch_services!batch_service_id(
                         id, description, invoice_url,
                         supplier:suppliers!supplier_id(id, entity_name),
-                        vehicles:batch_service_vehicles(vehicle_number, amount)
+                        vehicles:batch_service_vehicles(vehicle_number, site, amount)
                     ),
                     payments:outsource_invoice_payments(id, amount_paid, tds_amount, round_off, paid_on, ledger, status, created_at)`,
                     isPaginated ? { count: 'exact' } : undefined,

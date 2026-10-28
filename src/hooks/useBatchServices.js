@@ -16,7 +16,7 @@ export function useBatchService(id) {
                 .from('batch_services')
                 .select(`*,
                     supplier:suppliers!supplier_id(id, entity_name),
-                    vehicles:batch_service_vehicles(id, vehicle_number, amount),
+                    vehicles:batch_service_vehicles(id, vehicle_number, site, amount),
                     invoice:outsource_invoices(*, payments:outsource_invoice_payments(id, status))`)
                 .eq('id', id)
                 .order('vehicle_number', { referencedTable: 'batch_service_vehicles' })
@@ -33,9 +33,9 @@ export function useBatchService(id) {
  * does — lines add up to the approved amount, no repeated vehicle, nothing changes once
  * a payment exists — and its refusal comes back as a readable message.
  *
- * batch:   { description, supplier_id, site, invoice_url }
+ * batch:   { description, supplier_id, invoice_url }
  * invoice: outsource_invoices columns (invoiceFormToRow)
- * lines:   [{ vehicle_number, amount }]
+ * lines:   [{ vehicle_number, site, amount }]
  */
 export function useSaveBatchService() {
     const queryClient = useQueryClient()
@@ -71,7 +71,7 @@ export function useVehicleBatchServices(vehicleNumber) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('batch_service_vehicles')
-                .select(`id, amount,
+                .select(`id, site, amount,
                     batch:batch_services!batch_service_id(
                         id, description, created_at,
                         supplier:suppliers!supplier_id(entity_name),

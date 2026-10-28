@@ -2667,10 +2667,10 @@ DECLARE
     v_batch   uuid;
 BEGIN
     IF TG_TABLE_NAME = 'batch_services' THEN
-        v_fields := array['description', 'supplier_id', 'site', 'invoice_url'];
+        v_fields := array['description', 'supplier_id', 'invoice_url'];
         v_batch  := coalesce(NEW.id, OLD.id);
     ELSE
-        v_fields := array['vehicle_number', 'amount'];
+        v_fields := array['vehicle_number', 'site', 'amount'];
         v_batch  := coalesce(NEW.batch_service_id, OLD.batch_service_id);
     END IF;
 
@@ -2704,8 +2704,6 @@ BEGIN
 
     -- A line update logs its vehicle too, so the entry says which bus changed.
     IF TG_TABLE_NAME = 'batch_service_vehicles' AND NOT 'vehicle_number' = any (v_changed) THEN
-        v_old := v_old || jsonb_build_object('vehicle_number', OLD.vehicle_number);
-        v_new := v_new || jsonb_build_object('vehicle_number', NEW.vehicle_number);
         INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
         VALUES (TG_TABLE_NAME, v_batch, 'UPDATE',
                 (SELECT jsonb_object_agg(f, v_old->f) FROM unnest(v_changed || 'vehicle_number'::text) f),
@@ -3536,7 +3534,6 @@ BEGIN
 
     IF nullif(btrim(p_batch->>'description'), '') IS NULL
        OR nullif(p_batch->>'supplier_id', '') IS NULL
-       OR nullif(btrim(p_batch->>'site'), '') IS NULL
        OR nullif(btrim(p_batch->>'invoice_url'), '') IS NULL
        OR nullif(btrim(p_invoice->>'invoice_no'), '') IS NULL
        OR nullif(p_invoice->>'date_of_activity', '') IS NULL
@@ -3568,6 +3565,14 @@ BEGIN
         )::text;
     END IF;
 
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_lines) l
+               WHERE nullif(btrim(l->>'site'), '') IS NULL) THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'LINE_SITE_REQUIRED',
+            'error_message', 'Choose a site for every vehicle.'
+        )::text;
+    END IF;
+
     v_approved := (p_invoice->>'approved_amount')::numeric;
     SELECT sum((l->>'amount')::numeric) INTO v_lines_sum FROM jsonb_array_elements(p_lines) l;
 
@@ -3580,11 +3585,10 @@ BEGIN
     END IF;
 
     IF v_batch_id IS NULL THEN
-        INSERT INTO public.batch_services (description, supplier_id, site, invoice_url)
+        INSERT INTO public.batch_services (description, supplier_id, invoice_url)
         VALUES (
             btrim(p_batch->>'description'),
             (p_batch->>'supplier_id')::uuid,
-            btrim(p_batch->>'site'),
             btrim(p_batch->>'invoice_url')
         )
         RETURNING id INTO v_batch_id;
@@ -3630,7 +3634,6 @@ BEGIN
         UPDATE public.batch_services
         SET    description = btrim(p_batch->>'description'),
                supplier_id = (p_batch->>'supplier_id')::uuid,
-               site        = btrim(p_batch->>'site'),
                invoice_url = btrim(p_batch->>'invoice_url')
         WHERE  id = v_batch_id;
 
@@ -3652,15 +3655,17 @@ BEGIN
                );
 
         UPDATE public.batch_service_vehicles v
-        SET    amount = (l->>'amount')::numeric
+        SET    amount = (l->>'amount')::numeric,
+               site   = btrim(l->>'site')
         FROM   jsonb_array_elements(p_lines) l
         WHERE  v.batch_service_id = v_batch_id
           AND  v.vehicle_number   = l->>'vehicle_number'
-          AND  v.amount IS DISTINCT FROM (l->>'amount')::numeric;
+          AND  (v.amount IS DISTINCT FROM (l->>'amount')::numeric
+                OR v.site IS DISTINCT FROM btrim(l->>'site'));
     END IF;
 
-    INSERT INTO public.batch_service_vehicles (batch_service_id, vehicle_number, amount)
-    SELECT v_batch_id, l->>'vehicle_number', (l->>'amount')::numeric
+    INSERT INTO public.batch_service_vehicles (batch_service_id, vehicle_number, site, amount)
+    SELECT v_batch_id, l->>'vehicle_number', btrim(l->>'site'), (l->>'amount')::numeric
     FROM   jsonb_array_elements(p_lines) l
     WHERE  NOT EXISTS (
                SELECT 1 FROM public.batch_service_vehicles v
@@ -8037,7 +8042,9 @@ CREATE TABLE public.batch_service_vehicles (
     vehicle_number text NOT NULL,
     amount numeric(12,2) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT batch_service_vehicles_amount_check CHECK ((amount > (0)::numeric))
+    site text,
+    CONSTRAINT batch_service_vehicles_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT batch_service_vehicles_site_check CHECK ((btrim(site) <> ''::text))
 );
 
 
@@ -8051,7 +8058,6 @@ CREATE TABLE public.batch_services (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     description text NOT NULL,
     supplier_id uuid NOT NULL,
-    site text NOT NULL,
     invoice_url text NOT NULL,
     created_by uuid DEFAULT auth.uid(),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
