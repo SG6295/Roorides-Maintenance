@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronRightIcon } from '@heroicons/react/20/solid'
 import { todayLocal } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
@@ -26,6 +26,7 @@ export default function OutsourceInvoices() {
     const [visibleKeys, setVisibleKeys] = useState(DEFAULT_COLUMN_KEYS)
     const [expandedIds, setExpandedIds] = useState(() => new Set())
     const canEdit = FINANCE_ROLES.includes(userProfile?.role)
+    const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
     const visibleColumns = COLUMNS.filter(c => visibleKeys.includes(c.key))
 
     // The payment strip is pinned to the visible part of the table: it is as wide as
@@ -92,7 +93,8 @@ export default function OutsourceInvoices() {
             return (
                 inv.invoice_no?.toLowerCase().includes(q) ||
                 String(inv.job_card?.job_card_number ?? '').toLowerCase().includes(q) ||
-                inv.job_card?.vehicle_number?.toLowerCase().includes(q)
+                inv.job_card?.vehicle_number?.toLowerCase().includes(q) ||
+                inv.batch_service?.vehicles?.some(v => v.vehicle_number.toLowerCase().includes(q))
             )
         })
 
@@ -164,7 +166,18 @@ export default function OutsourceInvoices() {
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
 
-                <h1 className="text-2xl font-bold text-gray-900">Outsource Invoices</h1>
+                <div className="flex items-center justify-between gap-4">
+                    <h1 className="text-2xl font-bold text-gray-900">Outsource Invoices</h1>
+                    {/* One invoice for work on many vehicles, without a job card each (MAIN-99). */}
+                    {canCreateBatch && (
+                        <Link
+                            to="/batch-invoices/new"
+                            className="text-sm px-3 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 whitespace-nowrap"
+                        >
+                            + Multi-vehicle invoice
+                        </Link>
+                    )}
+                </div>
 
                 {/* ── Summary tiles (from RPC) ──────────────────────────────── */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

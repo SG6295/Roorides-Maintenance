@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { formatAs } from '../utils/datetime'
 import { useJobCards } from '../hooks/useJobCards'
+import { useAuth } from '../hooks/useAuth'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
@@ -15,6 +16,8 @@ import {
 
 export default function JobCards() {
     const navigate = useNavigate()
+    const { userProfile } = useAuth()
+    const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
     const [filters, setFilters] = useState({
         status: '',
         site: '',
@@ -47,6 +50,15 @@ export default function JobCards() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <h1 className="text-2xl font-bold text-gray-900">Job Cards</h1>
+                    {/* One invoice for work on many vehicles, without a job card each (MAIN-99). */}
+                    {canCreateBatch && (
+                        <Link
+                            to="/batch-invoices/new"
+                            className="text-sm px-3 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 whitespace-nowrap"
+                        >
+                            + Multi-vehicle invoice
+                        </Link>
+                    )}
                 </div>
 
                 {/* Filters */}

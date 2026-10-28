@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Fragment } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { formatAs, formatDate, todayLocal } from '../utils/datetime'
+import { formatAs, todayLocal } from '../utils/datetime'
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from '@headlessui/react'
 import { useAuth } from '../hooks/useAuth'
 import { useJobCard, useUpdateJobCard } from '../hooks/useJobCards'
@@ -14,7 +14,13 @@ import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
 import CustomSelect from '../components/shared/CustomSelect'
-import { PAID_BY_OPTIONS, MAINTENANCE_PAYMENT_STATUSES } from '../constants/outsourceInvoices'
+import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../components/outsource-invoices/InvoiceDetailsFields'
+import {
+    EMPTY_INVOICE_FORM,
+    invoiceFormFromRow,
+    invoiceFormToRow,
+    validateInvoiceForm,
+} from '../components/outsource-invoices/invoiceForm'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
 import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
 import ScrapDecisionModal from '../components/job-cards/ScrapDecisionModal'
@@ -37,27 +43,6 @@ const JOB_LOCATION_OPTIONS = [
 ]
 
 const QUICK_ADD_SENTINEL = '__quick_add__'
-
-function validateInvoiceForm(f, today) {
-    const errors = {}
-    if (!f.dateOfActivity) errors.dateOfActivity = 'Required'
-    else if (f.dateOfActivity > today) errors.dateOfActivity = 'Cannot be in the future'
-    if (!f.invoiceNo.trim()) errors.invoiceNo = 'Required'
-    else if (f.invoiceNo.trim().length > 50) errors.invoiceNo = 'Max 50 characters'
-    if (!f.paidBy) errors.paidBy = 'Required'
-    const iv = parseFloat(f.invoiceValue)
-    if (f.invoiceValue === '' || isNaN(iv) || iv <= 0) errors.invoiceValue = 'Must be > 0'
-    const aa = parseFloat(f.approvedAmount)
-    if (f.approvedAmount === '' || isNaN(aa) || aa < 0) errors.approvedAmount = 'Must be ≥ 0'
-    else if (!isNaN(iv) && aa > iv) errors.approvedAmount = 'Must be ≤ invoice value'
-    const adv = parseFloat(f.advanceAmount)
-    if (f.advanceAmount === '' || isNaN(adv) || adv < 0) errors.advanceAmount = 'Must be ≥ 0'
-    else if (!isNaN(aa) && adv > aa) errors.advanceAmount = 'Must be ≤ approved amount'
-    if (!f.maintenancePaymentStatus) errors.maintenancePaymentStatus = 'Required'
-    if (!f.paybyDate) errors.paybyDate = 'Required'
-    else if (f.dateOfActivity && f.paybyDate < f.dateOfActivity) errors.paybyDate = 'Must be ≥ date of activity'
-    return errors
-}
 
 export default function JobCardDetail() {
     const { id } = useParams()
@@ -99,16 +84,7 @@ export default function JobCardDetail() {
     const [invoicePendingMode, setInvoicePendingMode] = useState(false)
     const [scrapRaceError, setScrapRaceError] = useState(null)
 
-    const [invoiceForm, setInvoiceForm] = useState({
-        dateOfActivity: '',
-        invoiceNo: '',
-        paidBy: '',
-        invoiceValue: '',
-        approvedAmount: '',
-        advanceAmount: '',
-        maintenancePaymentStatus: '',
-        paybyDate: '',
-    })
+    const [invoiceForm, setInvoiceForm] = useState(EMPTY_INVOICE_FORM)
     const [showInvoiceErrors, setShowInvoiceErrors] = useState(false)
 
     // Local, not UTC: toISOString() still says yesterday until 05:30 IST, which caps the
@@ -147,16 +123,7 @@ export default function JobCardDetail() {
 
     useEffect(() => {
         if (!existingInvoice) return
-        setInvoiceForm({
-            dateOfActivity: existingInvoice.date_of_activity || '',
-            invoiceNo: existingInvoice.invoice_no || '',
-            paidBy: existingInvoice.paid_by || '',
-            invoiceValue: existingInvoice.invoice_value != null ? String(existingInvoice.invoice_value) : '',
-            approvedAmount: existingInvoice.approved_amount != null ? String(existingInvoice.approved_amount) : '',
-            advanceAmount: existingInvoice.advance_amount != null ? String(existingInvoice.advance_amount) : '',
-            maintenancePaymentStatus: existingInvoice.maintenance_payment_status || '',
-            paybyDate: existingInvoice.payby_date || '',
-        })
+        setInvoiceForm(invoiceFormFromRow(existingInvoice))
     }, [existingInvoice])
 
     if (isLoading) return <TicketDetailSkeleton />
@@ -266,16 +233,7 @@ export default function JobCardDetail() {
                 await upsertInvoice.mutateAsync({
                     jobCardId: jobCard.id,
                     userId: userProfile?.id,
-                    data: {
-                        date_of_activity: invoiceForm.dateOfActivity,
-                        invoice_no: invoiceForm.invoiceNo.trim(),
-                        paid_by: invoiceForm.paidBy,
-                        invoice_value: parseFloat(invoiceForm.invoiceValue),
-                        approved_amount: parseFloat(invoiceForm.approvedAmount),
-                        advance_amount: parseFloat(invoiceForm.advanceAmount),
-                        maintenance_payment_status: invoiceForm.maintenancePaymentStatus,
-                        payby_date: invoiceForm.paybyDate,
-                    },
+                    data: invoiceFormToRow(invoiceForm),
                 })
             } catch (e) {
                 alert('Failed to save invoice details: ' + e.message)
@@ -300,16 +258,7 @@ export default function JobCardDetail() {
             await upsertInvoice.mutateAsync({
                 jobCardId: jobCard.id,
                 userId: userProfile?.id,
-                data: {
-                    date_of_activity: invoiceForm.dateOfActivity,
-                    invoice_no:       invoiceForm.invoiceNo.trim(),
-                    paid_by:          invoiceForm.paidBy,
-                    invoice_value:    parseFloat(invoiceForm.invoiceValue),
-                    approved_amount:  parseFloat(invoiceForm.approvedAmount),
-                    advance_amount:   parseFloat(invoiceForm.advanceAmount),
-                    maintenance_payment_status: invoiceForm.maintenancePaymentStatus,
-                    payby_date:       invoiceForm.paybyDate,
-                },
+                data: invoiceFormToRow(invoiceForm),
             })
         } catch (e) {
             alert('Failed to save invoice details: ' + e.message)
@@ -367,11 +316,6 @@ export default function JobCardDetail() {
     const hasSupplier = isOutsource ? !!jobCard.supplier_id : true
     // A cancelled payment (failed transaction, refunded) does not lock the card.
     const hasPayments = (existingInvoice?.payments ?? []).some(p => p.status !== 'Cancelled')
-    const payableAmount = (() => {
-        const aa = parseFloat(invoiceForm.approvedAmount)
-        const adv = parseFloat(invoiceForm.advanceAmount)
-        return !isNaN(aa) && !isNaN(adv) ? aa - adv : null
-    })()
     const canComplete = isAllDone && !needsInvoiceFile && invoiceValid && hasSupplier
     const canCloseInvoicePending = isOutsource && isAllDone && hasSupplier
     const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
@@ -813,199 +757,22 @@ export default function JobCardDetail() {
 
                         {invoiceReadOnly ? (
                             /* Read-only display after full closure, or for non-execs */
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                                {[
-                                    ['Date of Activity', existingInvoice?.date_of_activity
-                                        ? formatDate(existingInvoice.date_of_activity)
-                                        : '—'],
-                                    ['Invoice No', existingInvoice?.invoice_no || '—'],
-                                    ['Paid By', existingInvoice?.paid_by || '—'],
-                                    ['Payment status reported by maintenance', existingInvoice?.maintenance_payment_status || '—'],
-                                    ['Payment status reported by finance', existingInvoice?.finance_payment_status || '—'],
-                                    ['Invoice Value', existingInvoice?.invoice_value != null
-                                        ? `₹${Number(existingInvoice.invoice_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                                        : '—'],
-                                    ['Approved Amount', existingInvoice?.approved_amount != null
-                                        ? `₹${Number(existingInvoice.approved_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                                        : '—'],
-                                    ['Advance Amount', existingInvoice?.advance_amount != null
-                                        ? `₹${Number(existingInvoice.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                                        : '—'],
-                                    ['Payable Amount', (existingInvoice?.approved_amount != null && existingInvoice?.advance_amount != null)
-                                        ? `₹${Number(existingInvoice.approved_amount - existingInvoice.advance_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                                        : '—'],
-                                    ['Pay By Date', existingInvoice?.payby_date
-                                        ? formatDate(existingInvoice.payby_date)
-                                        : '—'],
-                                ].map(([label, value]) => (
-                                    <div key={label}>
-                                        <p className="text-xs text-gray-500 mb-0.5">{label}</p>
-                                        <p className="font-medium text-gray-900">{value}</p>
-                                    </div>
-                                ))}
-                            </div>
+                            <InvoiceDetailsReadOnly invoice={existingInvoice} />
                         ) : (
                             /* Editable form — shown while Open or Completed - Invoice Pending */
-                            <div className="space-y-3">
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Date of Activity <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            type="date"
-                                            value={invoiceForm.dateOfActivity}
-                                            max={todayStr}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, dateOfActivity: e.target.value }))}
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.dateOfActivity ? 'border-red-400' : 'border-gray-300'}`}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.dateOfActivity && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.dateOfActivity}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Invoice No <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={invoiceForm.invoiceNo}
-                                            maxLength={50}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, invoiceNo: e.target.value }))}
-                                            placeholder="e.g. INV-2024-001"
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.invoiceNo ? 'border-red-400' : 'border-gray-300'}`}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.invoiceNo && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.invoiceNo}</p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Paid By <span className="text-red-500">*</span>
-                                        </label>
-                                        <CustomSelect
-                                            value={invoiceForm.paidBy}
-                                            onChange={paidBy => setInvoiceForm(f => ({ ...f, paidBy }))}
-                                            options={PAID_BY_OPTIONS}
-                                            placeholder="Select…"
-                                            error={showInvoiceErrors && invoiceErrs.paidBy}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.paidBy && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paidBy}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Payment status reported by maintenance <span className="text-red-500">*</span>
-                                        </label>
-                                        <CustomSelect
-                                            value={invoiceForm.maintenancePaymentStatus}
-                                            onChange={maintenancePaymentStatus => setInvoiceForm(f => ({ ...f, maintenancePaymentStatus }))}
-                                            options={MAINTENANCE_PAYMENT_STATUSES}
-                                            placeholder="Select…"
-                                            error={showInvoiceErrors && invoiceErrs.maintenancePaymentStatus}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.maintenancePaymentStatus && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.maintenancePaymentStatus}</p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Invoice Value (₹) <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min="0.01"
-                                            step="0.01"
-                                            value={invoiceForm.invoiceValue}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, invoiceValue: e.target.value }))}
-                                            placeholder="0.00"
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.invoiceValue ? 'border-red-400' : 'border-gray-300'}`}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.invoiceValue && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.invoiceValue}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Approved Amount (₹) <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            value={invoiceForm.approvedAmount}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, approvedAmount: e.target.value }))}
-                                            placeholder="0.00"
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.approvedAmount ? 'border-red-400' : 'border-gray-300'}`}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.approvedAmount && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.approvedAmount}</p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Advance Amount (₹) <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            value={invoiceForm.advanceAmount}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, advanceAmount: e.target.value }))}
-                                            placeholder="0.00"
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.advanceAmount ? 'border-red-400' : 'border-gray-300'}`}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.advanceAmount && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.advanceAmount}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Payable Amount (₹)
-                                        </label>
-                                        <div className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 font-medium text-gray-900 min-h-[38px]">
-                                            {payableAmount !== null
-                                                ? `₹${payableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                                                : <span className="text-gray-400 font-normal">Auto-computed</span>
-                                            }
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Pay By Date <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            type="date"
-                                            value={invoiceForm.paybyDate}
-                                            min={invoiceForm.dateOfActivity || undefined}
-                                            onChange={e => setInvoiceForm(f => ({ ...f, paybyDate: e.target.value }))}
-                                            className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showInvoiceErrors && invoiceErrs.paybyDate ? 'border-red-400' : 'border-gray-300'}`}
-                                        />
-                                        {showInvoiceErrors && invoiceErrs.paybyDate && (
-                                            <p className="text-xs text-red-600 mt-0.5">{invoiceErrs.paybyDate}</p>
-                                        )}
-                                    </div>
-                                </div>
-
+                            <InvoiceDetailsFields
+                                form={invoiceForm}
+                                setForm={setInvoiceForm}
+                                errors={invoiceErrs}
+                                showErrors={showInvoiceErrors}
+                                todayStr={todayStr}
+                            >
                                 {showInvoiceErrors && !jobCard.supplier_id && (
                                     <p className="text-xs text-red-600">
                                         A supplier must be assigned before completing this job card.
                                     </p>
                                 )}
-                            </div>
+                            </InvoiceDetailsFields>
                         )}
                     </div>
                 )}
