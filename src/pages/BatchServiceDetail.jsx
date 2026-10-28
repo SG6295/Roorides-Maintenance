@@ -10,6 +10,7 @@ import { useVehicles } from '../hooks/useVehicles'
 import Navigation from '../components/shared/Navigation'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
+import CustomSelect from '../components/shared/CustomSelect'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
 import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../components/outsource-invoices/InvoiceDetailsFields'
 import {
@@ -70,11 +71,10 @@ function BatchForm({ batch }) {
 
     const [description, setDescription] = useState(batch?.description ?? '')
     const [supplierId, setSupplierId] = useState(batch?.supplier_id ?? '')
-    const [site, setSite] = useState(batch?.site ?? '')
     const [invoiceUrl, setInvoiceUrl] = useState(batch?.invoice_url ?? '')
     const [invoiceForm, setInvoiceForm] = useState(batch?.invoice ? invoiceFormFromRow(batch.invoice) : EMPTY_INVOICE_FORM)
     const [lines, setLines] = useState(
-        () => (batch?.vehicles ?? []).map(v => ({ vehicle_number: v.vehicle_number, amount: String(v.amount) })),
+        () => (batch?.vehicles ?? []).map(v => ({ vehicle_number: v.vehicle_number, site: v.site ?? '', amount: String(v.amount) })),
     )
     const [showErrors, setShowErrors] = useState(false)
     const [saveError, setSaveError] = useState(null)
@@ -90,11 +90,30 @@ function BatchForm({ batch }) {
     const errors = {
         ...(description.trim() ? {} : { description: 'Required' }),
         ...(supplierId ? {} : { supplier: 'Required' }),
-        ...(site ? {} : { site: 'Required' }),
         ...(invoiceUrl ? {} : { invoiceUrl: 'Upload the invoice' }),
     }
+    const linesWithoutSite = lines.filter(l => !l.site).length
     const linesAddUp = lines.length > 0 && summary.invalid.length === 0 && summary.difference === 0
-    const isValid = Object.keys(invoiceErrs).length === 0 && Object.keys(errors).length === 0 && linesAddUp
+    const linesReady = linesAddUp && linesWithoutSite === 0
+    const isValid = Object.keys(invoiceErrs).length === 0 && Object.keys(errors).length === 0 && linesReady
+
+    // Each vehicle's current site links. A line's site is fixed when its vehicle has one
+    // site and a choice among them when it has several; the database only requires that
+    // one is set, since these links are rebuilt nightly and a bus can move after the work.
+    const vehicleSites = new Map(vehicles.map(v => [v.registration_number, (v.vehicle_sites ?? []).map(s => s.site_name)]))
+    const siteByName = new Map(sites.map(s => [s.name, s]))
+    const siteOptionsFor = line => {
+        const own = vehicleSites.get(line.vehicle_number) ?? []
+        // A vehicle with no site links can be at any active site.
+        const names = own.length > 0 ? own : sites.map(s => s.name)
+        const options = names.map(name => ({ value: name, label: siteByName.has(name) ? formatSiteLabel(siteByName.get(name)) : name }))
+        // A saved site the bus has since moved away from stays selectable, so the line
+        // still shows it and the batch can be saved without re-choosing.
+        if (line.site && !names.includes(line.site)) {
+            options.unshift({ value: line.site, label: `${line.site} (no longer linked to this vehicle)` })
+        }
+        return options
+    }
 
     const usedVehicles = new Set(lines.map(l => l.vehicle_number))
     const vehicleOptions = vehicles
@@ -107,9 +126,11 @@ function BatchForm({ batch }) {
 
     const addVehicle = vehicleNumber => {
         if (!vehicleNumber || usedVehicles.has(vehicleNumber)) return
-        setLines(prev => [...prev, { vehicle_number: vehicleNumber, amount: '' }])
+        const own = vehicleSites.get(vehicleNumber) ?? []
+        setLines(prev => [...prev, { vehicle_number: vehicleNumber, site: own.length === 1 ? own[0] : '', amount: '' }])
     }
     const setLineAmount = (i, amount) => setLines(prev => prev.map((l, j) => (j === i ? { ...l, amount } : l)))
+    const setLineSite = (i, site) => setLines(prev => prev.map((l, j) => (j === i ? { ...l, site } : l)))
     const removeLine = i => setLines(prev => prev.filter((_, j) => j !== i))
     const evenSplit = splitEvenly(invoiceForm.approvedAmount, lines.length)
     const applyEvenSplit = () => setLines(prev => prev.map((l, i) => ({ ...l, amount: evenSplit[i] })))
@@ -124,9 +145,9 @@ function BatchForm({ batch }) {
         try {
             const savedId = await save.mutateAsync({
                 batchId: batch?.id,
-                batch: { description: description.trim(), supplier_id: supplierId, site, invoice_url: invoiceUrl },
+                batch: { description: description.trim(), supplier_id: supplierId, invoice_url: invoiceUrl },
                 invoice: invoiceFormToRow(invoiceForm),
-                lines: lines.map(l => ({ vehicle_number: l.vehicle_number, amount: l.amount })),
+                lines: lines.map(l => ({ vehicle_number: l.vehicle_number, site: l.site, amount: l.amount })),
             })
             if (batch) setSaved(true)
             else navigate(`/batch-invoices/${savedId}`, { replace: true })
@@ -161,35 +182,19 @@ function BatchForm({ batch }) {
                     />
                     {showErrors && errors.description && <p className="text-xs text-red-600 mt-0.5">{errors.description}</p>}
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Vendor <span className="text-red-500">*</span>
-                        </label>
-                        <SearchableSelect
-                            value={supplierId}
-                            onChange={setSupplierId}
-                            options={suppliers.map(s => ({ value: s.id, label: s.entity_name }))}
-                            showAllOnFocus
-                            placeholder="Search suppliers..."
-                            error={showErrors && errors.supplier}
-                        />
-                        {showErrors && errors.supplier && <p className="text-xs text-red-600 mt-0.5">{errors.supplier}</p>}
-                    </div>
-                    <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Site <span className="text-red-500">*</span>
-                        </label>
-                        <SearchableSelect
-                            value={site}
-                            onChange={setSite}
-                            options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
-                            showAllOnFocus
-                            placeholder="Search sites..."
-                            error={showErrors && errors.site}
-                        />
-                        {showErrors && errors.site && <p className="text-xs text-red-600 mt-0.5">{errors.site}</p>}
-                    </div>
+                <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Vendor <span className="text-red-500">*</span>
+                    </label>
+                    <SearchableSelect
+                        value={supplierId}
+                        onChange={setSupplierId}
+                        options={suppliers.map(s => ({ value: s.id, label: s.entity_name }))}
+                        showAllOnFocus
+                        placeholder="Search suppliers..."
+                        error={showErrors && errors.supplier}
+                    />
+                    {showErrors && errors.supplier && <p className="text-xs text-red-600 mt-0.5">{errors.supplier}</p>}
                 </div>
             </section>
 
@@ -224,14 +229,33 @@ function BatchForm({ batch }) {
                         <thead>
                             <tr className="text-xs text-gray-500 uppercase tracking-wide">
                                 <th className="text-left font-medium py-1">Vehicle</th>
-                                <th className="text-right font-medium py-1 w-40">Amount (₹)</th>
+                                <th className="text-left font-medium py-1 px-2">Site</th>
+                                <th className="text-right font-medium py-1 w-36">Amount (₹)</th>
                                 <th className="w-8" />
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {lines.map((line, i) => (
                                 <tr key={line.vehicle_number}>
-                                    <td className="py-1.5 font-mono text-gray-800">{line.vehicle_number}</td>
+                                    <td className="py-1.5 font-mono text-gray-800 whitespace-nowrap">{line.vehicle_number}</td>
+                                    <td className="py-1.5 px-2 min-w-[12rem]">
+                                        {(vehicleSites.get(line.vehicle_number)?.length ?? 0) === 1
+                                            && (!line.site || line.site === vehicleSites.get(line.vehicle_number)[0]) ? (
+                                            // The vehicle's only site, filled in and not editable.
+                                            <span className="text-sm text-gray-700" title="This vehicle is linked to one site">
+                                                {line.site || vehicleSites.get(line.vehicle_number)[0]}
+                                            </span>
+                                        ) : (
+                                            <CustomSelect
+                                                value={line.site}
+                                                onChange={site => setLineSite(i, site)}
+                                                options={siteOptionsFor(line)}
+                                                placeholder="Select site…"
+                                                error={showErrors && !line.site}
+                                                compact
+                                            />
+                                        )}
+                                    </td>
                                     <td className="py-1.5">
                                         <input
                                             type="number"
@@ -260,7 +284,7 @@ function BatchForm({ batch }) {
                     </table>
                 )}
 
-                {lines.length > 0 && <LinesTotal summary={summary} />}
+                {lines.length > 0 && <LinesTotal summary={summary} linesWithoutSite={linesWithoutSite} />}
             </section>
 
             {/* ── Invoice details + file ───────────────────────────────────── */}
@@ -293,25 +317,32 @@ function BatchForm({ batch }) {
             <button
                 type="button"
                 onClick={handleSave}
-                disabled={save.isPending || !linesAddUp}
+                disabled={save.isPending || !linesReady}
                 className="w-full py-3 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
                 {save.isPending ? 'Saving…' : batch ? 'Save changes' : 'Save multi-vehicle invoice'}
             </button>
-            {!linesAddUp && (
+            {!linesReady && (
                 <p className="text-xs text-gray-500 text-center -mt-2">
-                    Save is enabled once every vehicle has an amount and they add up to the approved amount.
+                    Save is enabled once every vehicle has a site and an amount, and the amounts add up to the approved amount.
                 </p>
             )}
         </>
     )
 }
 
-/** Running total of the vehicle lines against the approved amount. */
-function LinesTotal({ summary }) {
-    const { total, approved, difference } = summary
+/**
+ * Running total of the vehicle lines against the approved amount. Missing amounts and
+ * sites are named before the total is judged: a blank line counts for nothing, so the
+ * others can add up while a vehicle still has no amount.
+ */
+function LinesTotal({ summary, linesWithoutSite }) {
+    const { total, approved, difference, invalid } = summary
+    const plural = n => `${n} vehicle${n === 1 ? '' : 's'}`
     let status
-    if (!Number.isFinite(approved) || approved === 0) status = <span className="text-gray-500">Enter the approved amount</span>
+    if (invalid.length > 0) status = <span className="text-amber-700">{plural(invalid.length)} need{invalid.length === 1 ? 's' : ''} an amount</span>
+    else if (linesWithoutSite > 0) status = <span className="text-amber-700">{plural(linesWithoutSite)} need{linesWithoutSite === 1 ? 's' : ''} a site</span>
+    else if (!Number.isFinite(approved) || approved === 0) status = <span className="text-gray-500">Enter the approved amount</span>
     else if (difference === 0) status = <span className="text-green-700">✓ Adds up to the approved amount</span>
     else if (difference > 0) status = <span className="text-amber-700">{fmtPaise(difference)} left to allocate</span>
     else status = <span className="text-red-600">{fmtPaise(-difference)} over the approved amount</span>
@@ -343,7 +374,6 @@ function BatchReadOnly({ batch, lockedByPayment }) {
                     {[
                         ['What was done', batch.description],
                         ['Vendor', batch.supplier?.entity_name || '—'],
-                        ['Site', batch.site],
                     ].map(([label, value]) => (
                         <div key={label}>
                             <p className="text-xs text-gray-500 mb-0.5">{label}</p>
@@ -366,6 +396,7 @@ function BatchReadOnly({ batch, lockedByPayment }) {
                                         {v.vehicle_number}
                                     </Link>
                                 </td>
+                                <td className="py-1.5 px-2 text-gray-700">{v.site || '—'}</td>
                                 <td className="py-1.5 text-right text-gray-800">{fmtMoney(v.amount)}</td>
                             </tr>
                         ))}

@@ -32,11 +32,17 @@ function StatusChange({ change }) {
 }
 
 // What one vehicle-line change on a multi-vehicle invoice did (MAIN-99).
+// Lines saved before sites moved onto them carry no site, hence the guards.
 function lineChange(line) {
     const vehicle = line.new_data?.vehicle_number ?? line.old_data?.vehicle_number
-    if (line.action === 'INSERT') return `Added ${vehicle} — ${fmtMoney(line.new_data?.amount)}`
-    if (line.action === 'DELETE') return `Removed ${vehicle} (was ${fmtMoney(line.old_data?.amount)})`
-    return `${vehicle}: ${fmtMoney(line.old_data?.amount)} → ${fmtMoney(line.new_data?.amount)}`
+    const at = data => (data?.site ? ` (${data.site})` : '')
+    if (line.action === 'INSERT') return `Added ${vehicle}${at(line.new_data)} — ${fmtMoney(line.new_data?.amount)}`
+    if (line.action === 'DELETE') return `Removed ${vehicle}${at(line.old_data)} (was ${fmtMoney(line.old_data?.amount)})`
+    return (line.changed_fields ?? ['amount'])
+        .map(f => (f === 'site'
+            ? `${vehicle} site: ${line.old_data?.site ?? '—'} → ${line.new_data?.site ?? '—'}`
+            : `${vehicle}: ${fmtMoney(line.old_data?.amount)} → ${fmtMoney(line.new_data?.amount)}`))
+        .join('; ')
 }
 
 // A change to a multi-vehicle invoice's work details. The vendor and the file are
@@ -44,6 +50,7 @@ function lineChange(line) {
 function batchFieldChange(field, entry) {
     if (field === 'supplier_id') return 'Vendor changed'
     if (field === 'invoice_url') return 'Invoice file replaced'
+    // 'site' appears only in entries from before sites moved onto the vehicle lines.
     const label = field === 'description' ? 'Work' : 'Site'
     return `${label}: ${entry.old_data?.[field] ?? '—'} → ${entry.new_data?.[field] ?? '—'}`
 }
@@ -66,7 +73,9 @@ function Entry({ entry }) {
         return entry.action === 'INSERT' ? (
             <>
                 <p className="text-sm text-gray-900">{who} recorded the work</p>
-                <p className="text-xs text-gray-600">{entry.new_data?.description} · {entry.new_data?.site}</p>
+                <p className="text-xs text-gray-600">
+                    {entry.new_data?.description}{entry.new_data?.site && ` · ${entry.new_data.site}`}
+                </p>
             </>
         ) : (
             <>

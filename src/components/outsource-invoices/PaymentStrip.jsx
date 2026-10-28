@@ -62,7 +62,8 @@ function BatchVehicles({ batch }) {
                     .sort((a, b) => a.vehicle_number.localeCompare(b.vehicle_number))
                     .map(v => (
                         <span key={v.vehicle_number} className="bg-white border border-blue-200 rounded px-2 py-0.5 text-xs text-gray-700">
-                            <span className="font-mono">{v.vehicle_number}</span> {fmtMoney(v.amount)}
+                            <span className="font-mono">{v.vehicle_number}</span>
+                            {v.site && <span className="text-gray-500"> · {v.site}</span>} {fmtMoney(v.amount)}
                         </span>
                     ))}
             </div>

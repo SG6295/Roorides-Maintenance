@@ -128,7 +128,7 @@ function BatchRow({ line }) {
             <td className="px-4 py-3 text-gray-700 text-sm">{b.supplier?.entity_name || '—'}</td>
             <td colSpan={2} className="px-4 py-3 text-gray-700 text-sm">
                 {b.description}
-                <span className="text-gray-400 text-xs"> · Inv {b.invoice?.invoice_no || '—'} · </span>
+                <span className="text-gray-400 text-xs">{line.site && ` · ${line.site}`} · Inv {b.invoice?.invoice_no || '—'} · </span>
                 <span className="font-medium">{fmtMoney(line.amount)}</span>
             </td>
             <td className="px-4 py-3">
