@@ -11,6 +11,7 @@ import { getDriveThumbnailUrl } from '../lib/googleDrive'
 import Navigation from '../components/shared/Navigation'
 import SLATimer from '../components/shared/SLATimer'
 import { toDate } from '../utils/datetime'
+import { labourTechnicianNames } from '../utils/labour'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import PhotoUpload from '../components/tickets/PhotoUpload'
 import TicketTimeline from '../components/tickets/TicketTimeline'
@@ -724,7 +725,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                           >
                             <div className="flex items-center justify-between gap-4">
                               <span className="font-medium">#{jc.job_card_number}</span>
-                              <span className="text-gray-400 text-xs shrink-0">{jc.mechanic?.name ?? 'Unassigned'}</span>
+                              <span className="text-gray-400 text-xs shrink-0">{labourTechnicianNames(jc.issues).join(', ') || 'No labour yet'}</span>
                             </div>
                           </button>
                         )}

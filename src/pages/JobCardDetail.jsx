@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Fragment } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
 import { formatAs, todayLocal } from '../utils/datetime'
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from '@headlessui/react'
 import { useAuth } from '../hooks/useAuth'
 import { useJobCard, useUpdateJobCard } from '../hooks/useJobCards'
+import { useTechnicians } from '../hooks/useIssueLabour'
+import { totalLabourHours, formatHours } from '../utils/labour'
 import { useOutsourceInvoice, useUpsertOutsourceInvoice, useFinalizeOutsourceInvoice } from '../hooks/useOutsourceInvoices'
 import { useApprovedSuppliers } from '../hooks/useSuppliers'
 import { usePartStock } from '../hooks/useInventory'
@@ -25,7 +26,6 @@ import {
 import DocumentUpload from '../components/suppliers/DocumentUpload'
 import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
 import ScrapDecisionModal from '../components/job-cards/ScrapDecisionModal'
-import { supabase } from '../lib/supabase'
 import IssueWorkCard from '../components/job-cards/IssueWorkCard'
 import LinkedBatchInvoices from '../components/job-cards/LinkedBatchInvoices'
 import { useJobCardBatchLines } from '../hooks/useBatchServices'
@@ -66,10 +66,7 @@ export default function JobCardDetail() {
     const { data: linkedBatchLines = [], isLoading: batchLinesLoading } = useJobCardBatchLines(jobCard?.id, { enabled: isExec })
     const isMechanic = ['mechanic', 'electrician', 'maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
-    // Mechanic assignment
     const [remarks, setRemarks] = useState('')
-    const [assigningMechanic, setAssigningMechanic] = useState(false)
-    const [selectedMechanicId, setSelectedMechanicId] = useState('')
 
     // Odometer editing
     const [editingOdometer, setEditingOdometer] = useState(false)
@@ -101,26 +98,13 @@ export default function JobCardDetail() {
     useEffect(() => {
         if (jobCard) {
             setRemarks(jobCard.remarks || '')
-            setSelectedMechanicId(jobCard.assigned_mechanic_id || '')
             setSelectedSupplierId(jobCard.supplier_id || '')
             setOdometerValue(jobCard.odometer != null ? String(jobCard.odometer) : '')
         }
     }, [jobCard])
 
-    const { data: mechanics = [] } = useQuery({
-        queryKey: ['mechanics'],
-        queryFn: async () => {
-            const { data, error } = await supabase
-                .from('users')
-                .select('id, name, contact')
-                .eq('role', 'mechanic')
-                .eq('is_active', true)
-                .order('name')
-            if (error) throw error
-            return data
-        },
-        enabled: isExec,
-    })
+    // Who labour can be recorded against (MAIN-116); only execs record it.
+    const { data: technicians = [] } = useTechnicians({ enabled: isExec })
 
     const { data: existingInvoice } = useOutsourceInvoice(
         jobCard?.type === 'Outsource' ? jobCard?.id : null
@@ -138,17 +122,6 @@ export default function JobCardDetail() {
 
     // ── Handlers ──────────────────────────────────────────────────────────────
 
-    const handleAssignMechanic = async () => {
-        try {
-            await updateJobCard.mutateAsync({
-                id: jobCard.id,
-                updates: { assigned_mechanic_id: selectedMechanicId || null }
-            })
-            setAssigningMechanic(false)
-        } catch (e) {
-            alert('Failed to assign mechanic: ' + e.message)
-        }
-    }
 
     const handleSaveJobLocation = async () => {
         if (pendingType === jobCard.type) {
@@ -162,11 +135,17 @@ export default function JobCardDetail() {
                     id: jobCard.id,
                     updates: { type: 'InHouse', supplier_id: null, invoice_url: null },
                 })
-            } else if (pendingType === 'Outsource' && jobCard.assigned_mechanic_id) {
-                if (!window.confirm('This will clear the assigned mechanic. Continue?')) return
+            } else if (pendingType === 'Outsource' && labourRows.length > 0) {
+                // The database removes the labour with the switch (clear_labour_on_outsource).
+                const people = new Set(labourRows.map(r => r.technician?.id)).size
+                const hours = formatHours(labourRows.reduce((s, r) => s + parseFloat(r.hours), 0))
+                if (!window.confirm(
+                    `This job card has ${hours} labour hours recorded against ${people} technician${people === 1 ? '' : 's'}. ` +
+                    'Switching to Outsource will permanently remove them. Continue?'
+                )) return
                 await updateJobCard.mutateAsync({
                     id: jobCard.id,
-                    updates: { type: 'Outsource', assigned_mechanic_id: null },
+                    updates: { type: 'Outsource' },
                 })
             } else {
                 await updateJobCard.mutateAsync({
@@ -304,6 +283,8 @@ export default function JobCardDetail() {
     const progress = totalIssues > 0 ? (completedIssues / totalIssues) * 100 : 0
     const isAllDone = totalIssues > 0 && totalIssues === completedIssues
     const isOutsource = jobCard.type === 'Outsource'
+    const labourRows = (jobCard.issues || []).flatMap(i => i.issue_labour || [])
+    const cardLabourHours = isOutsource ? 0 : totalLabourHours(jobCard.issues)
     const invoiceErrs = isOutsource ? validateInvoiceForm(invoiceForm, todayStr) : {}
     const invoiceValid = Object.keys(invoiceErrs).length === 0
     const invoicePartial = isOutsource && !invoiceValid && !isInvoiceFormEmpty(invoiceForm)
@@ -560,81 +541,9 @@ export default function JobCardDetail() {
                             )}
                         </span>
 
-                        {/* ── Assignment pill — mechanic or supplier ─────────── */}
-                        {jobCard.type === 'InHouse' ? (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-700">
-                                <UserIcon className="w-4 h-4 text-gray-600" />
-                                {assigningMechanic ? (
-                                    <span className="flex items-center gap-2">
-                                        <Listbox value={selectedMechanicId} onChange={setSelectedMechanicId}>
-                                            <div className="relative">
-                                                <ListboxButton className="relative w-40 cursor-default rounded-md bg-white py-0.5 pl-2 pr-7 text-left text-sm border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                    <span className="block truncate text-gray-900">
-                                                        {selectedMechanicId
-                                                            ? mechanics.find(m => m.id === selectedMechanicId)?.name
-                                                            : 'Unassigned'}
-                                                    </span>
-                                                    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-1.5">
-                                                        <ChevronUpDownIcon className="h-4 w-4 text-gray-500" />
-                                                    </span>
-                                                </ListboxButton>
-                                                <Transition as={Fragment} leave="transition ease-in duration-100" leaveFrom="opacity-100" leaveTo="opacity-0">
-                                                    <ListboxOptions className="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
-                                                        <ListboxOption
-                                                            value=""
-                                                            className={({ active }) => `relative cursor-default select-none py-2 pl-3 pr-9 ${active ? 'bg-blue-600 text-white' : 'text-gray-600'}`}
-                                                        >
-                                                            {({ selected, active }) => (<>
-                                                                <span className={selected ? 'font-semibold' : 'font-normal'}>Unassigned</span>
-                                                                {selected && <span className={`absolute inset-y-0 right-0 flex items-center pr-3 ${active ? 'text-white' : 'text-blue-600'}`}><CheckIcon className="h-4 w-4" /></span>}
-                                                            </>)}
-                                                        </ListboxOption>
-                                                        {mechanics.map(m => (
-                                                            <ListboxOption
-                                                                key={m.id}
-                                                                value={m.id}
-                                                                className={({ active }) => `relative cursor-default select-none py-2 pl-3 pr-9 ${active ? 'bg-blue-600 text-white' : 'text-gray-900'}`}
-                                                            >
-                                                                {({ selected, active }) => (<>
-                                                                    <span className={selected ? 'font-semibold' : 'font-normal'}>{m.name}</span>
-                                                                    {selected && <span className={`absolute inset-y-0 right-0 flex items-center pr-3 ${active ? 'text-white' : 'text-blue-600'}`}><CheckIcon className="h-4 w-4" /></span>}
-                                                                </>)}
-                                                            </ListboxOption>
-                                                        ))}
-                                                    </ListboxOptions>
-                                                </Transition>
-                                            </div>
-                                        </Listbox>
-                                        <button
-                                            onClick={handleAssignMechanic}
-                                            disabled={updateJobCard.isPending}
-                                            className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                                        >
-                                            Save
-                                        </button>
-                                        <button
-                                            onClick={() => { setAssigningMechanic(false); setSelectedMechanicId(jobCard.assigned_mechanic_id || '') }}
-                                            className="text-xs px-2 py-0.5 bg-gray-200 text-gray-600 rounded hover:bg-gray-300"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </span>
-                                ) : (
-                                    <span className="flex items-center gap-1">
-                                        {jobCard.mechanic?.name || 'Unassigned'}
-                                        {isExec && jobCard.status === 'Open' && (
-                                            <button
-                                                onClick={() => setAssigningMechanic(true)}
-                                                className="ml-1 text-gray-500 hover:text-blue-600"
-                                            >
-                                                <PencilIcon className="w-3.5 h-3.5" />
-                                            </button>
-                                        )}
-                                    </span>
-                                )}
-                            </span>
-                        ) : (
-                            /* Outsource — supplier assignment; required to close, so a missing one is flagged */
+                        {/* ── Supplier pill (Outsource) ─────────────────────── */}
+                        {isOutsource && (
+                            /* Supplier assignment; required to close, so a missing one is flagged */
                             <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm ${
                                 supplierMissing
                                     ? 'bg-red-50 text-red-700 ring-1 ring-red-200'
@@ -738,7 +647,10 @@ export default function JobCardDetail() {
                     <div>
                         <div className="flex justify-between text-xs text-gray-600 mb-1">
                             <span>Progress</span>
-                            <span>{completedIssues} of {totalIssues} done</span>
+                            <span>
+                                {completedIssues} of {totalIssues} done
+                                {cardLabourHours > 0 && <> · <span className="font-medium text-gray-900">{formatHours(cardLabourHours)} hrs</span> labour</>}
+                            </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                             <div
@@ -769,6 +681,7 @@ export default function JobCardDetail() {
                                     jobCardStatus={jobCard.status}
                                     isMechanic={isMechanic}
                                     parts={parts}
+                                    technicians={technicians}
                                     userProfile={userProfile}
                                     jobCardType={jobCard.type}
                                 />

@@ -4,6 +4,7 @@ import { formatDate, toDate } from '../utils/datetime'
 import Navigation from '../components/shared/Navigation'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useMechanicProfile, useMechanicActivity } from '../hooks/useInventory'
+import { formatHours } from '../utils/labour'
 import { UserCircleIcon } from '@heroicons/react/24/outline'
 
 const STATUS_BADGE = {
@@ -33,7 +34,8 @@ export default function MechanicDetail() {
         s + (jc.issues?.reduce((is, i) => is + (parseFloat(i.labour_hours) || 0), 0) ?? 0), 0
     )
 
-    // Labour track rows: one row per issue that has labour_hours recorded
+    // Labour track rows: one row per work item this technician logged hours on, dated by
+    // the item's activity complete date where it has one
     const labourRows = jobCards.flatMap(jc =>
         (jc.issues || [])
             .filter(i => i.labour_hours > 0)
@@ -45,7 +47,7 @@ export default function MechanicDetail() {
                 job_card_number: jc.job_card_number,
                 vehicle_number: jc.vehicle_number,
                 job_card_status: jc.status,
-                date: jc.completed_at || jc.created_at,
+                date: i.completed_on || jc.completed_at || jc.created_at,
             }))
     ).sort((a, b) => toDate(b.date) - toDate(a.date))
 
@@ -81,7 +83,7 @@ export default function MechanicDetail() {
                             {[
                                 { label: 'Total Job Cards', value: totalJobCards },
                                 { label: 'Completed', value: completedJobCards },
-                                { label: 'Total Labour Hours', value: totalLabourHours > 0 ? `${totalLabourHours} hrs` : '—' },
+                                { label: 'Total Labour Hours', value: totalLabourHours > 0 ? `${formatHours(totalLabourHours)} hrs` : '—' },
                             ].map(stat => (
                                 <div key={stat.label} className="bg-white rounded-lg shadow-sm px-5 py-4">
                                     <p className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</p>
@@ -228,7 +230,7 @@ export default function MechanicDetail() {
                                     </table>
                                     <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t flex justify-between">
                                         <span>{labourRows.length} entr{labourRows.length !== 1 ? 'ies' : 'y'}</span>
-                                        <span className="font-medium text-gray-600">Total: {totalLabourHours} hrs</span>
+                                        <span className="font-medium text-gray-600">Total: {formatHours(totalLabourHours)} hrs</span>
                                     </div>
                                 </div>
                             )

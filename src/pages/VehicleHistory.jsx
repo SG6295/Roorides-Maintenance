@@ -8,6 +8,7 @@ import { useVehicleBatchServices } from '../hooks/useBatchServices'
 import { workTypeLabel } from '../constants/batchWorkTypes'
 import { formatBatchNumber, batchPath } from '../utils/batchNumber'
 import { fmtMoney } from '../components/outsource-invoices/format'
+import { issueLabourHours, totalLabourHours, formatHours } from '../utils/labour'
 import { ChevronDownIcon, ChevronUpIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
 
 const STATUS_BADGE = {
@@ -20,7 +21,13 @@ function JobCardRow({ jc }) {
     const [expanded, setExpanded] = useState(false)
     const { data: parts = [], isLoading: partsLoading } = useJobCardParts(expanded ? jc.id : null)
 
-    const totalLabour = jc.issues?.reduce((s, i) => s + (parseFloat(i.labour_hours) || 0), 0) ?? 0
+    const totalLabour = totalLabourHours(jc.issues)
+    // Each technician once, linked to their page
+    const technicians = [...new Map(
+        (jc.issues || []).flatMap(i => i.issue_labour || [])
+            .filter(r => r.technician)
+            .map(r => [r.technician.id, r.technician])
+    ).values()]
 
     return (
         <>
@@ -44,19 +51,22 @@ function JobCardRow({ jc }) {
                     {formatDate(jc.completed_at)}
                 </td>
                 <td className="px-4 py-3 text-gray-700 text-sm">
-                    {jc.mechanic ? (
-                        <Link
-                            to={`/mechanics/${jc.mechanic.id}`}
-                            onClick={e => e.stopPropagation()}
-                            className="text-blue-600 hover:underline"
-                        >
-                            {jc.mechanic.name}
-                        </Link>
-                    ) : '—'}
+                    {technicians.length > 0 ? technicians.map((t, idx) => (
+                        <span key={t.id}>
+                            {idx > 0 && ', '}
+                            <Link
+                                to={`/mechanics/${t.id}`}
+                                onClick={e => e.stopPropagation()}
+                                className="text-blue-600 hover:underline"
+                            >
+                                {t.name}
+                            </Link>
+                        </span>
+                    )) : '—'}
                 </td>
                 <td className="px-4 py-3 text-center text-gray-500 text-sm">{jc.issues?.length ?? 0}</td>
                 <td className="px-4 py-3 text-right text-gray-700 text-sm">
-                    {totalLabour > 0 ? `${totalLabour} hrs` : '—'}
+                    {totalLabour > 0 ? `${formatHours(totalLabour)} hrs` : '—'}
                 </td>
                 <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 text-xs rounded-full ${STATUS_BADGE[jc.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -82,8 +92,8 @@ function JobCardRow({ jc }) {
                                     <div key={issue.id} className="flex items-center gap-3 text-xs">
                                         <span className="font-medium text-gray-800">{issue.description || 'No description'}</span>
                                         <span className="text-gray-400">{issue.status}</span>
-                                        {issue.labour_hours > 0 && (
-                                            <span className="text-gray-500">{issue.labour_hours} hrs</span>
+                                        {issueLabourHours(issue).hours > 0 && (
+                                            <span className="text-gray-500">{formatHours(issueLabourHours(issue).hours)} hrs</span>
                                         )}
                                     </div>
                                 ))}
@@ -175,9 +185,7 @@ export default function VehicleHistory() {
 
     const totalJobCards = jobCards.length
     const openJobCards = jobCards.filter(jc => jc.status === 'Open').length
-    const totalLabourHours = jobCards.reduce((s, jc) =>
-        s + (jc.issues?.reduce((is, i) => is + (parseFloat(i.labour_hours) || 0), 0) ?? 0), 0
-    )
+    const vehicleLabourHours = jobCards.reduce((s, jc) => s + totalLabourHours(jc.issues), 0)
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -207,7 +215,7 @@ export default function VehicleHistory() {
                             {[
                                 { label: 'Total Job Cards', value: totalJobCards },
                                 { label: 'Open / In Progress', value: openJobCards },
-                                { label: 'Total Labour Hours', value: totalLabourHours > 0 ? `${totalLabourHours} hrs` : '—' },
+                                { label: 'Total Labour Hours', value: vehicleLabourHours > 0 ? `${formatHours(vehicleLabourHours)} hrs` : '—' },
                             ].map(stat => (
                                 <div key={stat.label} className="bg-white rounded-lg shadow-sm px-5 py-4">
                                     <p className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</p>
@@ -229,7 +237,7 @@ export default function VehicleHistory() {
                                             <th className="px-4 py-3 text-left">Job Card</th>
                                             <th className="px-4 py-3 text-left">Created</th>
                                             <th className="px-4 py-3 text-left">Completed</th>
-                                            <th className="px-4 py-3 text-left">Mechanic</th>
+                                            <th className="px-4 py-3 text-left">Technicians</th>
                                             <th className="px-4 py-3 text-center">Issues</th>
                                             <th className="px-4 py-3 text-right">Labour</th>
                                             <th className="px-4 py-3 text-left">Status</th>

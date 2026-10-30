@@ -24,10 +24,9 @@ export function useJobCards(filters = {}) {
                 .from('job_cards')
                 .select(`
           *,
-          mechanic:assigned_mechanic_id(name, email),
           supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
           location:workshop_locations!location_id(id, name, address),
-          issues(*)
+          issues(*, issue_labour(technician:technician_id(name)))
         `)
                 .order('created_at', { ascending: false })
                 .order('id')
@@ -61,10 +60,9 @@ export function useJobCard(jobCardNumber) {
                 .from('job_cards')
                 .select(`
           *,
-          mechanic:assigned_mechanic_id(name, email, contact),
           supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
           location:workshop_locations!location_id(id, name, address),
-          issues(*, ticket:ticket_id(ticket_number), issue_parts(*, part:part_id(id, name, unit, default_exclude_from_scrap, default_exclusion_reason)))
+          issues(*, ticket:ticket_id(ticket_number), issue_parts(*, part:part_id(id, name, unit, default_exclude_from_scrap, default_exclusion_reason)), issue_labour(id, hours, technician:technician_id(id, name, role)))
         `)
                 .eq('job_card_number', jobCardNumber)
                 .single()
