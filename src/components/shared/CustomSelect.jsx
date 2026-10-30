@@ -68,7 +68,12 @@ export default function CustomSelect({
                         >
                             <ListboxOptions
                                 anchor="bottom"
-                                className="z-50 mt-1 max-h-60 w-[var(--button-width)] overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm"
+                                className={classNames(
+                                    "z-50 mt-1 max-h-60 overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm",
+                                    // A compact button sits in a narrow table column and truncates;
+                                    // its list may grow past it so the full labels can be read.
+                                    compact ? "w-max min-w-[var(--button-width)] max-w-[24rem]" : "w-[var(--button-width)]"
+                                )}
                             >
                                 {options.map((option, idx) => {
                                     const optValue = getOptionValue(option)

@@ -52,8 +52,10 @@ const newLine = fields => ({
     ...fields,
 })
 
-const inputClass = hasError =>
-    `w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${hasError ? 'border-red-400' : 'border-gray-300'}`
+// `padding` replaces py-2 rather than being appended after it — two py- classes both
+// apply and the stylesheet's order, not the className's, decides which wins.
+const inputClass = (hasError, padding = 'py-2') =>
+    `w-full text-sm border rounded-lg px-3 ${padding} focus:outline-none focus:ring-2 focus:ring-blue-500 ${hasError ? 'border-red-400' : 'border-gray-300'}`
 
 /**
  * A multi-vehicle outsource invoice (MAIN-99): one vendor invoice covering work on many
@@ -178,7 +180,7 @@ function BatchForm({ batch }) {
         // A saved site the bus has since moved away from stays selectable, so the line
         // still shows it and the batch can be saved without re-choosing.
         if (line.site && !names.includes(line.site)) {
-            options.unshift({ value: line.site, label: `${line.site} (no longer linked to this vehicle)` })
+            options.unshift({ value: line.site, label: `${line.site} (former site)` })
         }
         return options
     }
@@ -301,8 +303,8 @@ function BatchForm({ batch }) {
                                     <th className="text-left font-medium py-1">Vehicle</th>
                                     <th className="text-left font-medium py-1 px-2">Site</th>
                                     <th className="text-left font-medium py-1 px-2">Type of work</th>
-                                    <th className="text-right font-medium py-1 px-2">Rate (₹)</th>
-                                    <th className="text-right font-medium py-1 px-2">Qty</th>
+                                    <th className="text-right font-medium py-1 pl-2 pr-5">Rate (₹)</th>
+                                    <th className="text-right font-medium py-1 pl-2 pr-5">Qty</th>
                                     <th className="text-right font-medium py-1 px-2">Amount</th>
                                     <th className="text-left font-medium py-1 px-2">Job card</th>
                                     <th className="w-8" />
@@ -315,23 +317,25 @@ function BatchForm({ batch }) {
                                     const duplicate = duplicateKeys.has(line.key)
                                     return (
                                         <tr key={line.key} className="align-top">
-                                            <td className="py-1.5 font-mono text-gray-800 whitespace-nowrap">{line.vehicle_number}</td>
-                                            <td className="py-1.5 px-2 min-w-[11rem]">
-                                                {own.length === 1 && (!line.site || line.site === own[0]) ? (
-                                                    // The vehicle's only site, filled in and not editable.
-                                                    <span className="text-sm text-gray-700" title="This vehicle is linked to one site">
-                                                        {line.site || own[0]}
-                                                    </span>
-                                                ) : (
-                                                    <CustomSelect
-                                                        value={line.site}
-                                                        onChange={site => setLine(line.key, { site })}
-                                                        options={siteOptionsFor(line)}
-                                                        placeholder="Select site…"
-                                                        error={showErrors && !line.site}
-                                                        compact
-                                                    />
-                                                )}
+                                            <td className="py-1.5 pt-3.5 font-mono text-gray-800 whitespace-nowrap">{line.vehicle_number}</td>
+                                            <td className="py-1.5 px-2">
+                                                <div className="w-44">
+                                                    {own.length === 1 && (!line.site || line.site === own[0]) ? (
+                                                        // The vehicle's only site, filled in and not editable.
+                                                        <span className="block pt-2 text-sm text-gray-700" title="This vehicle is linked to one site">
+                                                            {line.site || own[0]}
+                                                        </span>
+                                                    ) : (
+                                                        <CustomSelect
+                                                            value={line.site}
+                                                            onChange={site => setLine(line.key, { site })}
+                                                            options={siteOptionsFor(line)}
+                                                            placeholder="Select site…"
+                                                            error={showErrors && !line.site}
+                                                            compact
+                                                        />
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="py-1.5 px-2 min-w-[10rem] space-y-1">
                                                 <CustomSelect
@@ -350,7 +354,7 @@ function BatchForm({ batch }) {
                                                         onChange={e => setLine(line.key, { work_type_other: e.target.value })}
                                                         placeholder="What was done?"
                                                         aria-label={`Work done on ${line.vehicle_number}`}
-                                                        className={`${inputClass(showErrors && !line.work_type_other.trim())} text-xs py-1.5`}
+                                                        className={`${inputClass(showErrors && !line.work_type_other.trim(), 'py-1.5')} text-xs`}
                                                     />
                                                 )}
                                                 {duplicate && <p className="text-xs text-red-600">Already on this invoice for this vehicle</p>}
@@ -364,7 +368,7 @@ function BatchForm({ batch }) {
                                                     onChange={e => setLine(line.key, { rate: e.target.value })}
                                                     placeholder="0.00"
                                                     aria-label={`Rate for ${line.vehicle_number}`}
-                                                    className={`${inputClass(showErrors && summary.invalid.includes(i))} text-right py-1`}
+                                                    className={`${inputClass(showErrors && summary.invalid.includes(i), 'py-1')} text-right mt-1`}
                                                 />
                                             </td>
                                             <td className="py-1.5 px-2 min-w-[4.5rem]">
@@ -375,10 +379,10 @@ function BatchForm({ batch }) {
                                                     value={line.quantity}
                                                     onChange={e => setLine(line.key, { quantity: e.target.value })}
                                                     aria-label={`Quantity for ${line.vehicle_number}`}
-                                                    className={`${inputClass(showErrors && summary.invalid.includes(i))} text-right py-1`}
+                                                    className={`${inputClass(showErrors && summary.invalid.includes(i), 'py-1')} text-right mt-1`}
                                                 />
                                             </td>
-                                            <td className="py-1.5 px-2 text-right text-gray-800 whitespace-nowrap pt-2.5">
+                                            <td className="py-1.5 px-2 text-right text-gray-800 whitespace-nowrap pt-3.5">
                                                 {Number.isFinite(amount) ? fmtPaise(amount) : '—'}
                                             </td>
                                             <td className="py-1.5 px-2 min-w-[13rem]">
@@ -390,7 +394,7 @@ function BatchForm({ batch }) {
                                                     onChange={job_card_id => setLine(line.key, { job_card_id })}
                                                 />
                                             </td>
-                                            <td className="py-1.5 pl-2">
+                                            <td className="py-1.5 pt-3 pl-2">
                                                 <button
                                                     type="button"
                                                     onClick={() => removeLine(line.key)}
@@ -637,6 +641,7 @@ function JobCardPicker({ line, jobCards, required, showError, onChange }) {
             pinnedOption={line.job_card_id && !required ? { value: '', label: 'No job card' } : null}
             placeholder={required ? 'Required — search…' : 'Optional — search…'}
             error={showError ? { message: 'Required for Other' } : undefined}
+            compact
         />
     )
 }
