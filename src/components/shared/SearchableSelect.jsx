@@ -22,9 +22,11 @@ function classNames(...classes) {
  *              "this exists but is not available" rather than dropping the row,
  *              which reads as "no such thing" — see MAIN-67.
  *   badge    — short muted text on the right saying why, e.g. "Inactive".
- * Both are ignored when absent, so callers that pass plain { value, label } are
+ *   searchText — extra text the search also matches but the row does not show, e.g. a
+ *              job card's issue descriptions (MAIN-112).
+ * All are ignored when absent, so callers that pass plain { value, label } are
  * unaffected.
- * showAllOnFocus: show full list on focus (empty input = all options visible)
+ * showAllOnFocus: open the full list on click/focus (empty input = all options visible)
  * pinnedOption: { value, label } — always rendered first, never filtered out
  */
 export default function SearchableSelect({
@@ -44,7 +46,7 @@ export default function SearchableSelect({
     query === ''
       ? (showAllOnFocus ? options : [])
       : options.filter((opt) =>
-          opt.label.toLowerCase().includes(query.toLowerCase())
+          `${opt.label} ${opt.searchText ?? ''}`.toLowerCase().includes(query.toLowerCase())
         )
 
   const displayValue = (val) => {
@@ -59,7 +61,7 @@ export default function SearchableSelect({
   }
 
   return (
-    <Combobox value={value} onChange={handleChange} disabled={disabled}>
+    <Combobox value={value} onChange={handleChange} disabled={disabled} immediate={showAllOnFocus}>
       {label && (
         <Combobox.Label className="block text-sm font-medium text-gray-700 mb-2">
           {label}
@@ -93,7 +95,7 @@ export default function SearchableSelect({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <ComboboxOptions anchor="bottom start" className="z-50 max-h-60 w-[var(--input-width)] overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
+          <ComboboxOptions anchor="bottom start" className="z-50 max-h-60 w-max min-w-[var(--input-width)] max-w-[24rem] overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
             {pinnedOption && (
               <ComboboxOption
                 value={pinnedOption.value}

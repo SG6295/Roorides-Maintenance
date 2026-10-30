@@ -1,4 +1,6 @@
 import InvoiceHistory from './InvoiceHistory'
+import { workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTypes'
+import { formatBatchNumber } from '../../utils/batchNumber'
 
 /**
  * The invoice's "who changed what" history, and nothing else (MAIN-98). Details,
@@ -20,7 +22,7 @@ export default function HistoryDrawer({ invoice, onClose }) {
                         <p className="text-xs text-gray-500">
                             {invoice.batch_service
                                 // A multi-vehicle invoice (MAIN-99) has a batch in place of a job card.
-                                ? `${invoice.batch_service.description} · ${invoice.batch_service.vehicles?.length ?? 0} vehicles · ${invoice.batch_service.supplier?.entity_name || '—'}`
+                                ? `${formatBatchNumber(invoice.batch_service.batch_number)} · ${workTypeSummary(invoice.batch_service.vehicles)} · ${vehicleCountLabel(invoice.batch_service.vehicles)} · ${invoice.batch_service.supplier?.entity_name || '—'}`
                                 : `Job card #${invoice.job_card?.job_card_number} · ${invoice.job_card?.vehicle_number || '—'} · ${invoice.job_card?.supplier?.entity_name || '—'}`}
                         </p>
                     </div>

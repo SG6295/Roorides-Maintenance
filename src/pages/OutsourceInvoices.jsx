@@ -17,6 +17,7 @@ import {
     MAINTENANCE_PAYMENT_STATUSES,
     FINANCE_PAYMENT_STATUSES,
 } from '../constants/outsourceInvoices'
+import { formatBatchNumber } from '../utils/batchNumber'
 
 export default function OutsourceInvoices() {
     const [searchParams, setSearchParams] = useSearchParams()
@@ -94,7 +95,8 @@ export default function OutsourceInvoices() {
                 inv.invoice_no?.toLowerCase().includes(q) ||
                 String(inv.job_card?.job_card_number ?? '').toLowerCase().includes(q) ||
                 inv.job_card?.vehicle_number?.toLowerCase().includes(q) ||
-                inv.batch_service?.vehicles?.some(v => v.vehicle_number.toLowerCase().includes(q))
+                inv.batch_service?.vehicles?.some(v => v.vehicle_number.toLowerCase().includes(q)) ||
+                (inv.batch_service && formatBatchNumber(inv.batch_service.batch_number).toLowerCase().includes(q))
             )
         })
 
@@ -171,7 +173,7 @@ export default function OutsourceInvoices() {
                     {/* One invoice for work on many vehicles, without a job card each (MAIN-99). */}
                     {canCreateBatch && (
                         <Link
-                            to="/batch-invoices/new"
+                            to="/multi-vehicle-invoices/new"
                             className="text-sm px-3 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 whitespace-nowrap"
                         >
                             + Multi-vehicle invoice
@@ -214,7 +216,7 @@ export default function OutsourceInvoices() {
                             type="text"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            placeholder="Search invoice no, job card #, vehicle reg…"
+                            placeholder="Search invoice no, job card #, MVI-, vehicle reg…"
                             className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                         {hasFilters && (
@@ -337,10 +339,12 @@ export default function OutsourceInvoices() {
                             <tbody className="divide-y divide-gray-100">
                                 {invoices.map(inv => {
                                     const expanded = expandedIds.has(inv.id)
+                                    // Nobody changes a cancelled invoice's finance fields or payments.
+                                    const rowCanEdit = canEdit && !inv.cancelled
                                     return (
                                         <Fragment key={inv.id}>
                                             <tr
-                                                className={`cursor-pointer ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}`}
+                                                className={`cursor-pointer ${inv.cancelled ? 'bg-gray-50 text-gray-400' : ''} ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}`}
                                                 onClick={e => {
                                                     // Selecting text to copy it should not toggle the row.
                                                     if (isInteractiveClick(e.target) || window.getSelection()?.toString()) return
@@ -361,9 +365,9 @@ export default function OutsourceInvoices() {
                                                 {visibleColumns.map(c => (
                                                     <td
                                                         key={c.key}
-                                                        className={`px-3 py-3 whitespace-nowrap text-gray-700 align-top ${c.align === 'right' ? 'text-right' : ''}`}
+                                                        className={`px-3 py-3 whitespace-nowrap align-top ${inv.cancelled ? 'text-gray-400' : 'text-gray-700'} ${c.align === 'right' ? 'text-right' : ''}`}
                                                     >
-                                                        <InvoiceCell columnKey={c.key} invoice={inv} canEdit={canEdit} todayStr={todayStr} />
+                                                        <InvoiceCell columnKey={c.key} invoice={inv} canEdit={rowCanEdit} todayStr={todayStr} />
                                                     </td>
                                                 ))}
                                                 <td className="px-3 py-3 whitespace-nowrap align-top">
@@ -382,7 +386,7 @@ export default function OutsourceInvoices() {
                                                             className="sticky left-0 px-3 py-3"
                                                             style={visibleTableWidth ? { width: visibleTableWidth } : undefined}
                                                         >
-                                                            <PaymentStrip invoice={inv} canManage={canEdit} />
+                                                            <PaymentStrip invoice={inv} canManage={rowCanEdit} />
                                                         </div>
                                                     </td>
                                                 </tr>

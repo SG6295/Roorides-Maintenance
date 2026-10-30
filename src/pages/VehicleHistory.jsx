@@ -5,6 +5,8 @@ import Navigation from '../components/shared/Navigation'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import { useVehicleHistory, useJobCardParts } from '../hooks/useInventory'
 import { useVehicleBatchServices } from '../hooks/useBatchServices'
+import { workTypeLabel } from '../constants/batchWorkTypes'
+import { formatBatchNumber, batchPath } from '../utils/batchNumber'
 import { fmtMoney } from '../components/outsource-invoices/format'
 import { ChevronDownIcon, ChevronUpIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
 
@@ -110,29 +112,46 @@ function JobCardRow({ jc }) {
 }
 
 /**
- * This vehicle's share of a multi-vehicle invoice (MAIN-99): outsourced work done to
- * several vehicles on one invoice, with no job card. Laid out in the job card columns.
+ * One line of a multi-vehicle invoice for this vehicle (MAIN-99): outsourced work done to
+ * several vehicles on one invoice, with no job card of its own — though an Other line
+ * links the outsourced job card it belongs to (MAIN-112). Laid out in the job card columns.
  */
 function BatchRow({ line }) {
     const b = line.batch
     const date = b.invoice?.date_of_activity ?? b.created_at
+    const cancelled = b.status === 'Cancelled'
     return (
-        <tr className="hover:bg-gray-50">
+        <tr className={cancelled ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'}>
             <td className="px-4 py-3 text-xs">
-                <Link to={`/batch-invoices/${b.id}`} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium hover:underline">
-                    Batch
+                <Link to={batchPath(b.batch_number)} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium hover:underline whitespace-nowrap">
+                    {formatBatchNumber(b.batch_number)}
                 </Link>
             </td>
             <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{formatDate(date)}</td>
             <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{formatDate(date)}</td>
             <td className="px-4 py-3 text-gray-700 text-sm">{b.supplier?.entity_name || '—'}</td>
             <td colSpan={2} className="px-4 py-3 text-gray-700 text-sm">
-                {b.description}
-                <span className="text-gray-400 text-xs">{line.site && ` · ${line.site}`} · Inv {b.invoice?.invoice_no || '—'} · </span>
-                <span className="font-medium">{fmtMoney(line.amount)}</span>
+                {workTypeLabel(line)}
+                <span className="text-gray-400 text-xs">
+                    {line.rate != null && ` · ${line.quantity} × ${fmtMoney(line.rate)}`}
+                    {line.site && ` · ${line.site}`} · Inv {b.invoice?.invoice_no || '—'} ·{' '}
+                </span>
+                <span className={`font-medium ${cancelled ? 'line-through' : ''}`}>{fmtMoney(line.amount)}</span>
+                {line.linked_job_card && (
+                    <span className="text-xs">
+                        {' · '}
+                        <Link to={`/job-cards/${line.linked_job_card.job_card_number}`} className="text-blue-600 hover:underline">
+                            Job card #{line.linked_job_card.job_card_number}
+                        </Link>
+                    </span>
+                )}
             </td>
             <td className="px-4 py-3">
-                <span className={`px-2 py-0.5 text-xs rounded-full ${STATUS_BADGE.Completed}`}>Completed</span>
+                {cancelled ? (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Cancelled</span>
+                ) : (
+                    <span className={`px-2 py-0.5 text-xs rounded-full ${STATUS_BADGE.Completed}`}>Completed</span>
+                )}
             </td>
             <td className="px-4 py-3" />
         </tr>
@@ -144,6 +163,9 @@ export default function VehicleHistory() {
     const decoded = decodeURIComponent(vehicleNumber)
     const { data: jobCards = [], isLoading } = useVehicleHistory(decoded)
     const { data: batchLines = [], isLoading: batchesLoading } = useVehicleBatchServices(decoded)
+
+    // A vehicle can have several lines on one invoice (MAIN-112); the footer counts invoices.
+    const batchCount = new Set(batchLines.map(l => l.batch.id)).size
 
     // Job cards and multi-vehicle invoices in one list, newest first.
     const rows = [
@@ -222,7 +244,7 @@ export default function VehicleHistory() {
                                 </table>
                                 <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t">
                                     {totalJobCards} job card{totalJobCards !== 1 ? 's' : ''}
-                                    {batchLines.length > 0 && ` · ${batchLines.length} multi-vehicle invoice${batchLines.length !== 1 ? 's' : ''}`}
+                                    {batchCount > 0 && ` · ${batchCount} multi-vehicle invoice${batchCount !== 1 ? 's' : ''}`}
                                 </div>
                             </div>
                         )}

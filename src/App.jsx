@@ -19,7 +19,7 @@ import MechanicDetail from './pages/MechanicDetail'
 import Vehicles from './pages/Vehicles'
 
 import OutsourceInvoices from './pages/OutsourceInvoices'
-import BatchServiceDetail from './pages/BatchServiceDetail'
+import BatchServiceDetail, { LegacyBatchRedirect } from './pages/BatchServiceDetail'
 import Suppliers from './pages/Suppliers'
 import SupplierDetail from './pages/SupplierDetail'
 import SupplierRegistration from './pages/SupplierRegistration'
@@ -253,10 +253,19 @@ function App() {
               }
             />
             <Route
-              path="/batch-invoices/:id"
+              path="/multi-vehicle-invoices/:number"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <BatchServiceDetail />
+                </ProtectedRoute>
+              }
+            />
+            {/* Links from before MVI numbers (MAIN-112) carried the batch's id. */}
+            <Route
+              path="/batch-invoices/:id"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <LegacyBatchRedirect />
                 </ProtectedRoute>
               }
             />
