@@ -28,6 +28,7 @@ function classNames(...classes) {
  * unaffected.
  * showAllOnFocus: open the full list on click/focus (empty input = all options visible)
  * pinnedOption: { value, label } — always rendered first, never filtered out
+ * compact: the smaller size CustomSelect's `compact` uses, for table rows
  */
 export default function SearchableSelect({
   label,
@@ -39,6 +40,7 @@ export default function SearchableSelect({
   disabled = false,
   showAllOnFocus = false,
   pinnedOption = null,
+  compact = false,
 }) {
   const [query, setQuery] = useState('')
 
@@ -70,7 +72,8 @@ export default function SearchableSelect({
       <div className="relative mt-1">
         <ComboboxInput
           className={classNames(
-            'relative w-full cursor-default rounded-lg text-left border shadow-sm focus:outline-none focus:ring-2 sm:text-sm py-2.5 pl-4 pr-10',
+            'relative w-full cursor-default rounded-lg text-left border shadow-sm focus:outline-none focus:ring-2',
+            compact ? 'py-1.5 px-2 text-xs' : 'sm:text-sm py-2.5 pl-4 pr-10',
             disabled
               ? 'bg-gray-50 text-gray-500 cursor-not-allowed'
               : 'bg-white',
