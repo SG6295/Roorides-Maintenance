@@ -84,9 +84,13 @@ export default function DocumentUpload({ label, required = false, value, onChang
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1.5">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
+      {/* Callers that already title the section pass an empty label; drawing the
+          line anyway left a lone required asterisk above the field. */}
+      {label && (
+        <label className="block text-sm font-medium text-gray-700 mb-1.5">
+          {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+        </label>
+      )}
 
       <input
         ref={fileInputRef}
