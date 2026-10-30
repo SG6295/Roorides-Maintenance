@@ -2335,6 +2335,24 @@ export type Database = {
         Args: { p_issue_part_id: string }
         Returns: Json
       }
+      get_labour_report: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          attributed: boolean
+          category: string
+          completed_on: string
+          description: string
+          hours: number
+          issue_id: string
+          issue_number: string
+          job_card_number: number
+          site: string
+          technician_id: string
+          technician_name: string
+          technician_role: string
+          vehicle_number: string
+        }[]
+      }
       get_maintenance_stats: {
         Args: {
           end_date_input?: string
