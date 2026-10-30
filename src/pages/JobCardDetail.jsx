@@ -834,6 +834,12 @@ export default function JobCardDetail() {
                                     onChange={(url) =>
                                         updateJobCard.mutate({ id: jobCard.id, updates: { invoice_url: url } })
                                     }
+                                    // The file is optional and only editable before the card is
+                                    // Completed, so clearing it can't leave a Completed card without one.
+                                    onRemove={() => {
+                                        if (!window.confirm('Remove the uploaded invoice from this job card?')) return
+                                        updateJobCard.mutate({ id: jobCard.id, updates: { invoice_url: null } })
+                                    }}
                                     accept=".pdf,.jpg,.jpeg,.png"
                                 />
                                 {!jobCard.invoice_url && !isBatchLinked && (

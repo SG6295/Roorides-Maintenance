@@ -13,8 +13,11 @@ import PendingPdfPanel from '../shared/PendingPdfPanel'
  * PendingPdfPanel for ordering and combined into a single PDF first — a PAN
  * card or a vendor bill photographed across several pages no longer has to go
  * through an outside image-to-PDF site to be attached in full.
+ *
+ * onRemove, when given, adds a Remove button beside Replace — only for a file the
+ * record can do without. A required file is fixed by replacing it.
  */
-export default function DocumentUpload({ label, required = false, value, onChange, accept = '.pdf,.jpg,.jpeg,.png' }) {
+export default function DocumentUpload({ label, required = false, value, onChange, onRemove, accept = '.pdf,.jpg,.jpeg,.png' }) {
   const [uploading, setUploading] = useState(false)
   const [combining, setCombining] = useState(false)
   const [pending, setPending] = useState([])
@@ -132,6 +135,15 @@ export default function DocumentUpload({ label, required = false, value, onChang
           >
             Replace
           </button>
+          {onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="text-xs text-red-600 hover:text-red-700 px-2 py-1 border border-red-200 rounded bg-white hover:bg-red-50"
+            >
+              Remove
+            </button>
+          )}
         </div>
       ) : (
         <button
