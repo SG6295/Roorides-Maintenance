@@ -2399,6 +2399,47 @@ $$;
 ALTER FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) OWNER TO postgres;
 
 --
+-- Name: get_labour_report(date, date); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_labour_report(p_from date, p_to date) RETURNS TABLE(issue_id uuid, issue_number text, description text, category text, completed_on date, site text, vehicle_number text, job_card_number integer, technician_id uuid, technician_name text, technician_role text, hours numeric, attributed boolean)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT i.id, i.issue_number, i.description, i.category::text, i.completed_on,
+           jc.site, jc.vehicle_number, jc.job_card_number,
+           il.technician_id, u.name, u.role, il.hours, true
+    FROM   public.issue_labour il
+    JOIN   public.issues    i  ON i.id  = il.issue_id
+    JOIN   public.job_cards jc ON jc.id = i.job_card_id
+    LEFT JOIN public.users  u  ON u.id  = il.technician_id
+    WHERE  jc.type = 'InHouse'
+    AND    (i.completed_on BETWEEN p_from AND p_to OR i.completed_on IS NULL)
+
+    UNION ALL
+
+    SELECT i.id, i.issue_number, i.description, i.category::text, i.completed_on,
+           jc.site, jc.vehicle_number, jc.job_card_number,
+           NULL, NULL, NULL, i.labour_hours, false
+    FROM   public.issues    i
+    JOIN   public.job_cards jc ON jc.id = i.job_card_id
+    WHERE  jc.type = 'InHouse'
+    AND    i.labour_hours > 0
+    AND    i.completed_on BETWEEN p_from AND p_to
+    AND    NOT EXISTS (SELECT 1 FROM public.issue_labour il WHERE il.issue_id = i.id);
+$$;
+
+
+ALTER FUNCTION public.get_labour_report(p_from date, p_to date) OWNER TO postgres;
+
+--
+-- Name: FUNCTION get_labour_report(p_from date, p_to date); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.get_labour_report(p_from date, p_to date) IS 'Rows behind Analytics › Labour utilisation (MAIN-117): per-technician labour (attributed) and pre-MAIN-116 hours with no person (unattributed) on in-house work items, by activity complete date.';
+
+
+--
 -- Name: get_maintenance_stats(date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -15134,6 +15175,15 @@ GRANT ALL ON FUNCTION public.generate_issue_number() TO service_role;
 GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION get_labour_report(p_from date, p_to date); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) TO anon;
+GRANT ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) TO authenticated;
+GRANT ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) TO service_role;
 
 
 --

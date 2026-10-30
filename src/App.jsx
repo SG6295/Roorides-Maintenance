@@ -11,6 +11,8 @@ import JobCardDetail from './pages/JobCardDetail'
 import Issues from './pages/Issues'
 import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
+import AnalyticsLayout from './pages/analytics/AnalyticsLayout'
+import LabourUtilisation from './pages/analytics/LabourUtilisation'
 import FeedbackReport from './pages/FeedbackReport'
 import Inventory from './pages/Inventory'
 import Scrap from './pages/Scrap'
@@ -177,14 +179,19 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* Analytics reports are sub-pages with a sidebar (MAIN-117) */}
             <Route
               path="/analytics"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin']}>
-                  <Analytics />
+                  <AnalyticsLayout />
                 </ProtectedRoute>
               }
-            />
+            >
+              <Route path="sla" element={<Analytics embedded={true} />} />
+              <Route path="labour" element={<LabourUtilisation />} />
+              <Route index element={<Navigate to="sla" replace />} />
+            </Route>
             <Route
               path="/feedback"
               element={

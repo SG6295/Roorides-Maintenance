@@ -9,7 +9,11 @@ import MultiFilterSelect from '../components/shared/MultiFilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
-export default function Analytics() {
+/**
+ * Analytics › SLA & tickets. `embedded` drops the page's own navigation when it sits inside
+ * AnalyticsLayout, which supplies it (MAIN-117).
+ */
+export default function Analytics({ embedded = false }) {
     // All sites, not just active — reporting on a departed school must still be possible.
     const { data: sites = [] } = useAllSites()
     // [] = all sites. Exact `sites.name` values — matching is case-sensitive.
@@ -241,14 +245,14 @@ export default function Analytics() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 pb-12">
-            <Navigation breadcrumbs={[{ label: 'Analytics' }]} />
+        <div className={embedded ? '' : 'min-h-screen bg-gray-50 pb-12'}>
+            {!embedded && <Navigation breadcrumbs={[{ label: 'Analytics' }]} />}
 
             {/* Header & Filters */}
-            <div className="bg-white border-b sticky top-0 z-10">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+            <div className={embedded ? 'bg-white rounded-xl border border-gray-200' : 'bg-white border-b sticky top-0 z-10'}>
+                <div className={embedded ? 'px-4 py-4' : 'max-w-7xl mx-auto px-4 sm:px-6 py-4'}>
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                        <h1 className="text-2xl font-bold text-gray-900 mb-4 sm:mb-0">Dashboard</h1>
+                        <h1 className="text-2xl font-bold text-gray-900 mb-4 sm:mb-0">SLA &amp; tickets</h1>
 
                         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                             {/* Date Filter */}
@@ -275,7 +279,7 @@ export default function Analytics() {
                 </div>
             </div>
 
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-10">
+            <div className={embedded ? 'py-6 space-y-10' : 'max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-10'}>
 
                 {/* SLA Performance */}
                 <div>

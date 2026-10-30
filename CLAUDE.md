@@ -208,7 +208,14 @@ Switching a card In-house → Outsource deletes its labour in the same statement
 - `/settings/units` — `PartUnitsSettings.jsx`, CRUD for `part_units` table (unit labels for parts)
 
 ### Analytics & Export
-`src/pages/Analytics.jsx` uses **recharts** for charts. `xlsx` is available for spreadsheet export (used in inventory/analytics exports).
+`/analytics` is a set of reports under `AnalyticsLayout` (`src/pages/analytics/`), a sidebar in the Settings pattern; add a report to its `reports` list and as a child route in `App.jsx`. `/analytics` redirects to `/analytics/sla`, so the Dashboard's "Analysis" tile needs no change. Exec and super_admin only.
+- **SLA & tickets** (`/analytics/sla`) — `src/pages/Analytics.jsx` with `embedded`, backed by `get_maintenance_stats`.
+- **Labour utilisation** (`/analytics/labour`, MAIN-117) — `LabourUtilisation.jsx` over `get_labour_report(p_from, p_to)`, which returns one row per piece of in-house labour: per-technician `issue_labour` rows (`attributed`) and pre-MAIN-116 `issues.labour_hours` with nobody attached (unattributed), placed by `issues.completed_on`. Attributed labour on items not yet Done comes back with a NULL date for the "not yet done" note. All the arithmetic is in `src/utils/labourReport.js` (tested); site/trade/technician filters run client-side. The rows have no `id`, so `useLabourReport` pages itself — `fetchAllRows` would de-duplicate them down to one.
+  - The technician × day grid is attributed hours only and capped at 92 days; site-wise and totals include unattributed hours.
+  - **Weekends are not greyed.** `sla_weekly_offs` is `[0,6]` in prod, but that is an SLA-counting rule: in-house work is completed every day, and Sunday is one of the busiest (Oct 2026, 90-day sample).
+  - The donut is hand-written SVG. `recharts` is in `package.json` but nothing imports it.
+
+`xlsx` is used for spreadsheet exports (tickets, inventory, audits, labour).
 
 ### Component Directory Structure
 `src/components/` is organized by domain:
