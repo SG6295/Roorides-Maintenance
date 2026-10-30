@@ -42,6 +42,11 @@ export function invoiceFormToRow(f) {
     }
 }
 
+/** True when nothing has been typed — a job card's invoice is optional until started. */
+export function isInvoiceFormEmpty(f) {
+    return Object.values(f).every(v => String(v).trim() === '')
+}
+
 export function validateInvoiceForm(f, today) {
     const errors = {}
     if (!f.dateOfActivity) errors.dateOfActivity = 'Required'

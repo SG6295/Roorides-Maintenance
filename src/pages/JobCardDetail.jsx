@@ -19,6 +19,7 @@ import {
     EMPTY_INVOICE_FORM,
     invoiceFormFromRow,
     invoiceFormToRow,
+    isInvoiceFormEmpty,
     validateInvoiceForm,
 } from '../components/outsource-invoices/invoiceForm'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
@@ -62,7 +63,7 @@ export default function JobCardDetail() {
     const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
     // Multi-vehicle invoice lines linked to this card (MAIN-112). While any exist the
     // card must stay outsourced; the database refuses the switch too.
-    const { data: linkedBatchLines = [] } = useJobCardBatchLines(jobCard?.id, { enabled: isExec })
+    const { data: linkedBatchLines = [], isLoading: batchLinesLoading } = useJobCardBatchLines(jobCard?.id, { enabled: isExec })
     const isMechanic = ['mechanic', 'electrician', 'maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
     // Mechanic assignment
@@ -228,37 +229,13 @@ export default function JobCardDetail() {
         }
     }
 
-    const handleCompleteJobCard = async () => {
-        if (jobCard.type === 'Outsource') {
-            const errors = validateInvoiceForm(invoiceForm, todayStr)
-            if (Object.keys(errors).length > 0) {
-                setShowInvoiceErrors(true)
-                return
-            }
-            try {
-                await upsertInvoice.mutateAsync({
-                    jobCardId: jobCard.id,
-                    userId: userProfile?.id,
-                    data: invoiceFormToRow(invoiceForm),
-                })
-            } catch (e) {
-                alert('Failed to save invoice details: ' + e.message)
-                return
-            }
-        }
-        setShowScrapModal(true)
-    }
-
-    const handleCloseInvoicePending = () => {
-        setInvoicePendingMode(true)
-        setShowScrapModal(true)
-    }
-
-    const handleFinalizeInvoice = async () => {
-        const errors = validateInvoiceForm(invoiceForm, todayStr)
-        if (Object.keys(errors).length > 0) {
+    // The invoice details are optional, but once started they must be complete — a half
+    // invoice is never saved. Returns false when the form is incomplete or the save failed.
+    const saveInvoiceIfEntered = async () => {
+        if (isInvoiceFormEmpty(invoiceForm)) return true
+        if (Object.keys(validateInvoiceForm(invoiceForm, todayStr)).length > 0) {
             setShowInvoiceErrors(true)
-            return
+            return false
         }
         try {
             await upsertInvoice.mutateAsync({
@@ -266,10 +243,21 @@ export default function JobCardDetail() {
                 userId: userProfile?.id,
                 data: invoiceFormToRow(invoiceForm),
             })
+            return true
         } catch (e) {
             alert('Failed to save invoice details: ' + e.message)
-            return
+            return false
         }
+    }
+
+    const handleCompleteJobCard = async () => {
+        if (jobCard.type === 'Outsource' && !(await saveInvoiceIfEntered())) return
+        setInvoicePendingMode(closesAsInvoicePending)
+        setShowScrapModal(true)
+    }
+
+    const handleFinalizeInvoice = async () => {
+        if (!(await saveInvoiceIfEntered())) return
         try {
             await finalizeInvoice.mutateAsync({ jobCardId: jobCard.id })
         } catch (e) {
@@ -316,16 +304,36 @@ export default function JobCardDetail() {
     const progress = totalIssues > 0 ? (completedIssues / totalIssues) * 100 : 0
     const isAllDone = totalIssues > 0 && totalIssues === completedIssues
     const isOutsource = jobCard.type === 'Outsource'
-    const needsInvoiceFile = isOutsource && !jobCard.invoice_url
     const invoiceErrs = isOutsource ? validateInvoiceForm(invoiceForm, todayStr) : {}
     const invoiceValid = Object.keys(invoiceErrs).length === 0
+    const invoicePartial = isOutsource && !invoiceValid && !isInvoiceFormEmpty(invoiceForm)
+    const hasOwnInvoice = !!jobCard.invoice_url && invoiceValid
+    // A linked multi-vehicle invoice line bills the work, so the card closes fully without
+    // an invoice of its own. Otherwise a card without one closes as Invoice Pending.
+    const isBatchLinked = linkedBatchLines.length > 0
+    const closesAsInvoicePending = isOutsource && !hasOwnInvoice && !isBatchLinked
     const hasSupplier = isOutsource ? !!jobCard.supplier_id : true
+    const supplierMissing = isExec && jobCard.status === 'Open' && !hasSupplier
     // A cancelled payment (failed transaction, refunded) does not lock the card.
     const hasPayments = (existingInvoice?.payments ?? []).some(p => p.status !== 'Cancelled')
-    const canComplete = isAllDone && !needsInvoiceFile && invoiceValid && hasSupplier
-    const canCloseInvoicePending = isOutsource && isAllDone && hasSupplier
+    const canComplete = isAllDone && hasSupplier && !invoicePartial
     const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
-    const canFinalize = isInvoicePending && !needsInvoiceFile && invoiceValid
+    const canFinalize = isInvoicePending && !invoicePartial && (hasOwnInvoice || isBatchLinked)
+    // Shown as text under the disabled button — a hover tooltip appears too slowly to help.
+    const completeBlockedReason = !isAllDone
+        ? 'Mark all issues as Done first'
+        : !hasSupplier
+        ? 'Assign a supplier before completing'
+        : invoicePartial
+        ? 'Finish the invoice details, or clear them to close as Invoice Pending'
+        : ''
+    const finalizeBlockedReason = canFinalize
+        ? ''
+        : invoicePartial
+        ? 'Finish the invoice details, or clear them'
+        : !jobCard.invoice_url
+        ? 'Upload the invoice file first'
+        : 'Fill in all required invoice details'
     // Only an exec can save the invoice details or upload the file (finance can view
     // the card but not write to it), so everyone else sees both read-only.
     const invoiceReadOnly = jobCard.status === 'Completed' || !isExec
@@ -626,9 +634,13 @@ export default function JobCardDetail() {
                                 )}
                             </span>
                         ) : (
-                            /* Outsource — supplier assignment */
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-700">
-                                <UserIcon className="w-4 h-4 text-gray-600" />
+                            /* Outsource — supplier assignment; required to close, so a missing one is flagged */
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm ${
+                                supplierMissing
+                                    ? 'bg-red-50 text-red-700 ring-1 ring-red-200'
+                                    : 'bg-gray-100 text-gray-700'
+                            }`}>
+                                <UserIcon className={`w-4 h-4 ${supplierMissing ? 'text-red-500' : 'text-gray-600'}`} />
                                 {editingSupplier ? (
                                     <span className="flex items-center gap-2">
                                         <div className="w-48">
@@ -658,6 +670,7 @@ export default function JobCardDetail() {
                                 ) : (
                                     <span className="flex items-center gap-1">
                                         {jobCard.supplier?.entity_name || 'No supplier'}
+                                        {supplierMissing && <span className="text-red-500">*</span>}
                                         {isExec && jobCard.status === 'Open' && (
                                             <button
                                                 onClick={() => setEditingSupplier(true)}
@@ -782,6 +795,7 @@ export default function JobCardDetail() {
                                 errors={invoiceErrs}
                                 showErrors={showInvoiceErrors}
                                 todayStr={todayStr}
+                                optional
                             >
                                 {showInvoiceErrors && !jobCard.supplier_id && (
                                     <p className="text-xs text-red-600">
@@ -816,18 +830,17 @@ export default function JobCardDetail() {
                             <>
                                 <DocumentUpload
                                     label=""
-                                    required
                                     value={jobCard.invoice_url}
                                     onChange={(url) =>
                                         updateJobCard.mutate({ id: jobCard.id, updates: { invoice_url: url } })
                                     }
                                     accept=".pdf,.jpg,.jpeg,.png"
                                 />
-                                {!jobCard.invoice_url && (
-                                    <p className="mt-2 text-xs text-amber-600 font-medium">
-                                        {jobCard.status === 'Completed - Invoice Pending'
-                                            ? 'Invoice upload required to finalize this job card.'
-                                            : 'Invoice upload required before completing this job card.'}
+                                {!jobCard.invoice_url && !isBatchLinked && (
+                                    <p className="mt-2 text-xs text-gray-500">
+                                        {isInvoicePending
+                                            ? 'Upload the invoice and fill in its details to finalize this job card.'
+                                            : 'Optional — without an invoice the job card closes as Invoice Pending.'}
                                     </p>
                                 )}
                             </>
@@ -869,52 +882,32 @@ export default function JobCardDetail() {
                     )}
                 </div>
 
-                {/* ── Complete Job Card — exec only, Open status only ──────── */}
+                {/* ── Complete Job Card — exec only, Open status only. An outsourced
+                     card with no invoice (and no multi-vehicle invoice line) closes as
+                     Invoice Pending instead. ─────────────────────────────────── */}
                 {isExec && jobCard.status === 'Open' && (
-                    <button
-                        onClick={handleCompleteJobCard}
-                        disabled={!canComplete || updateJobCard.isPending || upsertInvoice.isPending}
-                        title={
-                            !isAllDone
-                                ? 'Mark all issues as Done first'
-                                : needsInvoiceFile
-                                ? 'Upload an invoice before completing'
-                                : !hasSupplier
-                                ? 'Assign a supplier before completing'
-                                : !invoiceValid
-                                ? 'Fill in all required invoice details'
-                                : ''
-                        }
-                        className={`w-full py-4 rounded-xl text-base font-semibold text-white shadow-sm transition-colors ${
-                            canComplete
-                                ? 'bg-green-600 hover:bg-green-700'
-                                : 'bg-gray-300 cursor-not-allowed'
-                        }`}
-                    >
-                        {upsertInvoice.isPending ? 'Saving invoice…' : 'Complete Job Card'}
-                    </button>
-                )}
-
-                {/* ── Close — Invoice Pending — outsource Open cards only ───── */}
-                {isExec && jobCard.status === 'Open' && isOutsource && (
-                    <button
-                        onClick={handleCloseInvoicePending}
-                        disabled={!canCloseInvoicePending || updateJobCard.isPending}
-                        title={
-                            !isAllDone
-                                ? 'Mark all issues as Done first'
-                                : !hasSupplier
-                                ? 'Assign a supplier before closing'
-                                : ''
-                        }
-                        className={`w-full py-4 rounded-xl text-base font-semibold shadow-sm transition-colors ${
-                            canCloseInvoicePending
-                                ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                                : 'bg-gray-300 text-white cursor-not-allowed'
-                        }`}
-                    >
-                        Close — Invoice Pending
-                    </button>
+                    <div>
+                        <button
+                            onClick={handleCompleteJobCard}
+                            disabled={!canComplete || batchLinesLoading || updateJobCard.isPending || upsertInvoice.isPending}
+                            className={`w-full py-4 rounded-xl text-base font-semibold text-white shadow-sm transition-colors ${
+                                !canComplete
+                                    ? 'bg-gray-300 cursor-not-allowed'
+                                    : closesAsInvoicePending
+                                    ? 'bg-amber-500 hover:bg-amber-600'
+                                    : 'bg-green-600 hover:bg-green-700'
+                            }`}
+                        >
+                            {upsertInvoice.isPending
+                                ? 'Saving invoice…'
+                                : closesAsInvoicePending
+                                ? 'Close — Invoice Pending'
+                                : 'Complete Job Card'}
+                        </button>
+                        {completeBlockedReason && (
+                            <p className="mt-2 text-sm text-center text-gray-500">{completeBlockedReason}</p>
+                        )}
+                    </div>
                 )}
 
                 {/* ── Invoice Pending banner + Finalize button ─────────────── */}
@@ -923,19 +916,14 @@ export default function JobCardDetail() {
                         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
                             <p className="text-sm text-amber-800 font-medium">Invoice not yet received</p>
                             <p className="text-xs text-amber-700 mt-0.5">
-                                Upload the invoice file and fill in the invoice details above, then click Finalize Invoice to fully close this job card.
+                                {isBatchLinked
+                                    ? 'This job card is billed on a multi-vehicle invoice — click Finalize Invoice to fully close it.'
+                                    : 'Upload the invoice file and fill in the invoice details above, or bill it on a multi-vehicle invoice, then click Finalize Invoice to fully close this job card.'}
                             </p>
                         </div>
                         <button
                             onClick={handleFinalizeInvoice}
                             disabled={!canFinalize || upsertInvoice.isPending || finalizeInvoice.isPending}
-                            title={
-                                needsInvoiceFile
-                                    ? 'Upload the invoice file first'
-                                    : !invoiceValid
-                                    ? 'Fill in all required invoice details'
-                                    : ''
-                            }
                             className={`w-full py-4 rounded-xl text-base font-semibold text-white shadow-sm transition-colors ${
                                 canFinalize
                                     ? 'bg-green-600 hover:bg-green-700'
@@ -944,6 +932,9 @@ export default function JobCardDetail() {
                         >
                             {upsertInvoice.isPending || finalizeInvoice.isPending ? 'Saving…' : 'Finalize Invoice'}
                         </button>
+                        {finalizeBlockedReason && (
+                            <p className="-mt-1 text-sm text-center text-gray-500">{finalizeBlockedReason}</p>
+                        )}
                     </>
                 )}
 

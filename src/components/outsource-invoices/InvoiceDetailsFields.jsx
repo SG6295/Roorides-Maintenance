@@ -49,9 +49,12 @@ export function InvoiceDetailsReadOnly({ invoice }) {
 
 /**
  * The editable invoice fields. `errors` comes from validateInvoiceForm and is shown
- * only once `showErrors` is set; `children` render below the fields.
+ * only once `showErrors` is set; `children` render below the fields. `optional` drops the
+ * required marks — on a job card the invoice may come later, but once started it is
+ * checked in full.
  */
-export default function InvoiceDetailsFields({ form, setForm, errors, showErrors, todayStr, children }) {
+export default function InvoiceDetailsFields({ form, setForm, errors, showErrors, todayStr, optional = false, children }) {
+    const req = optional ? null : <span className="text-red-500">*</span>
     const payableAmount = (() => {
         const aa = parseFloat(form.approvedAmount)
         const adv = parseFloat(form.advanceAmount)
@@ -63,7 +66,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Date of Activity <span className="text-red-500">*</span>
+                        Date of Activity {req}
                     </label>
                     <input
                         type="date"
@@ -78,7 +81,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Invoice No <span className="text-red-500">*</span>
+                        Invoice No {req}
                     </label>
                     <input
                         type="text"
@@ -97,7 +100,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Paid By <span className="text-red-500">*</span>
+                        Paid By {req}
                     </label>
                     <CustomSelect
                         value={form.paidBy}
@@ -112,7 +115,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Payment status reported by maintenance <span className="text-red-500">*</span>
+                        Payment status reported by maintenance {req}
                     </label>
                     <CustomSelect
                         value={form.maintenancePaymentStatus}
@@ -130,7 +133,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Invoice Value (₹) <span className="text-red-500">*</span>
+                        Invoice Value (₹) {req}
                     </label>
                     <input
                         type="number"
@@ -147,7 +150,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Approved Amount (₹) <span className="text-red-500">*</span>
+                        Approved Amount (₹) {req}
                     </label>
                     <input
                         type="number"
@@ -167,7 +170,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Advance Amount (₹) <span className="text-red-500">*</span>
+                        Advance Amount (₹) {req}
                     </label>
                     <input
                         type="number"
@@ -198,7 +201,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Pay By Date <span className="text-red-500">*</span>
+                        Pay By Date {req}
                     </label>
                     <input
                         type="date"
