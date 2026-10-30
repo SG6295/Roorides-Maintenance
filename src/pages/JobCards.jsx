@@ -53,7 +53,7 @@ export default function JobCards() {
                     {/* One invoice for work on many vehicles, without a job card each (MAIN-99). */}
                     {canCreateBatch && (
                         <Link
-                            to="/batch-invoices/new"
+                            to="/multi-vehicle-invoices/new"
                             className="text-sm px-3 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 whitespace-nowrap"
                         >
                             + Multi-vehicle invoice

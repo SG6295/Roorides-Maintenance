@@ -26,6 +26,9 @@ import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal
 import ScrapDecisionModal from '../components/job-cards/ScrapDecisionModal'
 import { supabase } from '../lib/supabase'
 import IssueWorkCard from '../components/job-cards/IssueWorkCard'
+import LinkedBatchInvoices from '../components/job-cards/LinkedBatchInvoices'
+import { useJobCardBatchLines } from '../hooks/useBatchServices'
+import { formatBatchNumber } from '../utils/batchNumber'
 
 import {
     UserIcon,
@@ -57,6 +60,9 @@ export default function JobCardDetail() {
     const { data: workshopLocations = [] } = useWorkshopLocations()
 
     const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    // Multi-vehicle invoice lines linked to this card (MAIN-112). While any exist the
+    // card must stay outsourced; the database refuses the switch too.
+    const { data: linkedBatchLines = [] } = useJobCardBatchLines(jobCard?.id, { enabled: isExec })
     const isMechanic = ['mechanic', 'electrician', 'maintenance_exec', 'super_admin'].includes(userProfile?.role)
 
     // Mechanic assignment
@@ -331,6 +337,9 @@ export default function JobCardDetail() {
     // the exec try and hit an error.
     const workshopLocked =
         !isOutsource && (jobCard.issues || []).some(i => (i.issue_parts || []).length > 0)
+    const typeLockedBy = isOutsource && linkedBatchLines.length > 0
+        ? [...new Set(linkedBatchLines.map(l => formatBatchNumber(l.batch.batch_number)))].join(', ')
+        : null
 
     return (
         <div className="min-h-screen bg-gray-50 pb-16">
@@ -449,12 +458,19 @@ export default function JobCardDetail() {
                                         {jobLocationLabel}
                                     </span>
                                     {isExec && jobCard.status === 'Open' && (
-                                        <button
-                                            onClick={() => { setPendingType(jobCard.type); setEditingJobLocation(true) }}
-                                            className="text-gray-500 hover:text-blue-600"
-                                        >
-                                            <PencilIcon className="w-3.5 h-3.5" />
-                                        </button>
+                                        typeLockedBy ? (
+                                            <LockClosedIcon
+                                                className="w-3.5 h-3.5 text-gray-400"
+                                                title={`Linked to multi-vehicle invoice ${typeLockedBy}, so it must stay outsourced. Remove the link on that invoice first.`}
+                                            />
+                                        ) : (
+                                            <button
+                                                onClick={() => { setPendingType(jobCard.type); setEditingJobLocation(true) }}
+                                                className="text-gray-500 hover:text-blue-600"
+                                            >
+                                                <PencilIcon className="w-3.5 h-3.5" />
+                                            </button>
+                                        )
                                     )}
                                 </span>
                             )}
@@ -817,6 +833,14 @@ export default function JobCardDetail() {
                             </>
                         )}
                     </div>
+                )}
+
+                {/* ── Multi-vehicle invoices linked to this card (MAIN-112) ── */}
+                {isOutsource && (
+                    <LinkedBatchInvoices
+                        jobCardId={jobCard.id}
+                        enabled={isExec || userProfile?.role === 'finance'}
+                    />
                 )}
 
                 {/* ── Execution Remarks ────────────────────────────────────── */}

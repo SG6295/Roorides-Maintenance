@@ -64,24 +64,39 @@ export type Database = {
           batch_service_id: string
           created_at: string
           id: string
+          job_card_id: string | null
+          quantity: number | null
+          rate: number | null
           site: string | null
           vehicle_number: string
+          work_type: string | null
+          work_type_other: string | null
         }
         Insert: {
           amount: number
           batch_service_id: string
           created_at?: string
           id?: string
+          job_card_id?: string | null
+          quantity?: number | null
+          rate?: number | null
           site?: string | null
           vehicle_number: string
+          work_type?: string | null
+          work_type_other?: string | null
         }
         Update: {
           amount?: number
           batch_service_id?: string
           created_at?: string
           id?: string
+          job_card_id?: string | null
+          quantity?: number | null
+          rate?: number | null
           site?: string | null
           vehicle_number?: string
+          work_type?: string | null
+          work_type_other?: string | null
         }
         Relationships: [
           {
@@ -91,33 +106,52 @@ export type Database = {
             referencedRelation: "batch_services"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "batch_service_vehicles_job_card_id_fkey"
+            columns: ["job_card_id"]
+            isOneToOne: false
+            referencedRelation: "job_cards"
+            referencedColumns: ["id"]
+          },
         ]
       }
       batch_services: {
         Row: {
+          batch_number: number
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           created_at: string
           created_by: string | null
-          description: string
           id: string
           invoice_url: string
+          status: string
           supplier_id: string
           updated_at: string
         }
         Insert: {
+          batch_number?: never
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           created_by?: string | null
-          description: string
           id?: string
           invoice_url: string
+          status?: string
           supplier_id: string
           updated_at?: string
         }
         Update: {
+          batch_number?: never
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           created_by?: string | null
-          description?: string
           id?: string
           invoice_url?: string
+          status?: string
           supplier_id?: string
           updated_at?: string
         }
@@ -2203,6 +2237,10 @@ export type Database = {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
         Returns: undefined
       }
+      cancel_batch_service_invoice: {
+        Args: { p_batch_id: string; p_reason: string }
+        Returns: undefined
+      }
       cancel_outsource_invoice_payment: {
         Args: { p_payment_id: string; p_reason: string }
         Returns: undefined
@@ -2360,6 +2398,10 @@ export type Database = {
       record_scrap_writeoff: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
+      }
+      restore_batch_service_invoice: {
+        Args: { p_batch_id: string; p_links: Json }
+        Returns: undefined
       }
       save_batch_service_invoice: {
         Args: {

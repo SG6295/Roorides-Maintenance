@@ -2,7 +2,9 @@ import { useInvoicePayments } from '../../hooks/useOutsourceInvoices'
 import { invoiceSettlement } from '../../utils/settlement'
 import RecordPaymentForm from './RecordPaymentForm'
 import PaymentList from './PaymentList'
-import { fmtMoney, fmtPaise } from './format'
+import { fmtMoney, fmtPaise, fmtDate } from './format'
+import { workTypeLabel, workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTypes'
+import { formatBatchNumber } from '../../utils/batchNumber'
 
 /**
  * The strip under an expanded invoice row (MAIN-98): its payments as a small table,
@@ -50,20 +52,29 @@ export default function PaymentStrip({ invoice, canManage }) {
     )
 }
 
-/** What a multi-vehicle invoice (MAIN-99) covered: its work and each vehicle's share. */
+/** What a multi-vehicle invoice (MAIN-99) covered: each vehicle's work and share (MAIN-112). */
 function BatchVehicles({ batch }) {
     return (
         <div className="pb-3 border-b border-blue-200">
+            {batch.status === 'Cancelled' && (
+                <p className="text-xs text-red-700 mb-1.5">
+                    <span className="font-semibold">Cancelled</span>
+                    {batch.cancelled_at && ` on ${fmtDate(batch.cancelled_at)}`} — {batch.cancel_reason}
+                </p>
+            )}
             <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide mb-1.5">
-                {batch.description} — {batch.vehicles?.length ?? 0} vehicles
+                {formatBatchNumber(batch.batch_number)} · {workTypeSummary(batch.vehicles)} — {vehicleCountLabel(batch.vehicles)}
             </h4>
             <div className="flex flex-wrap gap-1.5">
                 {[...(batch.vehicles ?? [])]
                     .sort((a, b) => a.vehicle_number.localeCompare(b.vehicle_number))
                     .map(v => (
-                        <span key={v.vehicle_number} className="bg-white border border-blue-200 rounded px-2 py-0.5 text-xs text-gray-700">
+                        <span key={v.id} className="bg-white border border-blue-200 rounded px-2 py-0.5 text-xs text-gray-700">
                             <span className="font-mono">{v.vehicle_number}</span>
-                            {v.site && <span className="text-gray-500"> · {v.site}</span>} {fmtMoney(v.amount)}
+                            {v.site && <span className="text-gray-500"> · {v.site}</span>}
+                            <span className="text-gray-500"> · {workTypeLabel(v)}{v.quantity > 1 && ` ×${v.quantity}`}</span>
+                            {v.linked_job_card && <span className="text-gray-500"> · JC #{v.linked_job_card.job_card_number}</span>}
+                            {' '}{fmtMoney(v.amount)}
                         </span>
                     ))}
             </div>

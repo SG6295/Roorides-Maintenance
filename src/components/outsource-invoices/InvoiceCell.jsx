@@ -3,6 +3,8 @@ import FinanceStatusCell from './FinanceStatusCell'
 import RemarkCell from './RemarkCell'
 import InvoiceFileLink from './InvoiceFileLink'
 import { fmtMoney, fmtPaise, fmtDate, MAINTENANCE_STATUS_COLORS } from './format'
+import { workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTypes'
+import { formatBatchNumber, batchPath } from '../../utils/batchNumber'
 
 /**
  * One cell of the Outsource Invoices list (MAIN-98), by column key — the column
@@ -17,9 +19,16 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr
     switch (columnKey) {
         case 'job_card':
             return batch ? (
-                <Link to={`/batch-invoices/${batch.id}`} className="text-blue-600 hover:underline font-medium" title={batch.description}>
-                    Batch
-                </Link>
+                <span className="inline-flex items-center gap-1.5">
+                    <Link to={batchPath(batch.batch_number)} className="text-blue-600 hover:underline font-medium" title={workTypeSummary(batch.vehicles)}>
+                        {formatBatchNumber(batch.batch_number)}
+                    </Link>
+                    {inv.cancelled && (
+                        <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-700" title={batch.cancel_reason}>
+                            Cancelled
+                        </span>
+                    )}
+                </span>
             ) : (
                 <Link to={`/job-cards/${inv.job_card?.job_card_number}`} className="text-blue-600 hover:underline font-medium">
                     #{inv.job_card?.job_card_number}
@@ -27,7 +36,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr
             )
         case 'vehicle':
             return batch
-                ? `${batch.vehicles?.length ?? 0} vehicle${batch.vehicles?.length === 1 ? '' : 's'}`
+                ? vehicleCountLabel(batch.vehicles)
                 : inv.job_card?.vehicle_number || '—'
         case 'supplier':      return owner?.supplier?.entity_name || '—'
         case 'invoice_no':    return <span className="font-mono">{inv.invoice_no || '—'}</span>
@@ -60,7 +69,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr
         case 'last_paid_on':   return fmtDate(inv.lastPaidOn)
         case 'last_ledger':    return inv.lastLedger || '—'
         case 'pay_by': {
-            const overdue = !!(inv.payby_date && inv.payby_date < todayStr && inv.finance_payment_status !== 'Paid')
+            const overdue = !inv.cancelled && !!(inv.payby_date && inv.payby_date < todayStr && inv.finance_payment_status !== 'Paid')
             return (
                 <span className={`font-medium ${overdue ? 'text-red-600' : 'text-gray-700'}`}>
                     {fmtDate(inv.payby_date)}

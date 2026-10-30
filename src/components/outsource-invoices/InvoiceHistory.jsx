@@ -1,6 +1,7 @@
 import { useOutsourceInvoiceHistory } from '../../hooks/useOutsourceInvoices'
 import { fmtMoney, fmtDate, fmtDateTime } from './format'
 import { foldStatusChanges, groupBatchLines } from './historyEntries'
+import { workTypeLabel } from '../../constants/batchWorkTypes'
 
 const FIELD_LABELS = {
     maintenance_payment_status: 'Maintenance status',
@@ -31,18 +32,43 @@ function StatusChange({ change }) {
     )
 }
 
-// What one vehicle-line change on a multi-vehicle invoice did (MAIN-99).
-// Lines saved before sites moved onto them carry no site, hence the guards.
+// What one vehicle-line change on a multi-vehicle invoice did (MAIN-99, MAIN-112).
+// Lines saved before sites, and then work types, moved onto them carry neither,
+// hence the guards.
 function lineChange(line) {
-    const vehicle = line.new_data?.vehicle_number ?? line.old_data?.vehicle_number
-    const at = data => (data?.site ? ` (${data.site})` : '')
-    if (line.action === 'INSERT') return `Added ${vehicle}${at(line.new_data)} — ${fmtMoney(line.new_data?.amount)}`
-    if (line.action === 'DELETE') return `Removed ${vehicle}${at(line.old_data)} (was ${fmtMoney(line.old_data?.amount)})`
-    return (line.changed_fields ?? ['amount'])
-        .map(f => (f === 'site'
-            ? `${vehicle} site: ${line.old_data?.site ?? '—'} → ${line.new_data?.site ?? '—'}`
-            : `${vehicle}: ${fmtMoney(line.old_data?.amount)} → ${fmtMoney(line.new_data?.amount)}`))
-        .join('; ')
+    const data = line.new_data ?? line.old_data ?? {}
+    const work = d => (d?.work_type ? ` ${workTypeLabel(d)}` : '')
+    const at = d => (d?.site ? ` (${d.site})` : '')
+    const priced = d => (d?.rate != null ? ` ${d.quantity} × ${fmtMoney(d.rate)}` : '')
+    if (line.action === 'INSERT') {
+        const linked = line.new_data?.job_card_id ? ', job card linked' : ''
+        return `Added ${data.vehicle_number}${at(line.new_data)}${work(line.new_data)}${priced(line.new_data)} — ${fmtMoney(line.new_data?.amount)}${linked}`
+    }
+    if (line.action === 'DELETE') {
+        return `Removed ${data.vehicle_number}${at(line.old_data)}${work(line.old_data)} (was ${fmtMoney(line.old_data?.amount)})`
+    }
+
+    const which = `${line.new_data?.vehicle_number ?? line.old_data?.vehicle_number}${work(line.new_data)}`
+    const changed = line.changed_fields ?? ['amount']
+    const was = f => line.old_data?.[f]
+    const now = f => line.new_data?.[f]
+    const parts = []
+    if (changed.includes('vehicle_number')) parts.push(`vehicle ${was('vehicle_number')} → ${now('vehicle_number')}`)
+    if (changed.includes('site')) parts.push(`site ${was('site') ?? '—'} → ${now('site') ?? '—'}`)
+    if (changed.includes('work_type') || changed.includes('work_type_other')) {
+        parts.push(`work ${was('work_type') ? workTypeLabel(line.old_data) : '—'} → ${workTypeLabel(line.new_data)}`)
+    }
+    if (changed.includes('rate')) parts.push(`rate ${fmtMoney(was('rate'))} → ${fmtMoney(now('rate'))}`)
+    if (changed.includes('quantity')) parts.push(`qty ${was('quantity') ?? '—'} → ${now('quantity')}`)
+    // The amount follows rate × quantity; it is named only when it changed on its own,
+    // as it did before lines had a rate.
+    if (changed.includes('amount') && !changed.includes('rate') && !changed.includes('quantity')) {
+        parts.push(`${fmtMoney(was('amount'))} → ${fmtMoney(now('amount'))}`)
+    }
+    if (changed.includes('job_card_id')) {
+        parts.push(!was('job_card_id') ? 'job card linked' : !now('job_card_id') ? 'job card removed' : 'job card changed')
+    }
+    return `${which}: ${parts.join(', ')}`
 }
 
 // A change to a multi-vehicle invoice's work details. The vendor and the file are
@@ -50,7 +76,8 @@ function lineChange(line) {
 function batchFieldChange(field, entry) {
     if (field === 'supplier_id') return 'Vendor changed'
     if (field === 'invoice_url') return 'Invoice file replaced'
-    // 'site' appears only in entries from before sites moved onto the vehicle lines.
+    // 'description' and 'site' appear only in entries from before the work (MAIN-112)
+    // and the site moved onto the vehicle lines.
     const label = field === 'description' ? 'Work' : 'Site'
     return `${label}: ${entry.old_data?.[field] ?? '—'} → ${entry.new_data?.[field] ?? '—'}`
 }
@@ -69,13 +96,33 @@ function Entry({ entry }) {
         )
     }
 
+    if (entry.source === 'batch' && entry.changed_fields?.includes('status')) {
+        // Cancelling and restoring a multi-vehicle invoice (MAIN-112).
+        return entry.new_data?.status === 'Cancelled' ? (
+            <>
+                <p className="text-sm text-red-700 font-medium">{who} cancelled the invoice</p>
+                <p className="text-xs text-gray-600">Reason: {entry.new_data?.cancel_reason ?? '—'}</p>
+            </>
+        ) : (
+            <>
+                <p className="text-sm text-gray-900">{who} restored the invoice</p>
+                {entry.old_data?.cancel_reason && (
+                    <p className="text-xs text-gray-600">It had been cancelled for: {entry.old_data.cancel_reason}</p>
+                )}
+            </>
+        )
+    }
+
     if (entry.source === 'batch') {
         return entry.action === 'INSERT' ? (
             <>
                 <p className="text-sm text-gray-900">{who} recorded the work</p>
-                <p className="text-xs text-gray-600">
-                    {entry.new_data?.description}{entry.new_data?.site && ` · ${entry.new_data.site}`}
-                </p>
+                {/* Only entries from before the work moved onto the lines carry these. */}
+                {(entry.new_data?.description || entry.new_data?.site) && (
+                    <p className="text-xs text-gray-600">
+                        {entry.new_data?.description}{entry.new_data?.site && ` · ${entry.new_data.site}`}
+                    </p>
+                )}
             </>
         ) : (
             <>

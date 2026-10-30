@@ -1,44 +1,41 @@
 import { describe, it, expect } from 'vitest'
-import { splitEvenly, linesSummary } from '../batchSplit'
+import { lineAmount, linesSummary } from '../batchSplit'
 
-describe('splitEvenly', () => {
-    it('splits an amount that divides evenly', () => {
-        expect(splitEvenly('750', 15)).toEqual(Array(15).fill('50.00'))
+describe('lineAmount', () => {
+    it('is rate × quantity in paise', () => {
+        expect(lineAmount({ rate: '50', quantity: '1' })).toBe(5000)
+        expect(lineAmount({ rate: '33.33', quantity: '3' })).toBe(9999)
+        expect(lineAmount({ rate: '0.10', quantity: 7 })).toBe(70)
     })
 
-    it('puts the leftover paise on the last line', () => {
-        expect(splitEvenly('100', 3)).toEqual(['33.33', '33.33', '33.34'])
-        expect(splitEvenly('0.10', 3)).toEqual(['0.03', '0.03', '0.04'])
+    it('is NaN for a blank, malformed or zero rate', () => {
+        expect(lineAmount({ rate: '', quantity: '1' })).toBeNaN()
+        expect(lineAmount({ rate: '1.234', quantity: '1' })).toBeNaN()
+        expect(lineAmount({ rate: '0', quantity: '1' })).toBeNaN()
     })
 
-    it('always adds back up to the approved amount', () => {
-        const parts = splitEvenly('1234.57', 7)
-        const total = parts.reduce((s, p) => s + Math.round(Number(p) * 100), 0)
-        expect(total).toBe(123457)
-    })
-
-    it('returns nothing to split for no vehicles or a bad amount', () => {
-        expect(splitEvenly('750', 0)).toEqual([])
-        expect(splitEvenly('', 3)).toEqual([])
-        expect(splitEvenly('abc', 3)).toEqual([])
-        expect(splitEvenly('0', 3)).toEqual([])
+    it('is NaN unless the quantity is a whole number of at least 1', () => {
+        expect(lineAmount({ rate: '50', quantity: '' })).toBeNaN()
+        expect(lineAmount({ rate: '50', quantity: '0' })).toBeNaN()
+        expect(lineAmount({ rate: '50', quantity: '1.5' })).toBeNaN()
+        expect(lineAmount({ rate: '50', quantity: '-2' })).toBeNaN()
     })
 })
 
 describe('linesSummary', () => {
     it('reports an exact match', () => {
-        const s = linesSummary([{ amount: '250' }, { amount: '400' }, { amount: '100.00' }], '750')
+        const s = linesSummary([{ rate: '50', quantity: '12' }, { rate: '50', quantity: '3' }], '750')
         expect(s).toMatchObject({ total: 75000, approved: 75000, difference: 0, invalid: [] })
     })
 
     it('reports amount left to allocate and over-allocation', () => {
-        expect(linesSummary([{ amount: '700' }], '750').difference).toBe(5000)
-        expect(linesSummary([{ amount: '800' }], '750').difference).toBe(-5000)
+        expect(linesSummary([{ rate: '700', quantity: '1' }], '750').difference).toBe(5000)
+        expect(linesSummary([{ rate: '400', quantity: '2' }], '750').difference).toBe(-5000)
     })
 
-    it('flags blank, malformed and zero lines without counting them', () => {
-        const s = linesSummary([{ amount: '' }, { amount: '1.234' }, { amount: '0' }, { amount: '50' }], '50')
-        expect(s.invalid).toEqual([0, 1, 2])
+    it('flags unusable lines without counting them', () => {
+        const s = linesSummary([{ rate: '', quantity: '1' }, { rate: '50', quantity: '0' }, { rate: '50', quantity: '1' }], '50')
+        expect(s.invalid).toEqual([0, 1])
         expect(s.total).toBe(5000)
         expect(s.difference).toBe(0)
     })
