@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { formatAs } from '../utils/datetime'
 import { useJobCards } from '../hooks/useJobCards'
+import { labourTechnicianNames } from '../utils/labour'
 import { useAuth } from '../hooks/useAuth'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
@@ -29,7 +30,7 @@ export default function JobCards() {
     const { data: jobCards, isLoading } = useJobCards(filters)
     const { data: locations = [] } = useWorkshopLocations()
 
-    // Client-side search for vehicle number or mechanic name if backend filter not implemented
+    // Client-side search for vehicle number or technician name if backend filter not implemented
     const filteredJobCards = jobCards?.filter(jc => {
         if (!filters.search) return true
         const term = filters.search.toLowerCase()
@@ -37,7 +38,7 @@ export default function JobCards() {
             jc.job_card_number?.toString().includes(term) ||
             jc.vehicle_number?.toLowerCase().includes(term) ||
             jc.vendor_name?.toLowerCase().includes(term) ||
-            jc.mechanic?.name?.toLowerCase().includes(term)
+            labourTechnicianNames(jc.issues).some(n => n.toLowerCase().includes(term))
         )
     })
 
@@ -154,7 +155,7 @@ export default function JobCards() {
                                                     <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-xs font-medium">Outsource</span>
                                                 )}
                                                 <span className="block text-sm text-gray-600 mt-0.5">
-                                                    {jc.type === 'InHouse' ? jc.mechanic?.name || 'Unassigned' : jc.vendor_name}
+                                                    {jc.type === 'InHouse' ? labourTechnicianNames(jc.issues).join(', ') || 'No labour yet' : jc.vendor_name}
                                                 </span>
                                             </div>
                                         </td>

@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../utils/fetchAllRows'
+import { toDate } from '../utils/datetime'
 
 /**
  * All parts with stock levels, ordered by name.
@@ -257,13 +259,13 @@ export function usePartConsumption(filters = {}) {
                     part:parts(id, name, part_number, unit),
                     issue:issues(
                         id,
+                        issue_labour(technician:technician_id(id, name)),
                         job_card:job_cards(
                             id,
                             job_card_number,
                             vehicle_number,
                             status,
-                            location:workshop_locations!location_id(id, name),
-                            mechanic:users!job_cards_assigned_mechanic_id_fkey(id, name)
+                            location:workshop_locations!location_id(id, name)
                         )
                     )
                 `)
@@ -280,23 +282,28 @@ export function usePartConsumption(filters = {}) {
             const { data, error } = await query
             if (error) throw error
 
-            let rows = (data || []).map(row => ({
-                id: row.id,
-                source: 'job_card',
-                quantity_used: row.quantity_used,
-                added_at: row.added_at,
-                part_name: row.part?.name,
-                part_number: row.part?.part_number,
-                unit: row.part?.unit,
-                job_card_id: row.issue?.job_card?.id,
-                job_card_number: row.issue?.job_card?.job_card_number,
-                vehicle_number: row.issue?.job_card?.vehicle_number,
-                job_card_status: row.issue?.job_card?.status,
-                location_id: row.issue?.job_card?.location?.id,
-                location_name: row.issue?.job_card?.location?.name,
-                mechanic_id: row.issue?.job_card?.mechanic?.id,
-                mechanic_name: row.issue?.job_card?.mechanic?.name,
-            }))
+            let rows = (data || []).map(row => {
+                // The technicians who logged labour on the work item the part went into
+                // (MAIN-116). The link to a mechanic page needs exactly one of them.
+                const techs = (row.issue?.issue_labour || []).map(l => l.technician).filter(Boolean)
+                return {
+                    id: row.id,
+                    source: 'job_card',
+                    quantity_used: row.quantity_used,
+                    added_at: row.added_at,
+                    part_name: row.part?.name,
+                    part_number: row.part?.part_number,
+                    unit: row.part?.unit,
+                    job_card_id: row.issue?.job_card?.id,
+                    job_card_number: row.issue?.job_card?.job_card_number,
+                    vehicle_number: row.issue?.job_card?.vehicle_number,
+                    job_card_status: row.issue?.job_card?.status,
+                    location_id: row.issue?.job_card?.location?.id,
+                    location_name: row.issue?.job_card?.location?.name,
+                    mechanic_id: techs.length === 1 ? techs[0].id : null,
+                    mechanic_name: techs.map(t => t.name).join(', ') || null,
+                }
+            })
 
             // Stock audits remove (or return) stock without a job card, so they belong in
             // this history too — otherwise a part's quantity drops with nothing here to
@@ -399,8 +406,7 @@ export function useVehicleHistory(vehicleNumber) {
                     type,
                     created_at,
                     completed_at,
-                    mechanic:assigned_mechanic_id(id, name),
-                    issues(id, description, status, labour_hours)
+                    issues(id, description, status, labour_hours, issue_labour(id, hours, technician:technician_id(id, name)))
                 `)
                 .eq('vehicle_number', vehicleNumber)
                 .order('created_at', { ascending: false })
@@ -458,27 +464,43 @@ export function useMechanicProfile(mechanicId) {
     })
 }
 
+/**
+ * The job cards a technician recorded labour on (MAIN-116), newest first. Each card's
+ * `issues` holds only the work items they worked on, with `labour_hours` set to *their*
+ * hours on that item rather than the item's total.
+ */
 export function useMechanicActivity(mechanicId) {
     return useQuery({
         queryKey: ['mechanic_activity', mechanicId],
         enabled: !!mechanicId,
         queryFn: async () => {
-            const { data, error } = await supabase
-                .from('job_cards')
+            const rows = await fetchAllRows(() => supabase
+                .from('issue_labour')
                 .select(`
                     id,
-                    job_card_number,
-                    vehicle_number,
-                    status,
-                    type,
-                    created_at,
-                    completed_at,
-                    issues(id, description, status, labour_hours)
+                    hours,
+                    issue:issue_id(
+                        id, description, status, completed_on,
+                        job_card:job_card_id(id, job_card_number, vehicle_number, status, type, created_at, completed_at)
+                    )
                 `)
-                .eq('assigned_mechanic_id', mechanicId)
-                .order('created_at', { ascending: false })
-            if (error) throw error
-            return data || []
+                .eq('technician_id', mechanicId)
+                .order('id'))
+
+            const cards = new Map()
+            for (const row of rows) {
+                const jc = row.issue?.job_card
+                if (!jc) continue
+                if (!cards.has(jc.id)) cards.set(jc.id, { ...jc, issues: [] })
+                cards.get(jc.id).issues.push({
+                    id: row.issue.id,
+                    description: row.issue.description,
+                    status: row.issue.status,
+                    completed_on: row.issue.completed_on,
+                    labour_hours: row.hours,
+                })
+            }
+            return [...cards.values()].sort((a, b) => toDate(b.created_at) - toDate(a.created_at))
         },
     })
 }

@@ -301,6 +301,58 @@ export type Database = {
         }
         Relationships: []
       }
+      issue_labour: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          hours: number
+          id: string
+          issue_id: string
+          technician_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          hours: number
+          id?: string
+          issue_id: string
+          technician_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          hours?: number
+          id?: string
+          issue_id?: string
+          technician_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "issue_labour_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issue_labour_issue_id_fkey"
+            columns: ["issue_id"]
+            isOneToOne: false
+            referencedRelation: "issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issue_labour_technician_id_fkey"
+            columns: ["technician_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       issue_parts: {
         Row: {
           added_at: string | null
@@ -365,6 +417,7 @@ export type Database = {
       issues: {
         Row: {
           category: Database["public"]["Enums"]["issue_category"]
+          completed_on: string | null
           created_at: string | null
           description: string
           id: string
@@ -384,6 +437,7 @@ export type Database = {
         }
         Insert: {
           category: Database["public"]["Enums"]["issue_category"]
+          completed_on?: string | null
           created_at?: string | null
           description: string
           id?: string
@@ -403,6 +457,7 @@ export type Database = {
         }
         Update: {
           category?: Database["public"]["Enums"]["issue_category"]
+          completed_on?: string | null
           created_at?: string | null
           description?: string
           id?: string
@@ -2374,6 +2429,10 @@ export type Database = {
           pending_approval_count: number
           total_unpaid_payable: number
         }[]
+      }
+      has_labour_on_job_card: {
+        Args: { p_job_card_id: string }
+        Returns: boolean
       }
       is_finance: { Args: never; Returns: boolean }
       is_maintenance_exec: { Args: never; Returns: boolean }

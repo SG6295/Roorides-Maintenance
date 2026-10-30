@@ -1487,6 +1487,26 @@ $$;
 ALTER FUNCTION public.check_pan_exists(p_pan text) OWNER TO postgres;
 
 --
+-- Name: clear_labour_on_outsource(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.clear_labour_on_outsource() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF OLD.type = 'InHouse' AND NEW.type = 'Outsource' THEN
+        DELETE FROM public.issue_labour
+        WHERE  issue_id IN (SELECT id FROM public.issues WHERE job_card_id = NEW.id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.clear_labour_on_outsource() OWNER TO postgres;
+
+--
 -- Name: close_job_card_with_scrap(uuid, text, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2624,6 +2644,44 @@ $$;
 ALTER FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) OWNER TO postgres;
 
 --
+-- Name: guard_issue_labour(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_issue_labour() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_type text;
+BEGIN
+    SELECT jc.type::text INTO v_type
+    FROM   public.issues i
+    JOIN   public.job_cards jc ON jc.id = i.job_card_id
+    WHERE  i.id = NEW.issue_id;
+
+    IF v_type IS DISTINCT FROM 'InHouse' THEN
+        RAISE EXCEPTION 'Labour can only be recorded on a work item of an in-house job card.';
+    END IF;
+
+    IF TG_OP = 'INSERT' OR NEW.technician_id IS DISTINCT FROM OLD.technician_id THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM public.users
+            WHERE  id = NEW.technician_id
+            AND    role IN ('mechanic', 'electrician')
+            AND    is_active
+        ) THEN
+            RAISE EXCEPTION 'Only an active mechanic or electrician can be recorded against labour.';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_issue_labour() OWNER TO postgres;
+
+--
 -- Name: guard_job_card_location_change(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2770,6 +2828,26 @@ $$;
 ALTER FUNCTION public.guard_payment_on_cancelled_batch() OWNER TO postgres;
 
 --
+-- Name: has_labour_on_job_card(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM   public.issue_labour il
+        JOIN   public.issues i ON i.id = il.issue_id
+        WHERE  i.job_card_id = p_job_card_id
+        AND    il.technician_id = auth.uid()
+    );
+$$;
+
+
+ALTER FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) OWNER TO postgres;
+
+--
 -- Name: is_finance(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2913,6 +2991,52 @@ $$;
 
 
 ALTER FUNCTION public.log_batch_service_change() OWNER TO postgres;
+
+--
+-- Name: log_issue_labour_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.log_issue_labour_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_issue public.issues%ROWTYPE;
+    v_old   text;
+    v_new   text;
+BEGIN
+    SELECT * INTO v_issue FROM public.issues WHERE id = coalesce(NEW.issue_id, OLD.issue_id);
+    -- The issue itself is being deleted (cascade): its own deletion is the record.
+    IF NOT FOUND THEN
+        RETURN coalesce(NEW, OLD);
+    END IF;
+
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        SELECT u.name || ' ' || trim_scale(OLD.hours) || ' h' INTO v_old
+        FROM public.users u WHERE u.id = OLD.technician_id;
+    END IF;
+    IF TG_OP IN ('UPDATE', 'INSERT') THEN
+        SELECT u.name || ' ' || trim_scale(NEW.hours) || ' h' INTO v_new
+        FROM public.users u WHERE u.id = NEW.technician_id;
+    END IF;
+
+    IF v_old IS NOT DISTINCT FROM v_new THEN
+        RETURN coalesce(NEW, OLD);
+    END IF;
+
+    INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
+    VALUES ('issues', v_issue.ticket_id, 'UPDATE',
+            jsonb_build_object('issue_number', v_issue.issue_number, 'description', v_issue.description, 'labour', v_old),
+            jsonb_build_object('issue_number', v_issue.issue_number, 'description', v_issue.description, 'labour', v_new),
+            array['labour'],
+            auth.uid());
+
+    RETURN coalesce(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION public.log_issue_labour_change() OWNER TO postgres;
 
 --
 -- Name: log_outsource_invoice_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4188,6 +4312,39 @@ $$;
 
 
 ALTER FUNCTION public.seed_truncate_public_tables() OWNER TO postgres;
+
+--
+-- Name: set_issue_completed_on(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.set_issue_completed_on() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_today date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+BEGIN
+    IF NEW.status::text <> 'Done' THEN
+        NEW.completed_on := NULL;
+        RETURN NEW;
+    END IF;
+
+    -- On reaching Done the row carries the NULL it was cleared to, so this stamps today
+    -- unless the caller sent a date of its own.
+    IF NEW.completed_on IS NULL THEN
+        NEW.completed_on := v_today;
+    END IF;
+
+    IF NEW.completed_on > v_today THEN
+        RAISE EXCEPTION 'The completion date cannot be in the future.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.set_issue_completed_on() OWNER TO postgres;
 
 --
 -- Name: set_scrap_location_from_job_card(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -8505,6 +8662,24 @@ CREATE TABLE public.holidays (
 ALTER TABLE public.holidays OWNER TO postgres;
 
 --
+-- Name: issue_labour; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.issue_labour (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    technician_id uuid NOT NULL,
+    hours numeric(5,2) NOT NULL,
+    created_by uuid DEFAULT auth.uid(),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_labour_hours_check CHECK (((hours > (0)::numeric) AND (hours <= (24)::numeric)))
+);
+
+
+ALTER TABLE public.issue_labour OWNER TO postgres;
+
+--
 -- Name: issue_parts; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -8546,11 +8721,19 @@ CREATE TABLE public.issues (
     rating_remarks text,
     rated_at timestamp without time zone,
     labour_hours numeric(5,2),
+    completed_on date,
     CONSTRAINT check_rated_at_after_created CHECK (((rated_at IS NULL) OR (rated_at >= created_at)))
 );
 
 
 ALTER TABLE public.issues OWNER TO postgres;
+
+--
+-- Name: COLUMN issues.completed_on; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.issues.completed_on IS 'Day the work item was completed (IST). Set when status becomes Done, cleared when it leaves Done; the exec may change it. Labour analytics place hours by this date.';
+
 
 --
 -- Name: job_cards; Type: TABLE; Schema: public; Owner: postgres
@@ -10128,6 +10311,22 @@ ALTER TABLE ONLY public.holidays
 
 
 --
+-- Name: issue_labour issue_labour_issue_technician_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.issue_labour
+    ADD CONSTRAINT issue_labour_issue_technician_key UNIQUE (issue_id, technician_id);
+
+
+--
+-- Name: issue_labour issue_labour_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.issue_labour
+    ADD CONSTRAINT issue_labour_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: issue_parts issue_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -11168,6 +11367,13 @@ CREATE INDEX idx_finance_ticket_id ON public.finance_entries USING btree (ticket
 
 
 --
+-- Name: idx_issue_labour_technician; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_issue_labour_technician ON public.issue_labour USING btree (technician_id);
+
+
+--
 -- Name: idx_issues_job_card_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -11665,6 +11871,20 @@ CREATE TRIGGER batch_services_set_updated_at BEFORE UPDATE ON public.batch_servi
 
 
 --
+-- Name: issue_labour issue_labour_audit; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER issue_labour_audit AFTER INSERT OR DELETE OR UPDATE ON public.issue_labour FOR EACH ROW EXECUTE FUNCTION public.log_issue_labour_change();
+
+
+--
+-- Name: issue_labour issue_labour_set_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER issue_labour_set_updated_at BEFORE UPDATE ON public.issue_labour FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: outsource_invoice_payments outsource_invoice_payments_audit; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -11714,10 +11934,24 @@ CREATE TRIGGER trg_acceptance_sla_on_first_issue AFTER INSERT ON public.issues F
 
 
 --
+-- Name: job_cards trg_clear_labour_on_outsource; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_clear_labour_on_outsource AFTER UPDATE OF type ON public.job_cards FOR EACH ROW EXECUTE FUNCTION public.clear_labour_on_outsource();
+
+
+--
 -- Name: issues trg_generate_issue_number; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trg_generate_issue_number BEFORE INSERT ON public.issues FOR EACH ROW WHEN ((new.issue_number IS NULL)) EXECUTE FUNCTION public.generate_issue_number();
+
+
+--
+-- Name: issue_labour trg_guard_issue_labour; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_issue_labour BEFORE INSERT OR UPDATE ON public.issue_labour FOR EACH ROW EXECUTE FUNCTION public.guard_issue_labour();
 
 
 --
@@ -11732,6 +11966,13 @@ CREATE TRIGGER trg_holidays_recalc AFTER INSERT OR DELETE OR UPDATE ON public.ho
 --
 
 CREATE TRIGGER trg_issue_sla_dynamic BEFORE INSERT OR UPDATE ON public.issues FOR EACH ROW EXECUTE FUNCTION public.calculate_issue_sla_dynamic();
+
+
+--
+-- Name: issues trg_set_issue_completed_on; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_set_issue_completed_on BEFORE INSERT OR UPDATE OF status, completed_on ON public.issues FOR EACH ROW EXECUTE FUNCTION public.set_issue_completed_on();
 
 
 --
@@ -12162,6 +12403,30 @@ ALTER TABLE ONLY public.finance_entries
 
 ALTER TABLE ONLY public.finance_entries
     ADD CONSTRAINT finance_entries_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.tickets(id);
+
+
+--
+-- Name: issue_labour issue_labour_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.issue_labour
+    ADD CONSTRAINT issue_labour_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: issue_labour issue_labour_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.issue_labour
+    ADD CONSTRAINT issue_labour_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_labour issue_labour_technician_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.issue_labour
+    ADD CONSTRAINT issue_labour_technician_id_fkey FOREIGN KEY (technician_id) REFERENCES public.users(id);
 
 
 --
@@ -13091,6 +13356,13 @@ CREATE POLICY "Execs can update users" ON public.users FOR UPDATE USING (public.
 
 
 --
+-- Name: issue_labour Execs manage issue labour; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs manage issue labour" ON public.issue_labour USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
+
+
+--
 -- Name: issues Execs manage issues; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -13178,6 +13450,13 @@ CREATE POLICY "Finance sees all entries" ON public.finance_entries FOR SELECT US
 CREATE POLICY "Finance updates entries" ON public.finance_entries FOR UPDATE USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['finance'::text, 'super_admin'::text]))))));
+
+
+--
+-- Name: issue_labour Finance view issue labour; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Finance view issue labour" ON public.issue_labour FOR SELECT USING (public.is_finance());
 
 
 --
@@ -13524,6 +13803,36 @@ CREATE POLICY "Supervisors view site scrap_writeoff_items" ON public.scrap_write
 
 
 --
+-- Name: job_cards Technicians view cards with their labour; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Technicians view cards with their labour" ON public.job_cards FOR SELECT USING (public.has_labour_on_job_card(id));
+
+
+--
+-- Name: issue_parts Technicians view issue parts on cards with their labour; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Technicians view issue parts on cards with their labour" ON public.issue_parts FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.issues i
+  WHERE ((i.id = issue_parts.issue_id) AND public.has_labour_on_job_card(i.job_card_id)))));
+
+
+--
+-- Name: issues Technicians view issues on cards with their labour; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Technicians view issues on cards with their labour" ON public.issues FOR SELECT USING (((job_card_id IS NOT NULL) AND public.has_labour_on_job_card(job_card_id)));
+
+
+--
+-- Name: issue_labour Technicians view own labour; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Technicians view own labour" ON public.issue_labour FOR SELECT USING ((technician_id = auth.uid()));
+
+
+--
 -- Name: audit_logs Users can insert audit logs; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -13620,6 +13929,12 @@ ALTER TABLE public.finance_entries ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.holidays ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: issue_labour; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.issue_labour ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: issue_parts; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -14714,6 +15029,15 @@ GRANT ALL ON FUNCTION public.check_pan_exists(p_pan text) TO service_role;
 
 
 --
+-- Name: FUNCTION clear_labour_on_outsource(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.clear_labour_on_outsource() TO anon;
+GRANT ALL ON FUNCTION public.clear_labour_on_outsource() TO authenticated;
+GRANT ALL ON FUNCTION public.clear_labour_on_outsource() TO service_role;
+
+
+--
 -- Name: FUNCTION close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -14849,6 +15173,15 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment
 
 
 --
+-- Name: FUNCTION guard_issue_labour(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_issue_labour() TO anon;
+GRANT ALL ON FUNCTION public.guard_issue_labour() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_issue_labour() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_job_card_location_change(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -14882,6 +15215,15 @@ GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO service_
 GRANT ALL ON FUNCTION public.guard_payment_on_cancelled_batch() TO anon;
 GRANT ALL ON FUNCTION public.guard_payment_on_cancelled_batch() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_payment_on_cancelled_batch() TO service_role;
+
+
+--
+-- Name: FUNCTION has_labour_on_job_card(p_job_card_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) TO service_role;
 
 
 --
@@ -14927,6 +15269,15 @@ GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid
 GRANT ALL ON FUNCTION public.log_batch_service_change() TO anon;
 GRANT ALL ON FUNCTION public.log_batch_service_change() TO authenticated;
 GRANT ALL ON FUNCTION public.log_batch_service_change() TO service_role;
+
+
+--
+-- Name: FUNCTION log_issue_labour_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.log_issue_labour_change() TO anon;
+GRANT ALL ON FUNCTION public.log_issue_labour_change() TO authenticated;
+GRANT ALL ON FUNCTION public.log_issue_labour_change() TO service_role;
 
 
 --
@@ -15088,6 +15439,15 @@ GRANT ALL ON FUNCTION public.seed_get_table_columns() TO service_role;
 GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO anon;
 GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO authenticated;
 GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO service_role;
+
+
+--
+-- Name: FUNCTION set_issue_completed_on(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.set_issue_completed_on() TO anon;
+GRANT ALL ON FUNCTION public.set_issue_completed_on() TO authenticated;
+GRANT ALL ON FUNCTION public.set_issue_completed_on() TO service_role;
 
 
 --
@@ -15699,6 +16059,15 @@ GRANT ALL ON TABLE public.finance_entries TO service_role;
 GRANT ALL ON TABLE public.holidays TO anon;
 GRANT ALL ON TABLE public.holidays TO authenticated;
 GRANT ALL ON TABLE public.holidays TO service_role;
+
+
+--
+-- Name: TABLE issue_labour; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.issue_labour TO anon;
+GRANT ALL ON TABLE public.issue_labour TO authenticated;
+GRANT ALL ON TABLE public.issue_labour TO service_role;
 
 
 --
