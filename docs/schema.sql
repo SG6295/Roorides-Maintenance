@@ -1519,6 +1519,7 @@ DECLARE
     v_old_flag              boolean;
     v_old_reason            public.scrap_exclusion_reason;
     v_default_changes       jsonb := '[]'::jsonb;
+    v_batch_linked          boolean;
 BEGIN
     IF NOT public.is_maintenance_exec() THEN
         RAISE EXCEPTION '%', json_build_object(
@@ -1540,10 +1541,25 @@ BEGIN
         )::text;
     END IF;
 
-    IF NOT p_invoice_pending AND v_job_card.type = 'Outsource' AND v_job_card.invoice_url IS NULL THEN
+    -- A multi-vehicle invoice line linked to this card bills its work, so the card can
+    -- close fully without an invoice of its own, and Invoice Pending makes no sense.
+    v_batch_linked := EXISTS (
+        SELECT 1 FROM public.batch_service_vehicles WHERE job_card_id = p_job_card_id
+    );
+
+    IF p_invoice_pending AND v_batch_linked THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'BATCH_LINKED',
+            'error_message', 'This job card is billed on a multi-vehicle invoice, so it cannot be closed as Invoice Pending.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF NOT p_invoice_pending AND NOT v_batch_linked
+       AND v_job_card.type = 'Outsource' AND v_job_card.invoice_url IS NULL THEN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_REQUIRED',
-            'error_message', 'Outsource job cards require an invoice before closure.',
+            'error_message', 'Outsource job cards need an invoice, or a multi-vehicle invoice line, to close fully. Close it as Invoice Pending instead.',
             'details',       null
         )::text;
     END IF;
@@ -2124,6 +2140,49 @@ $$;
 ALTER FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) OWNER TO postgres;
 
 --
+-- Name: demote_job_card_on_batch_unlink(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.demote_job_card_on_batch_unlink() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF OLD.job_card_id IS NULL
+       OR (TG_OP = 'UPDATE' AND NEW.job_card_id IS NOT DISTINCT FROM OLD.job_card_id) THEN
+        RETURN NULL;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM public.batch_service_vehicles WHERE job_card_id = OLD.job_card_id) THEN
+        RETURN NULL;
+    END IF;
+
+    -- A card with its own complete invoice stays Completed.
+    UPDATE public.job_cards jc
+    SET    status = 'Completed - Invoice Pending'
+    WHERE  jc.id     = OLD.job_card_id
+      AND  jc.type   = 'Outsource'
+      AND  jc.status = 'Completed'
+      AND  (jc.invoice_url IS NULL
+            OR NOT EXISTS (SELECT 1 FROM public.outsource_invoices oi WHERE oi.job_card_id = jc.id));
+
+    IF FOUND THEN
+        INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
+        VALUES ('job_cards', OLD.job_card_id, 'UPDATE',
+                jsonb_build_object('status', 'Completed'),
+                jsonb_build_object('status', 'Completed - Invoice Pending',
+                                   'reason', 'Multi-vehicle invoice link removed'),
+                array['status'], auth.uid());
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.demote_job_card_on_batch_unlink() OWNER TO postgres;
+
+--
 -- Name: derive_finance_payment_status(numeric, numeric); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2200,33 +2259,39 @@ BEGIN
         )::text;
     END IF;
 
-    IF v_job_card.invoice_url IS NULL THEN
-        RAISE EXCEPTION '%', json_build_object(
-            'error_code',    'INVOICE_FILE_REQUIRED',
-            'error_message', 'An invoice file must be uploaded before finalizing.',
-            'details',       null
-        )::text;
-    END IF;
+    -- A linked multi-vehicle invoice line bills the work, so the card's own invoice is
+    -- not needed to finalize.
+    IF NOT EXISTS (
+        SELECT 1 FROM public.batch_service_vehicles WHERE job_card_id = p_job_card_id
+    ) THEN
+        IF v_job_card.invoice_url IS NULL THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'INVOICE_FILE_REQUIRED',
+                'error_message', 'An invoice file must be uploaded before finalizing.',
+                'details',       null
+            )::text;
+        END IF;
 
-    SELECT * INTO v_invoice
-    FROM   public.outsource_invoices
-    WHERE  job_card_id = p_job_card_id;
+        SELECT * INTO v_invoice
+        FROM   public.outsource_invoices
+        WHERE  job_card_id = p_job_card_id;
 
-    IF NOT FOUND
-       OR v_invoice.invoice_no                 IS NULL
-       OR v_invoice.invoice_value              IS NULL
-       OR v_invoice.approved_amount            IS NULL
-       OR v_invoice.advance_amount             IS NULL
-       OR v_invoice.date_of_activity           IS NULL
-       OR v_invoice.payby_date                 IS NULL
-       OR v_invoice.maintenance_payment_status IS NULL
-       OR v_invoice.paid_by                    IS NULL
-    THEN
-        RAISE EXCEPTION '%', json_build_object(
-            'error_code',    'INVOICE_DETAILS_INCOMPLETE',
-            'error_message', 'Invoice details are incomplete. Please fill in all required fields before finalizing.',
-            'details',       null
-        )::text;
+        IF NOT FOUND
+           OR v_invoice.invoice_no                 IS NULL
+           OR v_invoice.invoice_value              IS NULL
+           OR v_invoice.approved_amount            IS NULL
+           OR v_invoice.advance_amount             IS NULL
+           OR v_invoice.date_of_activity           IS NULL
+           OR v_invoice.payby_date                 IS NULL
+           OR v_invoice.maintenance_payment_status IS NULL
+           OR v_invoice.paid_by                    IS NULL
+        THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'INVOICE_DETAILS_INCOMPLETE',
+                'error_message', 'Invoice details are incomplete. Please fill in all required fields before finalizing.',
+                'details',       null
+            )::text;
+        END IF;
     END IF;
 
     UPDATE public.job_cards
@@ -8507,8 +8572,7 @@ CREATE TABLE public.job_cards (
     odometer integer,
     location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
     CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at))),
-    CONSTRAINT job_cards_odometer_check CHECK (((odometer IS NULL) OR (odometer >= 0))),
-    CONSTRAINT outsource_completion_requires_invoice CHECK (((status <> 'Completed'::public.job_card_status) OR (type <> 'Outsource'::public.work_type_enum) OR (invoice_url IS NOT NULL)))
+    CONSTRAINT job_cards_odometer_check CHECK (((odometer IS NULL) OR (odometer >= 0)))
 );
 
 
@@ -11577,6 +11641,13 @@ CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes 
 --
 
 CREATE TRIGGER batch_service_vehicles_audit AFTER INSERT OR DELETE OR UPDATE ON public.batch_service_vehicles FOR EACH ROW EXECUTE FUNCTION public.log_batch_service_change();
+
+
+--
+-- Name: batch_service_vehicles batch_service_vehicles_demote_job_card; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE CONSTRAINT TRIGGER batch_service_vehicles_demote_job_card AFTER DELETE OR UPDATE OF job_card_id ON public.batch_service_vehicles DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.demote_job_card_on_batch_unlink();
 
 
 --
@@ -14685,6 +14756,15 @@ GRANT ALL ON FUNCTION public.delete_invoice_items_first() TO service_role;
 GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.delete_issue_part_with_scrap_check(p_issue_part_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION demote_job_card_on_batch_unlink(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.demote_job_card_on_batch_unlink() TO anon;
+GRANT ALL ON FUNCTION public.demote_job_card_on_batch_unlink() TO authenticated;
+GRANT ALL ON FUNCTION public.demote_job_card_on_batch_unlink() TO service_role;
 
 
 --
