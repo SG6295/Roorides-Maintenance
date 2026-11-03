@@ -25,6 +25,8 @@ import BatchServiceDetail, { LegacyBatchRedirect } from './pages/BatchServiceDet
 import Suppliers from './pages/Suppliers'
 import SupplierDetail from './pages/SupplierDetail'
 import SupplierRegistration from './pages/SupplierRegistration'
+import SupplierLedger from './pages/SupplierLedger'
+import SupplierStatement from './pages/SupplierStatement'
 import Users from './pages/Users'
 import Profile from './pages/Profile'
 import ForgotPassword from './pages/auth/ForgotPassword'
@@ -273,6 +275,23 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <LegacyBatchRedirect />
+                </ProtectedRoute>
+              }
+            />
+            {/* Supplier ledger (MAIN-119) — finance and super_admin write, exec reads. */}
+            <Route
+              path="/supplier-ledger"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <SupplierLedger />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/supplier-ledger/:supplierId"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <SupplierStatement />
                 </ProtectedRoute>
               }
             />
