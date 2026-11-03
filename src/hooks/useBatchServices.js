@@ -27,7 +27,7 @@ const LINE_COLUMNS = `id, vehicle_number, site, work_type, work_type_other, rate
 
 /**
  * One batch, by its running number (MVI-12 → 12), with its supplier, vehicle lines and
- * invoice (and that invoice's payments).
+ * invoice.
  */
 export function useBatchService(batchNumber) {
     return useQuery({
@@ -38,7 +38,7 @@ export function useBatchService(batchNumber) {
                 .select(`*,
                     supplier:suppliers!supplier_id(id, entity_name),
                     vehicles:batch_service_vehicles(${LINE_COLUMNS}),
-                    invoice:outsource_invoices(*, payments:outsource_invoice_payments(id, status))`)
+                    invoice:outsource_invoices(*)`)
                 .eq('batch_number', batchNumber)
                 .order('vehicle_number', { referencedTable: 'batch_service_vehicles' })
                 .order('created_at', { referencedTable: 'batch_service_vehicles' })

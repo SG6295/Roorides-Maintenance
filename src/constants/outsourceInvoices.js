@@ -13,41 +13,54 @@ export const PAID_BY_OPTIONS = ['Accounts', 'Nithin', 'Manjunath', 'Gokilavanan'
 export const MAINTENANCE_PAYMENT_STATUSES = ['Approved', 'Hold', 'Reject']
 
 /**
- * Finance's own decision — "Payment status reported by finance". Only finance and
- * super_admin may set it (enforced by guard_outsource_invoice_status_owners).
+ * Finance's review of an outsource invoice (MAIN-118) — "Finance status". Only finance
+ * and super_admin may set it (enforced by guard_outsource_invoice_status_owners).
  * Mirrors outsource_invoices_finance_payment_status_check — keep in step.
  */
-export const FINANCE_PAYMENT_STATUSES = [
-    'Due',
-    'Partly Paid',
-    'Paid',
-    'Hold - on request',
-    'Hold - further details required',
-    'Reject - duplicate',
-    'Reject - incorrect/insufficient details',
-    'Reject - other',
+export const FINANCE_STATUSES = [
+    'New',
+    'Hold',
+    'Reject',
+    'Accepted',
+    'GST reconciled & closed',
+    'GST not applicable & closed',
 ]
 
 /**
- * Partly Paid and Paid follow from the recorded payments (MAIN-95) — the database
- * refuses them when set by hand — so the status dropdown offers only the rest.
+ * Where finance may move an invoice from each status. Reject and both GST-closed
+ * statuses are final — a rejected invoice comes back only by being resubmitted
+ * (MAIN-120). Mirrors the moves guard_outsource_invoice_status_owners allows — keep in
+ * step.
  */
-export const PAYMENT_DERIVED_STATUSES = ['Partly Paid', 'Paid']
-export const MANUAL_FINANCE_PAYMENT_STATUSES = FINANCE_PAYMENT_STATUSES.filter(
-    s => !PAYMENT_DERIVED_STATUSES.includes(s),
-)
+export const FINANCE_STATUS_MOVES = {
+    'New':                         ['Hold', 'Reject', 'Accepted'],
+    'Hold':                        ['New', 'Reject', 'Accepted'],
+    'Accepted':                    ['Hold', 'Reject', 'GST reconciled & closed', 'GST not applicable & closed'],
+    'Reject':                      [],
+    'GST reconciled & closed':     [],
+    'GST not applicable & closed': [],
+}
 
 /**
- * The ledger finance posted a payment to. Distinct from Paid By, which is the
- * exec's note of who pays. Mirrors outsource_invoice_payments_ledger_check.
+ * Once finance has accepted an invoice it is in the supplier ledger, so the exec can no
+ * longer change it, reopen its job card or cancel its multi-vehicle invoice. Finance
+ * moving it back to Hold, or on to Reject, lifts the lock.
+ */
+export const FINANCE_LOCKED_STATUSES = ['Accepted', 'GST reconciled & closed', 'GST not applicable & closed']
+
+export const isLockedByFinance = invoice => FINANCE_LOCKED_STATUSES.includes(invoice?.finance_payment_status)
+
+/**
+ * The ledger finance posts a payment to. Distinct from Paid By, which is the exec's
+ * note of who pays. The per-invoice payments these described went in MAIN-118; they
+ * are kept for the supplier payments of MAIN-119.
  */
 export const LEDGER_OPTIONS = ['Bill accounted', 'NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN']
 
-/** Mirrors outsource_invoice_payments_method_check. */
 export const PAYMENT_METHODS = ['UPI', 'NEFT', 'RTGS', 'IMPS', 'Cash']
 
 /**
  * Bank the payment went out from — required, with a UTR, for every method but
- * cash. Mirrors outsource_invoice_payments_bank_check.
+ * cash.
  */
 export const BANK_OPTIONS = ['Union Bank of India', 'Kotak Mahindra']

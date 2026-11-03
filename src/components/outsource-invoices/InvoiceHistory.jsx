@@ -1,6 +1,6 @@
 import { useOutsourceInvoiceHistory } from '../../hooks/useOutsourceInvoices'
 import { fmtMoney, fmtDate, fmtDateTime } from './format'
-import { foldStatusChanges, groupBatchLines } from './historyEntries'
+import { groupBatchLines } from './historyEntries'
 import { workTypeLabel } from '../../constants/batchWorkTypes'
 
 const FIELD_LABELS = {
@@ -12,6 +12,7 @@ const FIELD_LABELS = {
     approved_amount:            'Approved amount',
     advance_amount:             'Advance',
     payby_date:                 'Pay-by date',
+    submitted_on:               'Submitted to finance',
 }
 
 const MONEY_FIELDS = ['invoice_value', 'approved_amount', 'advance_amount']
@@ -19,17 +20,9 @@ const MONEY_FIELDS = ['invoice_value', 'approved_amount', 'advance_amount']
 function fmtValue(field, value) {
     if (value == null || value === '') return '—'
     if (MONEY_FIELDS.includes(field)) return fmtMoney(value)
-    if (field === 'payby_date') return fmtDate(value)
+    if (field === 'payby_date' || field === 'submitted_on') return fmtDate(value)
     if (field === 'finance_remark') return `"${value}"`
     return value
-}
-
-function StatusChange({ change }) {
-    return (
-        <p className="text-xs text-gray-600">
-            Finance status {change.old_data?.finance_payment_status ?? '—'} → {change.new_data?.finance_payment_status}
-        </p>
-    )
 }
 
 // What one vehicle-line change on a multi-vehicle invoice did (MAIN-99, MAIN-112).
@@ -145,24 +138,6 @@ function Entry({ entry }) {
         )
     }
 
-    if (entry.source === 'payment') {
-        const p = entry.new_data ?? {}
-        const cancelled = entry.action === 'UPDATE'
-        return (
-            <>
-                <p className="text-sm text-gray-900">
-                    {who} {cancelled ? 'cancelled the payment of' : 'recorded a payment of'} {fmtMoney(p.amount_paid)}
-                    {Number(p.tds_amount) > 0 && <> + TDS {fmtMoney(p.tds_amount)}</>}
-                    {Number(p.round_off) > 0 && <> + round-off {fmtMoney(p.round_off)}</>}
-                </p>
-                <p className="text-xs text-gray-600">
-                    {cancelled ? `Reason: ${p.cancel_reason}` : `${p.ledger} · ${p.payment_method}${p.utr ? ` · UTR ${p.utr}` : ''}`}
-                </p>
-                {entry.statusChange && <StatusChange change={entry.statusChange} />}
-            </>
-        )
-    }
-
     if (entry.action === 'INSERT') {
         const fields = Object.keys(FIELD_LABELS).filter(f => entry.new_data?.[f] != null && entry.new_data[f] !== '')
         return (
@@ -199,7 +174,7 @@ export default function InvoiceHistory({ invoiceId }) {
 
     return (
         <ol className="space-y-3 border-l-2 border-gray-100 pl-4">
-            {groupBatchLines(foldStatusChanges(entries)).map((e, i) => (
+            {groupBatchLines(entries).map((e, i) => (
                 <li key={`${e.performed_at}-${e.source}-${e.action}-${i}`}>
                     <p className="text-xs text-gray-400">{fmtDateTime(e.performed_at)}</p>
                     <Entry entry={e} />

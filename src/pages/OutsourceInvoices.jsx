@@ -1,21 +1,19 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronRightIcon } from '@heroicons/react/20/solid'
 import { todayLocal } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
 import HistoryDrawer from '../components/outsource-invoices/HistoryDrawer'
-import PaymentStrip from '../components/outsource-invoices/PaymentStrip'
 import ColumnManager from '../components/outsource-invoices/ColumnManager'
 import InvoiceCell from '../components/outsource-invoices/InvoiceCell'
 import { COLUMNS, DEFAULT_COLUMN_KEYS } from '../components/outsource-invoices/columns'
-import { enrichInvoice, isInteractiveClick } from '../components/outsource-invoices/invoiceRows'
+import { enrichInvoice } from '../components/outsource-invoices/invoiceRows'
 import { FINANCE_ROLES } from '../components/outsource-invoices/format'
 import {
     PAID_BY_OPTIONS,
     MAINTENANCE_PAYMENT_STATUSES,
-    FINANCE_PAYMENT_STATUSES,
+    FINANCE_STATUSES,
 } from '../constants/outsourceInvoices'
 import { formatBatchNumber } from '../utils/batchNumber'
 
@@ -25,32 +23,9 @@ export default function OutsourceInvoices() {
     const [openedInvoice, setOpenedInvoice] = useState(null)
     // Not saved: a reload returns everyone to the default set (MAIN-98).
     const [visibleKeys, setVisibleKeys] = useState(DEFAULT_COLUMN_KEYS)
-    const [expandedIds, setExpandedIds] = useState(() => new Set())
     const canEdit = FINANCE_ROLES.includes(userProfile?.role)
     const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
     const visibleColumns = COLUMNS.filter(c => visibleKeys.includes(c.key))
-
-    // The payment strip is pinned to the visible part of the table: it is as wide as
-    // what the scroll box shows and sticks to its left edge, so it stays in view
-    // however far the table is scrolled sideways.
-    const tableScrollRef = useRef(null)
-    const [visibleTableWidth, setVisibleTableWidth] = useState(null)
-    useEffect(() => {
-        const el = tableScrollRef.current
-        if (!el) return
-        const measure = () => setVisibleTableWidth(el.clientWidth)
-        measure()
-        const observer = new ResizeObserver(measure)
-        observer.observe(el)
-        return () => observer.disconnect()
-    }, [])
-
-    const toggleExpanded = id => setExpandedIds(prev => {
-        const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
-    })
 
     // ── Parse URL params ──────────────────────────────────────────────────────
     const search   = searchParams.get('q')    || ''
@@ -62,7 +37,7 @@ export default function OutsourceInvoices() {
     const page     = Math.max(0, parseInt(searchParams.get('p') ?? '0', 10) || 0)
 
     // Local, not UTC: toISOString() would still say yesterday until 05:30 IST, which caps
-    // the date pickers a day short and mis-flags invoices as overdue.
+    // the date pickers a day short.
     const todayStr = todayLocal()
 
     // Server-side filters shared by both hooks (no page, no search)
@@ -181,32 +156,21 @@ export default function OutsourceInvoices() {
                     )}
                 </div>
 
-                {/* ── Summary tiles (from RPC) ──────────────────────────────── */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                            Total Unpaid Payable
-                        </p>
-                        <p className="text-2xl font-bold text-gray-900">
-                            {summary
-                                ? `₹${summary.totalUnpaidPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-                                : '—'}
-                        </p>
-                    </div>
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Overdue</p>
-                        <p className={`text-2xl font-bold ${summary?.overdueCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                            {summary?.overdueCount ?? '—'}
-                        </p>
-                    </div>
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                            Pending Approval (Hold)
-                        </p>
-                        <p className={`text-2xl font-bold ${summary?.pendingApprovalCount > 0 ? 'text-amber-600' : 'text-gray-900'}`}>
-                            {summary?.pendingApprovalCount ?? '—'}
-                        </p>
-                    </div>
+                {/* ── Summary tiles (from RPC) — counts by finance status (MAIN-118) ── */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {[
+                        ['New', summary?.newCount, 'text-gray-900'],
+                        ['Hold', summary?.holdCount, 'text-amber-600'],
+                        ['Reject', summary?.rejectCount, 'text-red-600'],
+                        ['Accepted', summary?.acceptedCount, 'text-blue-600'],
+                    ].map(([label, count, color]) => (
+                        <div key={label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</p>
+                            <p className={`text-2xl font-bold ${count > 0 ? color : 'text-gray-900'}`}>
+                                {count ?? '—'}
+                            </p>
+                        </div>
+                    ))}
                 </div>
 
                 {/* ── Filters ──────────────────────────────────────────────── */}
@@ -252,7 +216,7 @@ export default function OutsourceInvoices() {
                         <div>
                             <p className="text-xs font-medium text-gray-500 mb-1.5">Finance Status</p>
                             <div className="flex flex-wrap gap-1.5">
-                                {FINANCE_PAYMENT_STATUSES.map(s => (
+                                {FINANCE_STATUSES.map(s => (
                                     <button
                                         key={s}
                                         onClick={() => toggleMulti('fs', s)}
@@ -315,7 +279,7 @@ export default function OutsourceInvoices() {
                 <div className="flex justify-end">
                     <ColumnManager visibleKeys={visibleKeys} onChange={setVisibleKeys} />
                 </div>
-                <div ref={tableScrollRef} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
                     {isLoading ? (
                         <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
                     ) : invoices.length === 0 ? (
@@ -324,7 +288,6 @@ export default function OutsourceInvoices() {
                         <table className="min-w-full divide-y divide-gray-200 text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="w-8 px-2" aria-label="Payments" />
                                     {visibleColumns.map(c => (
                                         <th
                                             key={c.key}
@@ -338,60 +301,27 @@ export default function OutsourceInvoices() {
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {invoices.map(inv => {
-                                    const expanded = expandedIds.has(inv.id)
-                                    // Nobody changes a cancelled invoice's finance fields or payments.
+                                    // Nobody changes a cancelled invoice's finance fields.
                                     const rowCanEdit = canEdit && !inv.cancelled
                                     return (
-                                        <Fragment key={inv.id}>
-                                            <tr
-                                                className={`cursor-pointer ${inv.cancelled ? 'bg-gray-50 text-gray-400' : ''} ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}`}
-                                                onClick={e => {
-                                                    // Selecting text to copy it should not toggle the row.
-                                                    if (isInteractiveClick(e.target) || window.getSelection()?.toString()) return
-                                                    toggleExpanded(inv.id)
-                                                }}
-                                            >
-                                                <td className="px-2 py-3">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => toggleExpanded(inv.id)}
-                                                        aria-expanded={expanded}
-                                                        aria-label={expanded ? 'Hide payments' : 'Show payments'}
-                                                        className="p-1 rounded text-gray-500 hover:bg-gray-200"
-                                                    >
-                                                        <ChevronRightIcon className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-                                                    </button>
+                                        <tr key={inv.id} className={inv.cancelled ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'}>
+                                            {visibleColumns.map(c => (
+                                                <td
+                                                    key={c.key}
+                                                    className={`px-3 py-3 whitespace-nowrap align-top ${inv.cancelled ? 'text-gray-400' : 'text-gray-700'} ${c.align === 'right' ? 'text-right' : ''}`}
+                                                >
+                                                    <InvoiceCell columnKey={c.key} invoice={inv} canEdit={rowCanEdit} />
                                                 </td>
-                                                {visibleColumns.map(c => (
-                                                    <td
-                                                        key={c.key}
-                                                        className={`px-3 py-3 whitespace-nowrap align-top ${inv.cancelled ? 'text-gray-400' : 'text-gray-700'} ${c.align === 'right' ? 'text-right' : ''}`}
-                                                    >
-                                                        <InvoiceCell columnKey={c.key} invoice={inv} canEdit={rowCanEdit} todayStr={todayStr} />
-                                                    </td>
-                                                ))}
-                                                <td className="px-3 py-3 whitespace-nowrap align-top">
-                                                    <button
-                                                        onClick={() => setOpenedInvoice(inv)}
-                                                        className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
-                                                    >
-                                                        View history
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                            {expanded && (
-                                                <tr>
-                                                    <td colSpan={visibleColumns.length + 2} className="p-0">
-                                                        <div
-                                                            className="sticky left-0 px-3 py-3"
-                                                            style={visibleTableWidth ? { width: visibleTableWidth } : undefined}
-                                                        >
-                                                            <PaymentStrip invoice={inv} canManage={rowCanEdit} />
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </Fragment>
+                                            ))}
+                                            <td className="px-3 py-3 whitespace-nowrap align-top">
+                                                <button
+                                                    onClick={() => setOpenedInvoice(inv)}
+                                                    className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                                                >
+                                                    View history
+                                                </button>
+                                            </td>
+                                        </tr>
                                     )
                                 })}
                             </tbody>

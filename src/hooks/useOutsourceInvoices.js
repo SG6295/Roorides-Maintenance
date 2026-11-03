@@ -4,8 +4,6 @@ import { supabase } from '../lib/supabase'
 /**
  * Fetches the outsource_invoices row for a job card (if any).
  * Returns null when no draft/invoice exists yet.
- * Also fetches payment rows (with status) so the caller can check whether any
- * active payment has been recorded.
  */
 export function useOutsourceInvoice(jobCardId) {
     return useQuery({
@@ -13,7 +11,7 @@ export function useOutsourceInvoice(jobCardId) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('outsource_invoices')
-                .select('*, payments:outsource_invoice_payments(id, status)')
+                .select('*')
                 .eq('job_card_id', jobCardId)
                 .maybeSingle()
             if (error) throw error
@@ -90,8 +88,7 @@ export function useOutsourceInvoices(filters = {}) {
                             id, vehicle_number, site, work_type, work_type_other, rate, quantity, amount,
                             linked_job_card:job_cards!job_card_id(job_card_number)
                         )
-                    ),
-                    payments:outsource_invoice_payments(id, amount_paid, tds_amount, round_off, paid_on, ledger, status, created_at)`,
+                    )`,
                     isPaginated ? { count: 'exact' } : undefined,
                 )
                 .eq('job_card.status', 'Completed')
@@ -122,8 +119,8 @@ export function useOutsourceInvoices(filters = {}) {
 }
 
 /**
- * Fetches the three summary aggregates for the Outsource Invoices dashboard tiles
- * via a single RPC call. Applies the same server-side filters as useOutsourceInvoices
+ * Fetches the finance-status counts for the Outsource Invoices dashboard tiles
+ * (MAIN-118) via a single RPC call. Applies the same server-side filters as useOutsourceInvoices
  * but ignores pagination — tiles always reflect the full filtered set.
  */
 export function useOutsourceInvoiceSummary(filters = {}) {
@@ -140,9 +137,10 @@ export function useOutsourceInvoiceSummary(filters = {}) {
             if (error) throw error
             const row = data?.[0] ?? {}
             return {
-                totalUnpaidPayable:   Number(row.total_unpaid_payable   ?? 0),
-                overdueCount:         Number(row.overdue_count           ?? 0),
-                pendingApprovalCount: Number(row.pending_approval_count  ?? 0),
+                newCount:      Number(row.new_count      ?? 0),
+                holdCount:     Number(row.hold_count     ?? 0),
+                rejectCount:   Number(row.reject_count   ?? 0),
+                acceptedCount: Number(row.accepted_count ?? 0),
             }
         },
     })
@@ -201,76 +199,6 @@ export function useUpdateFinancePaymentStatus() {
             queryClient.invalidateQueries({ queryKey: ['outsource_invoice'] })
             queryClient.invalidateQueries({ queryKey: ['outsource_invoice_history'] })
         },
-    })
-}
-
-// Recording or cancelling a payment moves the invoice's totals, its finance status
-// and its history, and can lift or set the job card's reopen lock.
-function invalidateAfterPaymentChange(queryClient, invoiceId) {
-    queryClient.invalidateQueries({ queryKey: ['outsource_invoices'] })
-    queryClient.invalidateQueries({ queryKey: ['outsource_invoice_summary'] })
-    queryClient.invalidateQueries({ queryKey: ['outsource_invoice_payments', invoiceId] })
-    queryClient.invalidateQueries({ queryKey: ['outsource_invoice_history', invoiceId] })
-    queryClient.invalidateQueries({ queryKey: ['outsource_invoice'] })
-}
-
-/**
- * Records a payment against an outsource invoice through
- * record_outsource_invoice_payment, which checks the caller is finance or
- * super_admin, refuses an overpayment and recalculates the finance status, all in
- * one transaction.
- *
- * payment: { amount_paid, tds_amount, round_off, paid_on, ledger, payment_method, bank, utr }
- */
-export function useRecordInvoicePayment() {
-    const queryClient = useQueryClient()
-    return useMutation({
-        mutationFn: async ({ invoiceId, payment }) => {
-            const { data, error } = await supabase.rpc('record_outsource_invoice_payment', {
-                p_invoice_id: invoiceId,
-                p_payment: payment,
-            })
-            if (error) throw error
-            return data
-        },
-        onSuccess: (_, { invoiceId }) => invalidateAfterPaymentChange(queryClient, invoiceId),
-    })
-}
-
-/**
- * Cancels a payment — for a transaction that failed and was refunded. The row is
- * kept, marked Cancelled, and drops out of every total.
- */
-export function useCancelInvoicePayment() {
-    const queryClient = useQueryClient()
-    return useMutation({
-        mutationFn: async ({ paymentId, reason }) => {
-            const { error } = await supabase.rpc('cancel_outsource_invoice_payment', {
-                p_payment_id: paymentId,
-                p_reason: reason,
-            })
-            if (error) throw error
-        },
-        onSuccess: (_, { invoiceId }) => invalidateAfterPaymentChange(queryClient, invoiceId),
-    })
-}
-
-/**
- * Payments for one invoice, with who recorded and who cancelled each by name.
- * Finance cannot read exec or other finance profiles, so the names come from
- * get_outsource_invoice_payments rather than a join to users.
- */
-export function useInvoicePayments(outsourceInvoiceId) {
-    return useQuery({
-        queryKey: ['outsource_invoice_payments', outsourceInvoiceId],
-        queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_outsource_invoice_payments', {
-                p_invoice_id: outsourceInvoiceId,
-            })
-            if (error) throw error
-            return data || []
-        },
-        enabled: !!outsourceInvoiceId,
     })
 }
 

@@ -20,15 +20,9 @@ export const COLUMNS = [
     { key: 'approved',           label: 'Approved',           default: true,  align: 'right' },
     { key: 'advance',            label: 'Advance',            default: false, align: 'right' },
     { key: 'payable',            label: 'Payable',            default: false, align: 'right' },
-    { key: 'paid',               label: 'Paid',               default: true,  align: 'right' },
-    { key: 'tds',                label: 'TDS',                default: false, align: 'right' },
-    { key: 'round_off',          label: 'Round-off',          default: false, align: 'right' },
-    { key: 'balance',            label: 'Balance',            default: true,  align: 'right' },
     { key: 'maintenance_status', label: 'Maintenance Status', default: false },
     { key: 'finance_status',     label: 'Finance Status',     default: true },
     { key: 'finance_remark',     label: 'Finance Remark',     default: true },
-    { key: 'last_paid_on',       label: 'Last Paid On',       default: false },
-    { key: 'last_ledger',        label: 'Last Ledger',        default: false },
     { key: 'pay_by',             label: 'Pay By',             default: true },
 ]
 

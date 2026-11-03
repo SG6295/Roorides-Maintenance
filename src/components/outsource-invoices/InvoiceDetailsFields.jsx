@@ -21,7 +21,7 @@ export function InvoiceDetailsReadOnly({ invoice }) {
                 ['Invoice No', invoice?.invoice_no || '—'],
                 ['Paid By', invoice?.paid_by || '—'],
                 ['Payment status reported by maintenance', invoice?.maintenance_payment_status || '—'],
-                ['Payment status reported by finance', invoice?.finance_payment_status || '—'],
+                ['Finance status', invoice?.finance_payment_status || '—'],
                 ['Invoice Value', invoice?.invoice_value != null
                     ? rupees(invoice.invoice_value)
                     : '—'],

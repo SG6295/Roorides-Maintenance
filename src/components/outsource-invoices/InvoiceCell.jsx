@@ -10,8 +10,7 @@ import { formatBatchNumber, batchPath } from '../../utils/batchNumber'
  * One cell of the Outsource Invoices list (MAIN-98), by column key — the column
  * list itself is in columns.js. `invoice` is a row from enrichInvoice().
  */
-export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr }) {
-    const s = inv.settlement
+export default function InvoiceCell({ columnKey, invoice: inv, canEdit }) {
     // A multi-vehicle invoice (MAIN-99) has a batch in place of a job card.
     const batch = inv.batch_service
     const owner = batch ?? inv.job_card
@@ -44,20 +43,13 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr
         case 'activity_date': return fmtDate(inv.date_of_activity)
         // A batch is complete when it is saved.
         case 'completed':     return fmtDate(batch ? inv.created_at : inv.job_card?.completed_at)
-        case 'submitted':     return fmtDate(inv.created_at)
+        case 'submitted':     return fmtDate(inv.submitted_on)
         case 'paid_by':       return inv.paid_by || '—'
         case 'invoice_value': return fmtMoney(inv.invoice_value)
         case 'discount':      return fmtPaise(inv.discount)
         case 'approved':      return fmtMoney(inv.approved_amount)
         case 'advance':       return fmtMoney(inv.advance_amount)
-        case 'payable':       return <span className="font-medium">{fmtPaise(s.payable)}</span>
-        case 'paid':          return fmtPaise(s.paid)
-        case 'tds':           return fmtPaise(s.tds)
-        case 'round_off':     return fmtPaise(s.roundOff)
-        case 'balance':
-            return s.balance < 0
-                ? <span className="text-red-600 font-medium" title="Overpaid">−{fmtPaise(-s.balance)}</span>
-                : fmtPaise(s.balance)
+        case 'payable':       return <span className="font-medium">{fmtPaise(inv.payable)}</span>
         case 'maintenance_status':
             return (
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${MAINTENANCE_STATUS_COLORS[inv.maintenance_payment_status] ?? 'bg-gray-100 text-gray-600'}`}>
@@ -66,17 +58,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, todayStr
             )
         case 'finance_status': return <FinanceStatusCell invoice={inv} canEdit={canEdit} />
         case 'finance_remark': return <RemarkCell invoice={inv} canEdit={canEdit} />
-        case 'last_paid_on':   return fmtDate(inv.lastPaidOn)
-        case 'last_ledger':    return inv.lastLedger || '—'
-        case 'pay_by': {
-            const overdue = !inv.cancelled && !!(inv.payby_date && inv.payby_date < todayStr && inv.finance_payment_status !== 'Paid')
-            return (
-                <span className={`font-medium ${overdue ? 'text-red-600' : 'text-gray-700'}`}>
-                    {fmtDate(inv.payby_date)}
-                    {overdue && <span className="ml-1 text-xs" title="Overdue">⚠</span>}
-                </span>
-            )
-        }
+        case 'pay_by':         return fmtDate(inv.payby_date)
         default:
             return null
     }
