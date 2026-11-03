@@ -16,6 +16,7 @@ import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
 import CustomSelect from '../components/shared/CustomSelect'
 import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../components/outsource-invoices/InvoiceDetailsFields'
+import { isLockedByFinance } from '../constants/outsourceInvoices'
 import {
     EMPTY_INVOICE_FORM,
     invoiceFormFromRow,
@@ -295,8 +296,9 @@ export default function JobCardDetail() {
     const closesAsInvoicePending = isOutsource && !hasOwnInvoice && !isBatchLinked
     const hasSupplier = isOutsource ? !!jobCard.supplier_id : true
     const supplierMissing = isExec && jobCard.status === 'Open' && !hasSupplier
-    // A cancelled payment (failed transaction, refunded) does not lock the card.
-    const hasPayments = (existingInvoice?.payments ?? []).some(p => p.status !== 'Cancelled')
+    // Once finance has accepted the invoice it is in the supplier ledger (MAIN-118);
+    // finance moving it back to Hold, or on to Reject, lifts the lock.
+    const lockedByFinance = isOutsource && jobCard.status === 'Completed' && isLockedByFinance(existingInvoice)
     const canComplete = isAllDone && hasSupplier && !invoicePartial
     const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
     const canFinalize = isInvoicePending && !invoicePartial && (hasOwnInvoice || isBatchLinked)
@@ -860,14 +862,14 @@ export default function JobCardDetail() {
                 {/* ── Reopen Job Card — exec only ──────────────────────────── */}
                 {isExec && (jobCard.status === 'Completed' || isInvoicePending) && (
                     <>
-                        {isOutsource && hasPayments && jobCard.status === 'Completed' && (
+                        {lockedByFinance && (
                             <p className="text-sm text-red-600 text-center px-4">
-                                Cannot revert — payments have been recorded for this invoice. Contact finance to handle this manually.
+                                Cannot reopen — finance has accepted this invoice. Ask finance to move it back to Hold first.
                             </p>
                         )}
                         <button
                             onClick={handleReopenJobCard}
-                            disabled={updateJobCard.isPending || (isOutsource && hasPayments && jobCard.status === 'Completed')}
+                            disabled={updateJobCard.isPending || lockedByFinance}
                             className="w-full py-4 rounded-xl text-base font-semibold text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Reopen Job Card

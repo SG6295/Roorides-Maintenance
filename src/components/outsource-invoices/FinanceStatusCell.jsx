@@ -1,24 +1,23 @@
 import { useEffect, useState } from 'react'
 import CustomSelect from '../shared/CustomSelect'
+import RejectInvoiceModal from './RejectInvoiceModal'
 import { useUpdateFinancePaymentStatus } from '../../hooks/useOutsourceInvoices'
-import {
-    MANUAL_FINANCE_PAYMENT_STATUSES,
-    PAYMENT_DERIVED_STATUSES,
-} from '../../constants/outsourceInvoices'
+import { FINANCE_STATUS_MOVES } from '../../constants/outsourceInvoices'
 import { financeStatusColor } from './format'
 
 /**
- * The Finance Status cell (MAIN-98). Finance and super_admin pick a status straight
- * from the table and it saves on pick; everyone else sees the badge, with the
+ * The Finance Status cell (MAIN-98, MAIN-118). Finance and super_admin pick a status
+ * straight from the table and it saves on pick; everyone else sees the badge, with the
  * remark on hover.
  *
- * Partly Paid and Paid come only from payments, so they are not offered. When the
- * invoice is in one of them it is listed so the dropdown can show it, but choosing
- * it again changes nothing.
+ * Only the moves allowed from the current status are offered, and a final status
+ * (Reject, either GST-closed) is a badge for everyone. Reject asks for its reason first
+ * and saves the two together, so they land as one history entry.
  */
 export default function FinanceStatusCell({ invoice, canEdit }) {
     const update = useUpdateFinancePaymentStatus()
     const [saved, setSaved] = useState(false)
+    const [rejecting, setRejecting] = useState(false)
 
     useEffect(() => {
         if (!saved) return
@@ -27,8 +26,9 @@ export default function FinanceStatusCell({ invoice, canEdit }) {
     }, [saved])
 
     const status = invoice.finance_payment_status
+    const moves = FINANCE_STATUS_MOVES[status] ?? []
 
-    if (!canEdit) {
+    if (!canEdit || moves.length === 0) {
         return (
             <span
                 title={invoice.finance_remark || undefined}
@@ -39,16 +39,19 @@ export default function FinanceStatusCell({ invoice, canEdit }) {
         )
     }
 
-    const options = PAYMENT_DERIVED_STATUSES.includes(status)
-        ? [status, ...MANUAL_FINANCE_PAYMENT_STATUSES]
-        : MANUAL_FINANCE_PAYMENT_STATUSES
+    const save = (patch, onSaved) => update.mutate(
+        { id: invoice.id, ...patch },
+        { onSuccess: () => { setSaved(true); onSaved?.() } },
+    )
 
     const pick = next => {
         if (next === status) return
-        update.mutate(
-            { id: invoice.id, financePaymentStatus: next },
-            { onSuccess: () => setSaved(true) },
-        )
+        if (next === 'Reject') {
+            update.reset()
+            setRejecting(true)
+            return
+        }
+        save({ financePaymentStatus: next })
     }
 
     return (
@@ -56,12 +59,24 @@ export default function FinanceStatusCell({ invoice, canEdit }) {
             <CustomSelect
                 value={status}
                 onChange={pick}
-                options={options}
+                options={[status, ...moves]}
                 disabled={update.isPending}
                 compact
             />
             {saved && <p className="text-xs text-green-700 mt-0.5">Saved ✓</p>}
-            {update.error && <p className="text-xs text-red-600 mt-0.5 whitespace-normal">{update.error.message}</p>}
+            {update.error && !rejecting && <p className="text-xs text-red-600 mt-0.5 whitespace-normal">{update.error.message}</p>}
+            {rejecting && (
+                <RejectInvoiceModal
+                    invoice={invoice}
+                    isSaving={update.isPending}
+                    error={update.error}
+                    onCancel={() => setRejecting(false)}
+                    onConfirm={reason => save(
+                        { financePaymentStatus: 'Reject', financeRemark: reason },
+                        () => setRejecting(false),
+                    )}
+                />
+            )}
         </div>
     )
 }

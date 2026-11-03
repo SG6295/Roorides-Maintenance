@@ -1,12 +1,10 @@
 /**
- * Outsource invoice settlement arithmetic, in whole paise.
+ * Rupee amounts as whole paise.
  *
- * Floats cannot hold most rupee amounts exactly (0.1 + 0.2 !== 0.3), and the
- * payment form compares sums against a balance to the paisa. Every amount is
- * converted to an integer number of paise first, so the comparisons are exact.
- *
- * This only drives the form — the pre-filled Paid value, the overpay warning and
- * the round-off offer. record_outsource_invoice_payment makes the binding check in
+ * Floats cannot hold most rupee amounts exactly (0.1 + 0.2 !== 0.3), and forms
+ * compare sums to the paisa — a multi-vehicle invoice's lines against its approved
+ * amount (batchSplit.js). Every amount is converted to an integer number of paise
+ * first, so the comparisons are exact. The database makes the binding checks in
  * Postgres numeric.
  */
 
@@ -30,32 +28,4 @@ export function paiseToInput(paise) {
     const sign = paise < 0 ? '-' : ''
     const abs = Math.abs(paise)
     return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`
-}
-
-/**
- * Where an invoice stands, in paise. Cancelled payments count for nothing.
- * A negative balance means the invoice is overpaid (possible only if the approved
- * amount was lowered after payment).
- */
-export function invoiceSettlement(invoice, payments = []) {
-    const active = payments.filter(p => p.status !== 'Cancelled')
-    const sum = key => active.reduce((total, p) => total + toPaise(p[key] ?? 0), 0)
-
-    const payable = toPaise(invoice.approved_amount ?? 0) - toPaise(invoice.advance_amount ?? 0)
-    const paid = sum('amount_paid')
-    const tds = sum('tds_amount')
-    const roundOff = sum('round_off')
-    const settled = paid + tds + roundOff
-
-    return { payable, paid, tds, roundOff, settled, balance: payable - settled }
-}
-
-/**
- * When a payment would leave less than ₹1 outstanding, the remainder it can write
- * off as round-off; otherwise 0. The database accepts round-off only if it settles
- * the invoice exactly and is under ₹1.
- */
-export function roundOffOffer(balancePaise, amountPaise, tdsPaise) {
-    const remaining = balancePaise - amountPaise - tdsPaise
-    return remaining > 0 && remaining < 100 ? remaining : 0
 }

@@ -29,15 +29,15 @@ export const MAINTENANCE_STATUS_COLORS = {
     Reject:   'bg-red-100 text-red-800',
 }
 
-// Finance's Hold and Reject statuses each come in several reasons; colour by the family.
+// Both GST-closed statuses are final and share a colour.
 export function financeStatusColor(status) {
-    if (status === 'Paid') return 'bg-green-100 text-green-800'
-    if (status === 'Partly Paid') return 'bg-blue-100 text-blue-800'
-    if (status?.startsWith('Hold')) return 'bg-amber-100 text-amber-800'
-    if (status?.startsWith('Reject')) return 'bg-red-100 text-red-800'
+    if (status === 'Hold') return 'bg-amber-100 text-amber-800'
+    if (status === 'Reject') return 'bg-red-100 text-red-800'
+    if (status === 'Accepted') return 'bg-blue-100 text-blue-800'
+    if (status?.startsWith('GST')) return 'bg-green-100 text-green-800'
     return 'bg-gray-100 text-gray-700'
 }
 
-// finance_payment_status, finance_remark and the payments belong to finance; the
-// database refuses anyone else, super_admin aside.
+// finance_payment_status and finance_remark belong to finance; the database refuses
+// anyone else, super_admin aside.
 export const FINANCE_ROLES = ['finance', 'super_admin']

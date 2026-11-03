@@ -31,6 +31,7 @@ import { formatSiteLabel } from '../utils/siteLabel'
 import { formatBatchNumber, batchPath, parseBatchNumber } from '../utils/batchNumber'
 import { lineAmount, linesSummary } from '../utils/batchSplit'
 import { BATCH_WORK_TYPES, OTHER_WORK_TYPE, workTypeLabel } from '../constants/batchWorkTypes'
+import { isLockedByFinance } from '../constants/outsourceInvoices'
 
 const EXEC_ROLES = ['maintenance_exec', 'super_admin']
 
@@ -130,11 +131,11 @@ function BatchForm({ batch }) {
     const { data: jobCards = [] } = useOutsourceJobCardsForVehicles(lines.map(l => l.vehicle_number))
 
     const isExec = EXEC_ROLES.includes(userProfile?.role)
-    // A cancelled payment (failed transaction, refunded) does not lock the invoice.
-    const hasPayments = (batch?.invoice?.payments ?? []).some(p => p.status !== 'Cancelled')
+    // Once finance has accepted the invoice it is in the supplier ledger (MAIN-118).
+    const lockedByFinance = isLockedByFinance(batch?.invoice)
     const cancelled = batch?.status === 'Cancelled'
-    if (batch && (!isExec || hasPayments || cancelled)) {
-        return <BatchReadOnly batch={batch} lockedByPayment={isExec && hasPayments && !cancelled} canRestore={isExec && cancelled} />
+    if (batch && (!isExec || lockedByFinance || cancelled)) {
+        return <BatchReadOnly batch={batch} lockedByFinance={isExec && lockedByFinance && !cancelled} canRestore={isExec && cancelled} />
     }
 
     const invoiceErrs = validateInvoiceForm(invoiceForm, todayStr)
@@ -499,7 +500,7 @@ function CancelInvoice({ batch }) {
         <section className="bg-white rounded-xl shadow-sm border border-red-200 p-4 space-y-2">
             <h2 className="text-sm font-semibold text-red-700">Cancel {formatBatchNumber(batch.batch_number)}</h2>
             <p className="text-xs text-gray-600">
-                The invoice stays in the list, marked Cancelled, but can no longer be edited or paid. Its job card links are removed.
+                The invoice stays in the list, marked Cancelled, but can no longer be edited. Its job card links are removed.
                 You can restore it later.
             </p>
             <textarea
@@ -677,7 +678,7 @@ function LinesTotal({ summary, problems }) {
     )
 }
 
-function BatchReadOnly({ batch, lockedByPayment, canRestore }) {
+function BatchReadOnly({ batch, lockedByFinance, canRestore }) {
     return (
         <>
             <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -689,13 +690,13 @@ function BatchReadOnly({ batch, lockedByPayment, canRestore }) {
             {batch.status === 'Cancelled' && (
                 <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                     Cancelled{batch.cancelled_at && ` on ${fmtDate(batch.cancelled_at)}`}. Reason: {batch.cancel_reason}
-                    <span className="block text-xs text-red-700 mt-0.5">It cannot be edited or paid. The invoice history shows who cancelled it.</span>
+                    <span className="block text-xs text-red-700 mt-0.5">It cannot be edited. The invoice history shows who cancelled it.</span>
                 </p>
             )}
-            {lockedByPayment && (
+            {lockedByFinance && (
                 <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    Finance has recorded a payment against this invoice, so it can no longer be edited or cancelled.
-                    To cancel it, finance must first cancel the payment.
+                    Finance has accepted this invoice, so it can no longer be edited or cancelled.
+                    To change it, finance must first move it back to Hold.
                 </p>
             )}
             {canRestore && <RestoreInvoice batch={batch} />}

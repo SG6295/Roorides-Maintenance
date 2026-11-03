@@ -15,8 +15,8 @@ const TABLES = [
   // Scrap / salvage
   'scrap_inventory', 'scrap_disposal', 'scrap_disposal_items',
   'scrap_writeoff', 'scrap_writeoff_items', 'scrap_excluded_parts',
-  // Outsource invoice payments
-  'outsource_invoices', 'outsource_invoice_payments',
+  // Outsource invoices (per-invoice payments went in MAIN-118)
+  'outsource_invoices',
   // Multi-vehicle outsource invoices (MAIN-99)
   'batch_services', 'batch_service_vehicles',
   // Workshop locations

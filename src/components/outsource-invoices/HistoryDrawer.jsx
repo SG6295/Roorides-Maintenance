@@ -3,8 +3,8 @@ import { workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTyp
 import { formatBatchNumber } from '../../utils/batchNumber'
 
 /**
- * The invoice's "who changed what" history, and nothing else (MAIN-98). Details,
- * amounts and payments are in the table and its expanded row.
+ * The invoice's "who changed what" history, and nothing else (MAIN-98). Details and
+ * amounts are in the table.
  */
 export default function HistoryDrawer({ invoice, onClose }) {
     return (
