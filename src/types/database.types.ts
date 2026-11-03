@@ -1620,6 +1620,136 @@ export type Database = {
           },
         ]
       }
+      supplier_ledger_adjustments: {
+        Row: {
+          amount: number | null
+          as_of: string
+          confirmed_against: string
+          confirmed_balance: number
+          created_at: string
+          created_by: string | null
+          id: string
+          reason: string
+          supplier_id: string
+          system_balance: number
+        }
+        Insert: {
+          amount?: number | null
+          as_of: string
+          confirmed_against: string
+          confirmed_balance: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason: string
+          supplier_id: string
+          system_balance: number
+        }
+        Update: {
+          amount?: number | null
+          as_of?: string
+          confirmed_against?: string
+          confirmed_balance?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason?: string
+          supplier_id?: string
+          system_balance?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_ledger_adjustments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_ledger_adjustments_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      supplier_payments: {
+        Row: {
+          amount_paid: number
+          bank: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          created_at: string
+          id: string
+          ledger: string
+          paid_on: string
+          payment_method: string
+          recorded_by: string | null
+          status: string
+          supplier_id: string
+          tds_amount: number
+          utr: string | null
+        }
+        Insert: {
+          amount_paid?: number
+          bank?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          created_at?: string
+          id?: string
+          ledger: string
+          paid_on: string
+          payment_method: string
+          recorded_by?: string | null
+          status?: string
+          supplier_id: string
+          tds_amount?: number
+          utr?: string | null
+        }
+        Update: {
+          amount_paid?: number
+          bank?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          created_at?: string
+          id?: string
+          ledger?: string
+          paid_on?: string
+          payment_method?: string
+          recorded_by?: string | null
+          status?: string
+          supplier_id?: string
+          tds_amount?: number
+          utr?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_payments_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_payments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_payments_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       suppliers: {
         Row: {
           account_holder_name: string | null
@@ -1655,7 +1785,7 @@ export type Database = {
           owner_name: string
           pan_copy_url: string | null
           pan_number: string | null
-          payment_terms_days: string | null
+          payment_terms_days: number | null
           pf_certificate_url: string | null
           pf_registration_number: string | null
           po_communication_emails: string | null
@@ -1704,7 +1834,7 @@ export type Database = {
           owner_name: string
           pan_copy_url?: string | null
           pan_number?: string | null
-          payment_terms_days?: string | null
+          payment_terms_days?: number | null
           pf_certificate_url?: string | null
           pf_registration_number?: string | null
           po_communication_emails?: string | null
@@ -1753,7 +1883,7 @@ export type Database = {
           owner_name?: string
           pan_copy_url?: string | null
           pan_number?: string | null
-          payment_terms_days?: string | null
+          payment_terms_days?: number | null
           pf_certificate_url?: string | null
           pf_registration_number?: string | null
           po_communication_emails?: string | null
@@ -2206,12 +2336,17 @@ export type Database = {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
         Returns: undefined
       }
+      assert_ledger_writer: { Args: never; Returns: undefined }
       cancel_batch_service_invoice: {
         Args: { p_batch_id: string; p_reason: string }
         Returns: undefined
       }
       cancel_stock_audit: {
         Args: { p_audit_id: string; p_reason?: string }
+        Returns: undefined
+      }
+      cancel_supplier_payment: {
+        Args: { p_payment_id: string; p_reason: string }
         Returns: undefined
       }
       check_pan_exists: { Args: { p_pan: string }; Returns: boolean }
@@ -2335,6 +2470,57 @@ export type Database = {
           reject_count: number
         }[]
       }
+      get_supplier_balances: {
+        Args: { p_supplier_id?: string }
+        Returns: {
+          awaiting_acceptance: number
+          credit_days: number
+          due_next_wednesday: number
+          due_this_wednesday: number
+          entity_name: string
+          last_payment_on: string
+          last_reconciled_on: string
+          later: number
+          outstanding: number
+          overdue: number
+          supplier_id: string
+          this_wednesday: string
+        }[]
+      }
+      get_supplier_open_items: {
+        Args: { p_supplier_id: string }
+        Returns: {
+          amount: number
+          batch_number: number
+          bucket: string
+          due_date: string
+          entry_date: string
+          invoice_no: string
+          job_card_number: number
+          kind: string
+          line_id: string
+          remaining: number
+          run_date: string
+        }[]
+      }
+      get_supplier_statement: {
+        Args: { p_supplier_id: string }
+        Returns: {
+          amount: number
+          balance: number
+          batch_number: number
+          counts: boolean
+          created_at: string
+          detail: Json
+          due_date: string
+          entry_date: string
+          invoice_id: string
+          invoice_no: string
+          job_card_number: number
+          kind: string
+          line_id: string
+        }[]
+      }
       has_labour_on_job_card: {
         Args: { p_job_card_id: string }
         Returns: boolean
@@ -2346,7 +2532,18 @@ export type Database = {
         Args: { p_job_card_id: string }
         Returns: boolean
       }
+      payment_run_for: { Args: { p_date: string }; Returns: string }
       recalculate_open_slas: { Args: never; Returns: undefined }
+      reconcile_supplier_balance: {
+        Args: {
+          p_as_of: string
+          p_confirmed_against: string
+          p_confirmed_balance: number
+          p_reason: string
+          p_supplier_id: string
+        }
+        Returns: string
+      }
       record_scrap_disposal: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
@@ -2354,6 +2551,10 @@ export type Database = {
       record_scrap_writeoff: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
+      }
+      record_supplier_payment: {
+        Args: { p_payment: Json; p_supplier_id: string }
+        Returns: string
       }
       restore_batch_service_invoice: {
         Args: { p_batch_id: string; p_links: Json }
@@ -2391,6 +2592,10 @@ export type Database = {
         Args: { p_audit_id: string; p_items: Json }
         Returns: undefined
       }
+      set_supplier_credit_days: {
+        Args: { p_days: number; p_supplier_id: string }
+        Returns: undefined
+      }
       start_stock_audit: {
         Args: { p_location_id: string; p_notes?: string }
         Returns: string
@@ -2413,6 +2618,42 @@ export type Database = {
       submit_stock_audit_counts: {
         Args: { p_audit_id: string; p_counts: Json }
         Returns: undefined
+      }
+      supplier_ledger_lines: {
+        Args: never
+        Returns: {
+          amount: number
+          batch_number: number
+          counts: boolean
+          created_at: string
+          detail: Json
+          due_date: string
+          entry_date: string
+          invoice_id: string
+          invoice_no: string
+          job_card_number: number
+          kind: string
+          line_id: string
+          seq: number
+          supplier_id: string
+        }[]
+      }
+      supplier_open_items: {
+        Args: { p_today: string }
+        Returns: {
+          amount: number
+          batch_number: number
+          bucket: string
+          due_date: string
+          entry_date: string
+          invoice_no: string
+          job_card_number: number
+          kind: string
+          line_id: string
+          remaining: number
+          run_date: string
+          supplier_id: string
+        }[]
       }
       transfer_stock: {
         Args: { p_from: string; p_items: Json; p_notes?: string; p_to: string }

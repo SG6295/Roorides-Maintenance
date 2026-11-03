@@ -121,6 +121,11 @@ export default function SupplierRegistration() {
       }
     }
 
+    // Credit days are a whole number (MAIN-119): the supplier ledger counts due dates from them.
+    if (stepNum === 5 && form.payment_terms_days !== '' && (!/^\d{1,3}$/.test(String(form.payment_terms_days).trim()) || Number(form.payment_terms_days) > 365)) {
+      newErrors['payment_terms_days'] = 'Enter the number of days, 0 to 365'
+    }
+
     // If entity_type is Other, the text box is required
     if (stepNum === 1 && form.entity_type === 'Other' && !form.entity_type_other.trim()) {
       newErrors['entity_type_other'] = 'Please specify the entity type'
@@ -168,6 +173,7 @@ export default function SupplierRegistration() {
       payload.pan_number = payload.pan_number.toUpperCase().trim()
       // Remove entity_type_other when not applicable
       if (payload.entity_type !== 'Other') payload.entity_type_other = null
+      payload.payment_terms_days = Number(String(payload.payment_terms_days).trim())
 
       await registerSupplier(payload)
       setSubmitted(true)
@@ -553,7 +559,7 @@ export default function SupplierRegistration() {
             </div>
 
             <Field label="Payment Terms (Credit Period in Days)" required>
-              <TextInput value={form.payment_terms_days} onChange={(v) => set('payment_terms_days', v)} />
+              <TextInput value={form.payment_terms_days} onChange={(v) => set('payment_terms_days', v)} inputMode="numeric" placeholder="Number of days, e.g. 30" />
               {errors.payment_terms_days && <p className="mt-1 text-xs text-red-500">{errors.payment_terms_days}</p>}
             </Field>
 

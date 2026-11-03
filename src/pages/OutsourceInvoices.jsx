@@ -145,6 +145,16 @@ export default function OutsourceInvoices() {
 
                 <div className="flex items-center justify-between gap-4">
                     <h1 className="text-2xl font-bold text-gray-900">Outsource Invoices</h1>
+                    <div className="flex items-center gap-2">
+                    {/* Accepted invoices are paid from the supplier ledger (MAIN-119). */}
+                    {['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role) && (
+                        <Link
+                            to="/supplier-ledger"
+                            className="text-sm px-3 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 whitespace-nowrap"
+                        >
+                            Supplier ledger
+                        </Link>
+                    )}
                     {/* One invoice for work on many vehicles, without a job card each (MAIN-99). */}
                     {canCreateBatch && (
                         <Link
@@ -154,6 +164,7 @@ export default function OutsourceInvoices() {
                             + Multi-vehicle invoice
                         </Link>
                     )}
+                    </div>
                 </div>
 
                 {/* ── Summary tiles (from RPC) — counts by finance status (MAIN-118) ── */}
