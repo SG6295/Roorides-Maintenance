@@ -67,8 +67,9 @@ export default function ReconcileModal({ supplier, lines, onClose }) {
             </>}
         >
             <p className="text-sm text-gray-600">
-                Enter the balance you confirmed in Tally or the vendor's statement. The app keeps its own
-                figure as it stood and posts the difference as an adjustment line.
+                Enter the balance you confirmed in Tally or the vendor's statement. The app counts everything
+                entered up to the end of that day (up to now, for today), keeps its own figure, and posts the
+                difference as an adjustment line. Posted one by mistake? Reverse it from the statement.
             </p>
 
             <div className="grid grid-cols-2 gap-3">
@@ -96,7 +97,7 @@ export default function ReconcileModal({ supplier, lines, onClose }) {
             </div>
 
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 grid grid-cols-2 gap-y-2 items-center text-sm">
-                <span className="text-gray-500">App balance on {formatDate(asOf)}</span>
+                <span className="text-gray-500">App balance at the end of {formatDate(asOf)}</span>
                 <span className="text-right font-semibold tabular-nums">{fmtMoney(paiseToInput(system))}</span>
                 <label htmlFor="rc-confirmed" className="text-gray-700 font-medium">Confirmed balance (₹) <span className="text-red-500">*</span></label>
                 <div>
@@ -115,7 +116,7 @@ export default function ReconcileModal({ supplier, lines, onClose }) {
                 <textarea id="rc-reason" rows={3} value={reason} onChange={e => setReason(e.target.value)} className={inputClass} />
                 {err('reason')}
             </div>
-            <p className="text-xs text-gray-500">Recorded with your name and the time. Reconcile again whenever needed; nothing before the date is changed.</p>
+            <p className="text-xs text-gray-500">Recorded with your name and the time. Reconcile again whenever needed; nothing already entered is changed.</p>
             {reconcile.error && <p className="text-sm text-red-600">{reconcile.error.message}</p>}
         </LedgerModal>
     )
