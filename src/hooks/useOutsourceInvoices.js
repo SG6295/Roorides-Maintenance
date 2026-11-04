@@ -93,7 +93,9 @@ export function useOutsourceInvoices(filters = {}) {
                 )
                 .eq('job_card.status', 'Completed')
                 .or('batch_service_id.not.is.null,job_card.not.is.null')
-                .order('payby_date', { ascending: true })
+                // Newest submitted first: finance's review queue (MAIN-119).
+                .order('submitted_on', { ascending: false, nullsFirst: false })
+                .order('created_at', { ascending: false })
 
             if (filters.maintenancePaymentStatus?.length)
                 query = query.in('maintenance_payment_status', filters.maintenancePaymentStatus)

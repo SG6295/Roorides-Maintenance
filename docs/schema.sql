@@ -1167,6 +1167,85 @@ $$;
 ALTER FUNCTION public.adjust_part_inventory_on_update() OWNER TO postgres;
 
 --
+-- Name: advance_ledger_lines(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.advance_ledger_lines() RETURNS TABLE(person text, entry_at timestamp with time zone, line_id uuid, kind text, amount numeric, counts boolean, due_date date, invoice_no text, job_card_number integer, batch_number integer, detail jsonb)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select oi.paid_by, coalesce(oi.accepted_at, oi.updated_at), oi.id, 'advance',
+         oi.advance_amount, true, public.invoice_submitted_day(oi),
+         oi.invoice_no, jc.job_card_number, bs.batch_number,
+         jsonb_build_object(
+             'supplier', s.entity_name, 'supplier_id', s.id,
+             'approved', oi.approved_amount, 'to_supplier', oi.approved_amount - oi.advance_amount)
+  from   public.outsource_invoices oi
+  left join public.job_cards      jc on jc.id = oi.job_card_id
+  left join public.batch_services bs on bs.id = oi.batch_service_id
+  left join public.suppliers      s  on s.id  = coalesce(jc.supplier_id, bs.supplier_id)
+  where  oi.finance_payment_status in ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
+    and  (bs.id is null or bs.status = 'Active')
+    and  oi.advance_amount > 0
+    and  oi.paid_by in ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN')
+
+  union all
+
+  select r.person, r.created_at, r.id,
+         case when r.status = 'Cancelled' then 'cancelled' else 'repayment' end,
+         -r.amount, r.status = 'Active', null, null, null, null,
+         jsonb_build_object(
+             'paid_on', r.paid_on, 'payment_method', r.payment_method, 'bank', r.bank, 'utr', r.utr,
+             'recorded_by', ru.name, 'cancelled_at', r.cancelled_at,
+             'cancelled_by', cu.name, 'cancel_reason', r.cancel_reason)
+  from   public.advance_repayments r
+  left join public.users ru on ru.id = r.recorded_by
+  left join public.users cu on cu.id = r.cancelled_by
+$$;
+
+
+ALTER FUNCTION public.advance_ledger_lines() OWNER TO postgres;
+
+--
+-- Name: advance_open_items(date); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.advance_open_items(p_today date) RETURNS TABLE(person text, line_id uuid, entry_at timestamp with time zone, due_date date, run_date date, amount numeric, remaining numeric, bucket text, invoice_no text, job_card_number integer, batch_number integer, supplier text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  with lines as (
+      select * from public.advance_ledger_lines() where counts
+  ),
+  owed as (
+      select l.*, sum(l.amount) over (partition by l.person order by l.due_date, l.entry_at, l.line_id) as cum
+      from   lines l
+      where  l.amount > 0
+  ),
+  credit as (
+      select person, -sum(amount) as total from lines where amount < 0 group by person
+  ),
+  open_items as (
+      select o.*, greatest(0, least(o.amount, o.cum - coalesce(c.total, 0))) as remaining
+      from   owed o left join credit c on c.person = o.person
+  )
+  select o.person, o.line_id, o.entry_at, o.due_date, public.payment_run_for(o.due_date),
+         o.amount, o.remaining,
+         case
+             when public.payment_run_for(o.due_date) <  public.payment_run_for(p_today)     then 'overdue'
+             when public.payment_run_for(o.due_date) =  public.payment_run_for(p_today)     then 'this_wednesday'
+             when public.payment_run_for(o.due_date) =  public.payment_run_for(p_today) + 7 then 'next_wednesday'
+             else 'later'
+         end,
+         o.invoice_no, o.job_card_number, o.batch_number, o.detail->>'supplier'
+  from   open_items o
+  where  o.remaining > 0
+$$;
+
+
+ALTER FUNCTION public.advance_open_items(p_today date) OWNER TO postgres;
+
+--
 -- Name: apply_part_stock_delta(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1308,6 +1387,40 @@ $$;
 
 
 ALTER FUNCTION public.calculate_ticket_overall_sla() OWNER TO postgres;
+
+--
+-- Name: cancel_advance_repayment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.cancel_advance_repayment(p_repayment_id uuid, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_status text;
+BEGIN
+    PERFORM public.assert_ledger_writer();
+
+    IF nullif(btrim(p_reason), '') IS NULL THEN
+        RAISE EXCEPTION 'Give a reason for cancelling this repayment.';
+    END IF;
+
+    SELECT status INTO v_status FROM public.advance_repayments WHERE id = p_repayment_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Repayment not found.';
+    END IF;
+    IF v_status = 'Cancelled' THEN
+        RAISE EXCEPTION 'This repayment is already cancelled.';
+    END IF;
+
+    UPDATE public.advance_repayments
+    SET    status = 'Cancelled', cancelled_at = now(), cancelled_by = auth.uid(), cancel_reason = btrim(p_reason)
+    WHERE  id = p_repayment_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.cancel_advance_repayment(p_repayment_id uuid, p_reason text) OWNER TO postgres;
 
 --
 -- Name: cancel_batch_service_invoice(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2187,6 +2300,19 @@ $$;
 ALTER FUNCTION public.demote_job_card_on_batch_unlink() OWNER TO postgres;
 
 --
+-- Name: end_of_ist_day(date); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.end_of_ist_day(p_date date) RETURNS timestamp with time zone
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select ((p_date + 1)::timestamp at time zone 'Asia/Kolkata') - interval '1 microsecond'
+$$;
+
+
+ALTER FUNCTION public.end_of_ist_day(p_date date) OWNER TO postgres;
+
+--
 -- Name: evaluate_acceptance_sla(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2316,6 +2442,105 @@ $$;
 
 
 ALTER FUNCTION public.generate_issue_number() OWNER TO postgres;
+
+--
+-- Name: get_advance_balances(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_advance_balances() RETURNS TABLE(person text, owed numeric, overdue numeric, due_this_wednesday numeric, due_next_wednesday numeric, later numeric, last_repaid_on date)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_today date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+BEGIN
+    IF NOT (public.is_maintenance_exec() OR public.is_finance()) THEN
+        RAISE EXCEPTION 'Only finance and maintenance executives can see the supplier ledger.' USING ERRCODE = '42501';
+    END IF;
+
+    RETURN QUERY
+    WITH people(person, ord) AS (
+        VALUES ('NVS 659 Manjunath', 1), ('NVS 2954 Gokilavanan', 2), ('PCN', 3)
+    ),
+    bal AS (
+        SELECT l.person AS p, sum(l.amount) FILTER (WHERE l.counts) AS total
+        FROM   public.advance_ledger_lines() l GROUP BY l.person
+    ),
+    open_items AS (
+        SELECT o.person AS p,
+               sum(o.remaining) FILTER (WHERE o.bucket = 'overdue')        AS overdue,
+               sum(o.remaining) FILTER (WHERE o.bucket = 'this_wednesday') AS this_wed,
+               sum(o.remaining) FILTER (WHERE o.bucket = 'next_wednesday') AS next_wed,
+               sum(o.remaining) FILTER (WHERE o.bucket = 'later')          AS later
+        FROM   public.advance_open_items(v_today) o GROUP BY o.person
+    )
+    SELECT pe.person, coalesce(bal.total, 0),
+           coalesce(oi.overdue, 0), coalesce(oi.this_wed, 0), coalesce(oi.next_wed, 0), coalesce(oi.later, 0),
+           (SELECT max(r.paid_on) FROM public.advance_repayments r WHERE r.person = pe.person AND r.status = 'Active')
+    FROM   people pe
+    LEFT JOIN bal        ON bal.p = pe.person
+    LEFT JOIN open_items oi ON oi.p = pe.person
+    ORDER  BY pe.ord;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_advance_balances() OWNER TO postgres;
+
+--
+-- Name: get_advance_open_items(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_advance_open_items(p_person text) RETURNS TABLE(line_id uuid, entry_at timestamp with time zone, due_date date, run_date date, amount numeric, remaining numeric, bucket text, invoice_no text, job_card_number integer, batch_number integer, supplier text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    IF NOT (public.is_maintenance_exec() OR public.is_finance()) THEN
+        RAISE EXCEPTION 'Only finance and maintenance executives can see the supplier ledger.' USING ERRCODE = '42501';
+    END IF;
+
+    RETURN QUERY
+    SELECT o.line_id, o.entry_at, o.due_date, o.run_date, o.amount, o.remaining, o.bucket,
+           o.invoice_no, o.job_card_number, o.batch_number, o.supplier
+    FROM   public.advance_open_items((now() AT TIME ZONE 'Asia/Kolkata')::date) o
+    WHERE  o.person = p_person
+    ORDER  BY o.due_date, o.entry_at;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_advance_open_items(p_person text) OWNER TO postgres;
+
+--
+-- Name: get_advance_statement(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_advance_statement(p_person text) RETURNS TABLE(entry_at timestamp with time zone, kind text, line_id uuid, amount numeric, counts boolean, balance numeric, due_date date, invoice_no text, job_card_number integer, batch_number integer, detail jsonb)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    IF NOT (public.is_maintenance_exec() OR public.is_finance()) THEN
+        RAISE EXCEPTION 'Only finance and maintenance executives can see the supplier ledger.' USING ERRCODE = '42501';
+    END IF;
+
+    RETURN QUERY
+    SELECT l.entry_at, l.kind, l.line_id, l.amount, l.counts,
+           sum(CASE WHEN l.counts THEN l.amount ELSE 0 END)
+               OVER (ORDER BY l.entry_at, l.line_id ROWS UNBOUNDED PRECEDING),
+           l.due_date, l.invoice_no, l.job_card_number, l.batch_number, l.detail
+    FROM   public.advance_ledger_lines() l
+    WHERE  l.person = p_person
+    ORDER  BY l.entry_at, l.line_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_advance_statement(p_person text) OWNER TO postgres;
 
 --
 -- Name: get_blocking_scrap_for_issue_part(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2651,12 +2876,12 @@ BEGIN
            (SELECT max(p.paid_on) FROM public.supplier_payments p
             WHERE p.supplier_id = s.id AND p.status = 'Active'),
            (SELECT max(a.as_of) FROM public.supplier_ledger_adjustments a
-            WHERE a.supplier_id = s.id),
+            WHERE a.supplier_id = s.id AND a.status = 'Active'),
            coalesce(pending.n, 0)
     FROM   public.suppliers s
-    LEFT JOIN bal     ON bal.sid     = s.id
-    LEFT JOIN open_items oi ON oi.sid = s.id
-    LEFT JOIN pending ON pending.sid = s.id
+    LEFT JOIN bal        ON bal.sid     = s.id
+    LEFT JOIN open_items oi ON oi.sid   = s.id
+    LEFT JOIN pending    ON pending.sid = s.id
     WHERE  (p_supplier_id IS NULL OR s.id = p_supplier_id)
       AND  (s.status = 'approved' OR bal.sid IS NOT NULL OR pending.sid IS NOT NULL)
     ORDER  BY s.entity_name;
@@ -2670,7 +2895,7 @@ ALTER FUNCTION public.get_supplier_balances(p_supplier_id uuid) OWNER TO postgre
 -- Name: get_supplier_open_items(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_supplier_open_items(p_supplier_id uuid) RETURNS TABLE(line_id uuid, kind text, entry_date date, due_date date, run_date date, amount numeric, remaining numeric, bucket text, invoice_no text, job_card_number integer, batch_number integer)
+CREATE FUNCTION public.get_supplier_open_items(p_supplier_id uuid) RETURNS TABLE(line_id uuid, kind text, entry_at timestamp with time zone, due_date date, run_date date, amount numeric, remaining numeric, bucket text, invoice_no text, job_card_number integer, batch_number integer)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -2681,11 +2906,11 @@ BEGIN
     END IF;
 
     RETURN QUERY
-    SELECT o.line_id, o.kind, o.entry_date, o.due_date, o.run_date, o.amount, o.remaining,
+    SELECT o.line_id, o.kind, o.entry_at, o.due_date, o.run_date, o.amount, o.remaining,
            o.bucket, o.invoice_no, o.job_card_number, o.batch_number
     FROM   public.supplier_open_items((now() AT TIME ZONE 'Asia/Kolkata')::date) o
     WHERE  o.supplier_id = p_supplier_id
-    ORDER  BY o.due_date, o.entry_date;
+    ORDER  BY o.due_date, o.entry_at;
 END;
 $$;
 
@@ -2696,7 +2921,7 @@ ALTER FUNCTION public.get_supplier_open_items(p_supplier_id uuid) OWNER TO postg
 -- Name: get_supplier_statement(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_supplier_statement(p_supplier_id uuid) RETURNS TABLE(entry_date date, kind text, line_id uuid, amount numeric, counts boolean, balance numeric, due_date date, invoice_id uuid, invoice_no text, job_card_number integer, batch_number integer, detail jsonb, created_at timestamp with time zone)
+CREATE FUNCTION public.get_supplier_statement(p_supplier_id uuid) RETURNS TABLE(entry_at timestamp with time zone, kind text, line_id uuid, amount numeric, counts boolean, balance numeric, due_date date, invoice_id uuid, invoice_no text, job_card_number integer, batch_number integer, detail jsonb)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -2707,15 +2932,13 @@ BEGIN
     END IF;
 
     RETURN QUERY
-    SELECT l.entry_date, l.kind, l.line_id, l.amount, l.counts,
+    SELECT l.entry_at, l.kind, l.line_id, l.amount, l.counts,
            sum(CASE WHEN l.counts THEN l.amount ELSE 0 END)
-               OVER (ORDER BY l.entry_date, l.seq, l.created_at, l.line_id
-                     ROWS UNBOUNDED PRECEDING),
-           l.due_date, l.invoice_id, l.invoice_no, l.job_card_number, l.batch_number,
-           l.detail, l.created_at
+               OVER (ORDER BY l.entry_at, l.seq, l.line_id ROWS UNBOUNDED PRECEDING),
+           l.due_date, l.invoice_id, l.invoice_no, l.job_card_number, l.batch_number, l.detail
     FROM   public.supplier_ledger_lines() l
     WHERE  l.supplier_id = p_supplier_id
-    ORDER  BY l.entry_date, l.seq, l.created_at, l.line_id;
+    ORDER  BY l.entry_at, l.seq, l.line_id;
 END;
 $$;
 
@@ -2939,6 +3162,56 @@ $$;
 
 
 ALTER FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: outsource_invoices; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.outsource_invoices (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    job_card_id uuid,
+    date_of_activity date,
+    invoice_no text,
+    paid_by text,
+    invoice_value numeric(12,2),
+    approved_amount numeric(12,2),
+    advance_amount numeric(12,2),
+    maintenance_payment_status text,
+    payby_date date,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    finance_payment_status text DEFAULT 'New'::text NOT NULL,
+    finance_remark text,
+    batch_service_id uuid,
+    submitted_on date,
+    accepted_at timestamp with time zone,
+    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
+    CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
+    CONSTRAINT outsource_invoices_one_owner_check CHECK (((job_card_id IS NULL) <> (batch_service_id IS NULL))),
+    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'NVS Maintenance account'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
+    CONSTRAINT outsource_invoices_reject_reason_check CHECK (((finance_payment_status <> 'Reject'::text) OR (NULLIF(btrim(finance_remark), ''::text) IS NOT NULL)))
+);
+
+
+ALTER TABLE public.outsource_invoices OWNER TO postgres;
+
+--
+-- Name: invoice_submitted_day(public.outsource_invoices); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.invoice_submitted_day(p_invoice public.outsource_invoices) RETURNS date
+    LANGUAGE sql STABLE
+    AS $$
+  select coalesce(p_invoice.submitted_on, (p_invoice.created_at at time zone 'Asia/Kolkata')::date)
+$$;
+
+
+ALTER FUNCTION public.invoice_submitted_day(p_invoice public.outsource_invoices) OWNER TO postgres;
 
 --
 -- Name: is_finance(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3334,7 +3607,7 @@ BEGIN
     FROM   public.supplier_ledger_lines() l
     WHERE  l.supplier_id = p_supplier_id
       AND  l.counts
-      AND  l.entry_date <= p_as_of;
+      AND  l.entry_at <= least(public.end_of_ist_day(p_as_of), now());
 
     INSERT INTO public.supplier_ledger_adjustments
         (supplier_id, as_of, confirmed_against, system_balance, confirmed_balance, reason, created_by)
@@ -3347,6 +3620,63 @@ $$;
 
 
 ALTER FUNCTION public.reconcile_supplier_balance(p_supplier_id uuid, p_as_of date, p_confirmed_against text, p_confirmed_balance numeric, p_reason text) OWNER TO postgres;
+
+--
+-- Name: record_advance_repayment(text, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_amount  numeric := coalesce(nullif(p_payment->>'amount', '')::numeric, 0);
+    v_paid_on date    := nullif(p_payment->>'paid_on', '')::date;
+    v_method  text    := nullif(p_payment->>'payment_method', '');
+    v_id      uuid;
+BEGIN
+    PERFORM public.assert_ledger_writer();
+
+    IF p_person IS NULL OR p_person NOT IN ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN') THEN
+        RAISE EXCEPTION 'Choose who is being repaid.';
+    END IF;
+    -- One repayment at a time per person.
+    PERFORM pg_advisory_xact_lock(hashtext('advance_repayments:' || p_person));
+
+    IF v_amount <> round(v_amount, 2) THEN
+        RAISE EXCEPTION 'Amounts can have at most two decimals.';
+    END IF;
+    IF v_amount <= 0 THEN
+        RAISE EXCEPTION 'Enter the amount repaid.';
+    END IF;
+    IF v_paid_on IS NULL THEN
+        RAISE EXCEPTION 'Enter the date the repayment was made.';
+    END IF;
+    IF v_paid_on > (now() AT TIME ZONE 'Asia/Kolkata')::date THEN
+        RAISE EXCEPTION 'The repayment date cannot be in the future.';
+    END IF;
+    IF v_method IS NULL THEN
+        RAISE EXCEPTION 'Choose the payment method.';
+    END IF;
+    IF v_method <> 'Cash' AND (nullif(p_payment->>'bank', '') IS NULL OR nullif(btrim(p_payment->>'utr'), '') IS NULL) THEN
+        RAISE EXCEPTION 'Bank and UTR are required for every method except Cash.';
+    END IF;
+
+    INSERT INTO public.advance_repayments (person, paid_on, amount, payment_method, bank, utr, recorded_by)
+    VALUES (
+        p_person, v_paid_on, v_amount, v_method,
+        CASE WHEN v_method = 'Cash' THEN NULL ELSE p_payment->>'bank' END,
+        CASE WHEN v_method = 'Cash' THEN NULL ELSE btrim(p_payment->>'utr') END,
+        auth.uid()
+    )
+    RETURNING id INTO v_id;
+
+    RETURN v_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) OWNER TO postgres;
 
 --
 -- Name: record_scrap_disposal(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3789,9 +4119,6 @@ BEGIN
     IF v_paid_on > (now() AT TIME ZONE 'Asia/Kolkata')::date THEN
         RAISE EXCEPTION 'The payment date cannot be in the future.';
     END IF;
-    IF nullif(p_payment->>'ledger', '') IS NULL THEN
-        RAISE EXCEPTION 'Choose the ledger the payment was posted to.';
-    END IF;
     IF v_method IS NULL THEN
         RAISE EXCEPTION 'Choose the payment method.';
     END IF;
@@ -3802,9 +4129,7 @@ BEGIN
     INSERT INTO public.supplier_payments
         (supplier_id, paid_on, amount_paid, tds_amount, ledger, payment_method, bank, utr, recorded_by)
     VALUES (
-        p_supplier_id, v_paid_on, v_amount, v_tds,
-        p_payment->>'ledger',
-        v_method,
+        p_supplier_id, v_paid_on, v_amount, v_tds, 'Bill accounted', v_method,
         CASE WHEN v_method = 'Cash' THEN NULL ELSE p_payment->>'bank' END,
         CASE WHEN v_method = 'Cash' THEN NULL ELSE btrim(p_payment->>'utr') END,
         auth.uid()
@@ -3941,6 +4266,43 @@ $$;
 
 
 ALTER FUNCTION public.restore_part_to_inventory() OWNER TO postgres;
+
+--
+-- Name: reverse_ledger_adjustment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.reverse_ledger_adjustment(p_adjustment_id uuid, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_status text;
+BEGIN
+    PERFORM public.assert_ledger_writer();
+
+    IF nullif(btrim(p_reason), '') IS NULL THEN
+        RAISE EXCEPTION 'Give a reason for reversing this adjustment.';
+    END IF;
+
+    SELECT status INTO v_status FROM public.supplier_ledger_adjustments WHERE id = p_adjustment_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Adjustment not found.';
+    END IF;
+    IF v_status = 'Reversed' THEN
+        RAISE EXCEPTION 'This adjustment is already reversed.';
+    END IF;
+
+    UPDATE public.supplier_ledger_adjustments
+    SET    status         = 'Reversed',
+           reversed_at    = now(),
+           reversed_by    = auth.uid(),
+           reverse_reason = btrim(p_reason)
+    WHERE  id = p_adjustment_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.reverse_ledger_adjustment(p_adjustment_id uuid, p_reason text) OWNER TO postgres;
 
 --
 -- Name: reverse_part_inventory_on_delete(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4548,6 +4910,31 @@ $$;
 ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
 
 --
+-- Name: stamp_outsource_invoice_accepted_at(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stamp_outsource_invoice_accepted_at() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF NEW.finance_payment_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed') THEN
+        IF TG_OP = 'UPDATE' AND OLD.finance_payment_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed') THEN
+            NEW.accepted_at := OLD.accepted_at;
+        ELSE
+            NEW.accepted_at := now();
+        END IF;
+    ELSE
+        NEW.accepted_at := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.stamp_outsource_invoice_accepted_at() OWNER TO postgres;
+
+--
 -- Name: stamp_rejected_at_and_evaluate_acceptance_sla(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4912,14 +5299,16 @@ ALTER FUNCTION public.submit_stock_audit_counts(p_audit_id uuid, p_counts jsonb)
 -- Name: supplier_ledger_lines(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, entry_date date, seq integer, created_at timestamp with time zone, line_id uuid, kind text, amount numeric, counts boolean, due_date date, invoice_id uuid, invoice_no text, job_card_number integer, batch_number integer, detail jsonb)
+CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, entry_at timestamp with time zone, seq integer, line_id uuid, kind text, amount numeric, counts boolean, due_date date, invoice_id uuid, invoice_no text, job_card_number integer, batch_number integer, detail jsonb)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
   with inv as (
       select oi.*,
-             coalesce(jc.supplier_id, bs.supplier_id) as sup_id,
-             coalesce(oi.submitted_on, (oi.created_at at time zone 'Asia/Kolkata')::date) as d,
+             coalesce(jc.supplier_id, bs.supplier_id)       as sup_id,
+             public.invoice_submitted_day(oi)               as submitted_day,
+             coalesce(oi.accepted_at, oi.updated_at)        as entered_at,
+             oi.paid_by in ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN') as by_person,
              jc.job_card_number, bs.batch_number
       from   public.outsource_invoices oi
       left join public.job_cards      jc on jc.id = oi.job_card_id
@@ -4927,33 +5316,37 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
       where  oi.finance_payment_status in ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
         and  (bs.id is null or bs.status = 'Active')
   )
-  select inv.sup_id, inv.d, 1, inv.created_at, inv.id, 'invoice',
+  select inv.sup_id, inv.entered_at, 1, inv.id, 'invoice',
          inv.approved_amount, true,
-         inv.d + coalesce(s.payment_terms_days, 0),
+         inv.submitted_day + coalesce(s.payment_terms_days, 0),
          inv.id, inv.invoice_no, inv.job_card_number, inv.batch_number,
-         jsonb_build_object('finance_status', inv.finance_payment_status, 'invoice_value', inv.invoice_value)
+         jsonb_build_object(
+             'finance_status',  inv.finance_payment_status,
+             'submitted_on',    inv.submitted_day,
+             'paid_by',         inv.paid_by,
+             'advance',         inv.advance_amount,
+             'to_supplier',     inv.approved_amount - inv.advance_amount,
+             'advance_by_person', inv.by_person)
   from   inv join public.suppliers s on s.id = inv.sup_id
 
   union all
 
-  select inv.sup_id, inv.d, 2, inv.created_at, inv.id, 'advance',
+  select inv.sup_id, inv.entered_at, 2, inv.id, 'advance',
          -inv.advance_amount, true, null,
          inv.id, inv.invoice_no, inv.job_card_number, inv.batch_number,
-         jsonb_build_object('paid_by', inv.paid_by)
+         jsonb_build_object('paid_by', inv.paid_by, 'advance_by_person', inv.by_person)
   from   inv
   where  inv.advance_amount > 0
 
   union all
 
-  select p.supplier_id, p.paid_on, 3, p.created_at, p.id,
-         case when p.status = 'Cancelled'        then 'cancelled'
-              when p.ledger = 'Bill accounted'   then 'payment'
-              else                                    'reimbursement' end,
+  select p.supplier_id, p.created_at, 3, p.id,
+         case when p.status = 'Cancelled' then 'cancelled' else 'payment' end,
          -(p.amount_paid + p.tds_amount),
-         p.status = 'Active' and p.ledger = 'Bill accounted',
+         p.status = 'Active',
          null, null, null, null, null,
          jsonb_build_object(
-             'amount_paid', p.amount_paid, 'tds_amount', p.tds_amount, 'ledger', p.ledger,
+             'paid_on', p.paid_on, 'amount_paid', p.amount_paid, 'tds_amount', p.tds_amount,
              'payment_method', p.payment_method, 'bank', p.bank, 'utr', p.utr,
              'recorded_by', ru.name, 'cancelled_at', p.cancelled_at,
              'cancelled_by', cu.name, 'cancel_reason', p.cancel_reason)
@@ -4963,13 +5356,17 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
 
   union all
 
-  select a.supplier_id, a.as_of, 4, a.created_at, a.id, 'adjustment',
-         a.amount, true, null, null, null, null, null,
+  select a.supplier_id, least(public.end_of_ist_day(a.as_of), a.created_at), 4, a.id,
+         case when a.status = 'Reversed' then 'reversed' else 'adjustment' end,
+         a.amount, a.status = 'Active', a.as_of, null, null, null, null,
          jsonb_build_object(
-             'confirmed_against', a.confirmed_against, 'system_balance', a.system_balance,
-             'confirmed_balance', a.confirmed_balance, 'reason', a.reason, 'created_by', u.name)
+             'as_of', a.as_of, 'confirmed_against', a.confirmed_against,
+             'system_balance', a.system_balance, 'confirmed_balance', a.confirmed_balance,
+             'reason', a.reason, 'created_by', u.name, 'created_at', a.created_at,
+             'reversed_at', a.reversed_at, 'reversed_by', ru.name, 'reverse_reason', a.reverse_reason)
   from   public.supplier_ledger_adjustments a
-  left join public.users u on u.id = a.created_by
+  left join public.users u  on u.id  = a.created_by
+  left join public.users ru on ru.id = a.reversed_by
 $$;
 
 
@@ -4979,7 +5376,7 @@ ALTER FUNCTION public.supplier_ledger_lines() OWNER TO postgres;
 -- Name: supplier_open_items(date); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.supplier_open_items(p_today date) RETURNS TABLE(supplier_id uuid, line_id uuid, kind text, entry_date date, due_date date, run_date date, amount numeric, remaining numeric, bucket text, invoice_no text, job_card_number integer, batch_number integer)
+CREATE FUNCTION public.supplier_open_items(p_today date) RETURNS TABLE(supplier_id uuid, line_id uuid, kind text, entry_at timestamp with time zone, due_date date, run_date date, amount numeric, remaining numeric, bucket text, invoice_no text, job_card_number integer, batch_number integer)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -4987,11 +5384,10 @@ CREATE FUNCTION public.supplier_open_items(p_today date) RETURNS TABLE(supplier_
       select * from public.supplier_ledger_lines() where counts
   ),
   owed as (
-      select l.supplier_id, l.line_id, l.kind, l.entry_date,
-             coalesce(l.due_date, l.entry_date) as due_date, l.amount,
+      select l.supplier_id, l.line_id, l.kind, l.entry_at, l.due_date, l.amount,
              l.invoice_no, l.job_card_number, l.batch_number,
              sum(l.amount) over (partition by l.supplier_id
-                                 order by l.entry_date, l.seq, l.created_at, l.line_id) as cum
+                                 order by l.due_date, l.entry_at, l.line_id) as cum
       from   lines l
       where  l.amount > 0
   ),
@@ -5006,7 +5402,7 @@ CREATE FUNCTION public.supplier_open_items(p_today date) RETURNS TABLE(supplier_
       from   owed o
       left join credit c on c.supplier_id = o.supplier_id
   )
-  select o.supplier_id, o.line_id, o.kind, o.entry_date, o.due_date,
+  select o.supplier_id, o.line_id, o.kind, o.entry_at, o.due_date,
          public.payment_run_for(o.due_date), o.amount, o.remaining,
          case
              when public.payment_run_for(o.due_date) <  public.payment_run_for(p_today)     then 'overdue'
@@ -8024,10 +8420,6 @@ $$;
 
 ALTER FUNCTION storage.update_updated_at_column() OWNER TO supabase_storage_admin;
 
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
-
 --
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
@@ -8799,6 +9191,36 @@ CREATE TABLE auth.webauthn_credentials (
 ALTER TABLE auth.webauthn_credentials OWNER TO supabase_auth_admin;
 
 --
+-- Name: advance_repayments; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.advance_repayments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    person text NOT NULL,
+    paid_on date NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    payment_method text NOT NULL,
+    bank text,
+    utr text,
+    status text DEFAULT 'Active'::text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    cancelled_at timestamp with time zone,
+    cancelled_by uuid,
+    cancel_reason text,
+    CONSTRAINT advance_repayments_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT advance_repayments_bank_check CHECK (((bank IS NULL) OR (bank = ANY (ARRAY['Union Bank of India'::text, 'Kotak Mahindra'::text])))),
+    CONSTRAINT advance_repayments_bank_trail_check CHECK (((payment_method = 'Cash'::text) OR ((bank IS NOT NULL) AND (NULLIF(btrim(utr), ''::text) IS NOT NULL)))),
+    CONSTRAINT advance_repayments_cancel_reason_check CHECK (((status = 'Active'::text) OR ((cancelled_at IS NOT NULL) AND (NULLIF(btrim(cancel_reason), ''::text) IS NOT NULL)))),
+    CONSTRAINT advance_repayments_method_check CHECK ((payment_method = ANY (ARRAY['UPI'::text, 'NEFT'::text, 'RTGS'::text, 'IMPS'::text, 'Cash'::text]))),
+    CONSTRAINT advance_repayments_person_check CHECK ((person = ANY (ARRAY['NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
+    CONSTRAINT advance_repayments_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Cancelled'::text])))
+);
+
+
+ALTER TABLE public.advance_repayments OWNER TO postgres;
+
+--
 -- Name: audit_logs; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -9128,38 +9550,6 @@ CREATE VIEW public.maintenance_dashboard_stats AS
 
 
 ALTER VIEW public.maintenance_dashboard_stats OWNER TO postgres;
-
---
--- Name: outsource_invoices; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.outsource_invoices (
-    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    job_card_id uuid,
-    date_of_activity date,
-    invoice_no text,
-    paid_by text,
-    invoice_value numeric(12,2),
-    approved_amount numeric(12,2),
-    advance_amount numeric(12,2),
-    maintenance_payment_status text,
-    payby_date date,
-    created_by uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    finance_payment_status text DEFAULT 'New'::text NOT NULL,
-    finance_remark text,
-    batch_service_id uuid,
-    submitted_on date,
-    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
-    CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
-    CONSTRAINT outsource_invoices_one_owner_check CHECK (((job_card_id IS NULL) <> (batch_service_id IS NULL))),
-    CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'Nithin'::text, 'Manjunath'::text, 'Gokilavanan'::text, 'NVS Maintenance account'::text]))),
-    CONSTRAINT outsource_invoices_reject_reason_check CHECK (((finance_payment_status <> 'Reject'::text) OR (NULLIF(btrim(finance_remark), ''::text) IS NOT NULL)))
-);
-
-
-ALTER TABLE public.outsource_invoices OWNER TO postgres;
 
 --
 -- Name: part_stock; Type: TABLE; Schema: public; Owner: postgres
@@ -9706,8 +10096,14 @@ CREATE TABLE public.supplier_ledger_adjustments (
     reason text NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text DEFAULT 'Active'::text NOT NULL,
+    reversed_at timestamp with time zone,
+    reversed_by uuid,
+    reverse_reason text,
     CONSTRAINT supplier_ledger_adjustments_reason_check CHECK ((NULLIF(btrim(reason), ''::text) IS NOT NULL)),
-    CONSTRAINT supplier_ledger_adjustments_source_check CHECK ((confirmed_against = ANY (ARRAY['Tally'::text, 'Vendor statement'::text])))
+    CONSTRAINT supplier_ledger_adjustments_reverse_reason_check CHECK (((status = 'Active'::text) OR ((reversed_at IS NOT NULL) AND (NULLIF(btrim(reverse_reason), ''::text) IS NOT NULL)))),
+    CONSTRAINT supplier_ledger_adjustments_source_check CHECK ((confirmed_against = ANY (ARRAY['Tally'::text, 'Vendor statement'::text]))),
+    CONSTRAINT supplier_ledger_adjustments_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Reversed'::text])))
 );
 
 
@@ -9723,7 +10119,7 @@ CREATE TABLE public.supplier_payments (
     paid_on date NOT NULL,
     amount_paid numeric(12,2) DEFAULT 0 NOT NULL,
     tds_amount numeric(12,2) DEFAULT 0 NOT NULL,
-    ledger text NOT NULL,
+    ledger text DEFAULT 'Bill accounted'::text NOT NULL,
     payment_method text NOT NULL,
     bank text,
     utr text,
@@ -9737,7 +10133,7 @@ CREATE TABLE public.supplier_payments (
     CONSTRAINT supplier_payments_bank_check CHECK (((bank IS NULL) OR (bank = ANY (ARRAY['Union Bank of India'::text, 'Kotak Mahindra'::text])))),
     CONSTRAINT supplier_payments_bank_trail_check CHECK (((payment_method = 'Cash'::text) OR ((bank IS NOT NULL) AND (NULLIF(btrim(utr), ''::text) IS NOT NULL)))),
     CONSTRAINT supplier_payments_cancel_reason_check CHECK (((status = 'Active'::text) OR ((cancelled_at IS NOT NULL) AND (NULLIF(btrim(cancel_reason), ''::text) IS NOT NULL)))),
-    CONSTRAINT supplier_payments_ledger_check CHECK ((ledger = ANY (ARRAY['Bill accounted'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
+    CONSTRAINT supplier_payments_ledger_check CHECK ((ledger = 'Bill accounted'::text)),
     CONSTRAINT supplier_payments_method_check CHECK ((payment_method = ANY (ARRAY['UPI'::text, 'NEFT'::text, 'RTGS'::text, 'IMPS'::text, 'Cash'::text]))),
     CONSTRAINT supplier_payments_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Cancelled'::text])))
 );
@@ -10542,6 +10938,14 @@ ALTER TABLE ONLY auth.webauthn_challenges
 
 ALTER TABLE ONLY auth.webauthn_credentials
     ADD CONSTRAINT webauthn_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: advance_repayments advance_repayments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.advance_repayments
+    ADD CONSTRAINT advance_repayments_pkey PRIMARY KEY (id);
 
 
 --
@@ -11631,6 +12035,13 @@ CREATE INDEX webauthn_credentials_user_id_idx ON auth.webauthn_credentials USING
 
 
 --
+-- Name: advance_repayments_person_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX advance_repayments_person_idx ON public.advance_repayments USING btree (person, created_at);
+
+
+--
 -- Name: audit_logs_table_record_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -12226,6 +12637,13 @@ CREATE TRIGGER outsource_invoices_set_updated_at BEFORE UPDATE ON public.outsour
 
 
 --
+-- Name: outsource_invoices outsource_invoices_stamp_accepted_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER outsource_invoices_stamp_accepted_at BEFORE INSERT OR UPDATE ON public.outsource_invoices FOR EACH ROW EXECUTE FUNCTION public.stamp_outsource_invoice_accepted_at();
+
+
+--
 -- Name: outsource_invoices outsource_invoices_submit; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -12653,6 +13071,22 @@ ALTER TABLE ONLY auth.webauthn_challenges
 
 ALTER TABLE ONLY auth.webauthn_credentials
     ADD CONSTRAINT webauthn_credentials_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: advance_repayments advance_repayments_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.advance_repayments
+    ADD CONSTRAINT advance_repayments_cancelled_by_fkey FOREIGN KEY (cancelled_by) REFERENCES public.users(id);
+
+
+--
+-- Name: advance_repayments advance_repayments_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.advance_repayments
+    ADD CONSTRAINT advance_repayments_recorded_by_fkey FOREIGN KEY (recorded_by) REFERENCES public.users(id);
 
 
 --
@@ -13136,6 +13570,14 @@ ALTER TABLE ONLY public.supplier_ledger_adjustments
 
 
 --
+-- Name: supplier_ledger_adjustments supplier_ledger_adjustments_reversed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.supplier_ledger_adjustments
+    ADD CONSTRAINT supplier_ledger_adjustments_reversed_by_fkey FOREIGN KEY (reversed_by) REFERENCES public.users(id);
+
+
+--
 -- Name: supplier_ledger_adjustments supplier_ledger_adjustments_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13525,6 +13967,13 @@ CREATE POLICY "Exec and finance manage part_stock" ON public.part_stock USING ((
 CREATE POLICY "Exec and finance manage parts" ON public.parts USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
+
+
+--
+-- Name: advance_repayments Exec and finance read advance repayments; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance read advance repayments" ON public.advance_repayments FOR SELECT USING ((public.is_maintenance_exec() OR public.is_finance()));
 
 
 --
@@ -14228,6 +14677,12 @@ CREATE POLICY "View issue parts" ON public.issue_parts FOR SELECT USING ((EXISTS
      JOIN public.job_cards jc ON ((jc.id = i.job_card_id)))
   WHERE ((i.id = issue_parts.issue_id) AND ((jc.assigned_mechanic_id = auth.uid()) OR public.is_maintenance_exec())))));
 
+
+--
+-- Name: advance_repayments; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.advance_repayments ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: audit_logs; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -15293,6 +15748,22 @@ GRANT ALL ON FUNCTION public.adjust_part_inventory_on_update() TO service_role;
 
 
 --
+-- Name: FUNCTION advance_ledger_lines(); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.advance_ledger_lines() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.advance_ledger_lines() TO service_role;
+
+
+--
+-- Name: FUNCTION advance_open_items(p_today date); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.advance_open_items(p_today date) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.advance_open_items(p_today date) TO service_role;
+
+
+--
 -- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -15325,6 +15796,15 @@ GRANT ALL ON FUNCTION public.calculate_issue_sla_dynamic() TO service_role;
 GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO anon;
 GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO authenticated;
 GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO service_role;
+
+
+--
+-- Name: FUNCTION cancel_advance_repayment(p_repayment_id uuid, p_reason text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.cancel_advance_repayment(p_repayment_id uuid, p_reason text) TO anon;
+GRANT ALL ON FUNCTION public.cancel_advance_repayment(p_repayment_id uuid, p_reason text) TO authenticated;
+GRANT ALL ON FUNCTION public.cancel_advance_repayment(p_repayment_id uuid, p_reason text) TO service_role;
 
 
 --
@@ -15427,6 +15907,15 @@ GRANT ALL ON FUNCTION public.demote_job_card_on_batch_unlink() TO service_role;
 
 
 --
+-- Name: FUNCTION end_of_ist_day(p_date date); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.end_of_ist_day(p_date date) TO anon;
+GRANT ALL ON FUNCTION public.end_of_ist_day(p_date date) TO authenticated;
+GRANT ALL ON FUNCTION public.end_of_ist_day(p_date date) TO service_role;
+
+
+--
 -- Name: FUNCTION evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_created timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -15451,6 +15940,33 @@ GRANT ALL ON FUNCTION public.finalize_outsource_invoice(p_job_card_id uuid, p_re
 GRANT ALL ON FUNCTION public.generate_issue_number() TO anon;
 GRANT ALL ON FUNCTION public.generate_issue_number() TO authenticated;
 GRANT ALL ON FUNCTION public.generate_issue_number() TO service_role;
+
+
+--
+-- Name: FUNCTION get_advance_balances(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_advance_balances() TO anon;
+GRANT ALL ON FUNCTION public.get_advance_balances() TO authenticated;
+GRANT ALL ON FUNCTION public.get_advance_balances() TO service_role;
+
+
+--
+-- Name: FUNCTION get_advance_open_items(p_person text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_advance_open_items(p_person text) TO anon;
+GRANT ALL ON FUNCTION public.get_advance_open_items(p_person text) TO authenticated;
+GRANT ALL ON FUNCTION public.get_advance_open_items(p_person text) TO service_role;
+
+
+--
+-- Name: FUNCTION get_advance_statement(p_person text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.get_advance_statement(p_person text) TO anon;
+GRANT ALL ON FUNCTION public.get_advance_statement(p_person text) TO authenticated;
+GRANT ALL ON FUNCTION public.get_advance_statement(p_person text) TO service_role;
 
 
 --
@@ -15571,6 +16087,24 @@ GRANT ALL ON FUNCTION public.has_labour_on_job_card(p_job_card_id uuid) TO servi
 
 
 --
+-- Name: TABLE outsource_invoices; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.outsource_invoices TO anon;
+GRANT ALL ON TABLE public.outsource_invoices TO authenticated;
+GRANT ALL ON TABLE public.outsource_invoices TO service_role;
+
+
+--
+-- Name: FUNCTION invoice_submitted_day(p_invoice public.outsource_invoices); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.invoice_submitted_day(p_invoice public.outsource_invoices) TO anon;
+GRANT ALL ON FUNCTION public.invoice_submitted_day(p_invoice public.outsource_invoices) TO authenticated;
+GRANT ALL ON FUNCTION public.invoice_submitted_day(p_invoice public.outsource_invoices) TO service_role;
+
+
+--
 -- Name: FUNCTION is_finance(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -15679,6 +16213,15 @@ GRANT ALL ON FUNCTION public.reconcile_supplier_balance(p_supplier_id uuid, p_as
 
 
 --
+-- Name: FUNCTION record_advance_repayment(p_person text, p_payment jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) TO anon;
+GRANT ALL ON FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION record_scrap_disposal(p_header jsonb, p_items jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -15721,6 +16264,15 @@ GRANT ALL ON FUNCTION public.restore_batch_service_invoice(p_batch_id uuid, p_li
 GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO anon;
 GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO authenticated;
 GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
+
+
+--
+-- Name: FUNCTION reverse_ledger_adjustment(p_adjustment_id uuid, p_reason text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.reverse_ledger_adjustment(p_adjustment_id uuid, p_reason text) TO anon;
+GRANT ALL ON FUNCTION public.reverse_ledger_adjustment(p_adjustment_id uuid, p_reason text) TO authenticated;
+GRANT ALL ON FUNCTION public.reverse_ledger_adjustment(p_adjustment_id uuid, p_reason text) TO service_role;
 
 
 --
@@ -15820,6 +16372,15 @@ GRANT ALL ON FUNCTION public.set_supplier_credit_days(p_supplier_id uuid, p_days
 GRANT ALL ON FUNCTION public.set_updated_at() TO anon;
 GRANT ALL ON FUNCTION public.set_updated_at() TO authenticated;
 GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
+
+
+--
+-- Name: FUNCTION stamp_outsource_invoice_accepted_at(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stamp_outsource_invoice_accepted_at() TO anon;
+GRANT ALL ON FUNCTION public.stamp_outsource_invoice_accepted_at() TO authenticated;
+GRANT ALL ON FUNCTION public.stamp_outsource_invoice_accepted_at() TO service_role;
 
 
 --
@@ -16395,6 +16956,15 @@ GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 
 
 --
+-- Name: TABLE advance_repayments; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.advance_repayments TO anon;
+GRANT ALL ON TABLE public.advance_repayments TO authenticated;
+GRANT ALL ON TABLE public.advance_repayments TO service_role;
+
+
+--
 -- Name: TABLE audit_logs; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -16509,15 +17079,6 @@ GRANT ALL ON TABLE public.tickets TO service_role;
 GRANT ALL ON TABLE public.maintenance_dashboard_stats TO anon;
 GRANT ALL ON TABLE public.maintenance_dashboard_stats TO authenticated;
 GRANT ALL ON TABLE public.maintenance_dashboard_stats TO service_role;
-
-
---
--- Name: TABLE outsource_invoices; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.outsource_invoices TO anon;
-GRANT ALL ON TABLE public.outsource_invoices TO authenticated;
-GRANT ALL ON TABLE public.outsource_invoices TO service_role;
 
 
 --

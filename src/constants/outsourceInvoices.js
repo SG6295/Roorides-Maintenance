@@ -1,10 +1,12 @@
 /**
  * Who pays an outsourced repair invoice — the "Paid By" choice on the job card's
- * invoice form, and the Paid By filter on Outsource Invoices.
+ * invoice form, and the Paid By filter on Outsource Invoices. The people's entries are
+ * their repayment ledgers' names (MAIN-119), so an advance they paid matches its
+ * repayment with no mapping; Accounts and NVS Maintenance account are company money.
  *
  * Mirrors the outsource_invoices_paid_by_check constraint — keep in step.
  */
-export const PAID_BY_OPTIONS = ['Accounts', 'Nithin', 'Manjunath', 'Gokilavanan', 'NVS Maintenance account']
+export const PAID_BY_OPTIONS = ['Accounts', 'NVS Maintenance account', 'NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN']
 
 /**
  * The maintenance exec's decision at job card closure — "Payment status reported
@@ -50,17 +52,11 @@ export const FINANCE_LOCKED_STATUSES = ['Accepted', 'GST reconciled & closed', '
 
 export const isLockedByFinance = invoice => FINANCE_LOCKED_STATUSES.includes(invoice?.finance_payment_status)
 
-/**
- * The ledger finance posts a payment to. Distinct from Paid By, which is the exec's
- * note of who pays. The per-invoice payments these described went in MAIN-118; they
- * are kept for the supplier payments of MAIN-119.
- */
-export const LEDGER_OPTIONS = ['Bill accounted', 'NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN']
-
+/** How a supplier payment or an advance repayment was made (MAIN-119). */
 export const PAYMENT_METHODS = ['UPI', 'NEFT', 'RTGS', 'IMPS', 'Cash']
 
 /**
  * Bank the payment went out from — required, with a UTR, for every method but
- * cash.
+ * cash. Mirrors the supplier_payments and advance_repayments bank checks.
  */
 export const BANK_OPTIONS = ['Union Bank of India', 'Kotak Mahindra']

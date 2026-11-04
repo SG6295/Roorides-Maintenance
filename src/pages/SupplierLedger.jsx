@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import Navigation from '../components/shared/Navigation'
 import CreditDaysEditor from '../components/supplier-ledger/CreditDaysEditor'
+import { Tile } from '../components/supplier-ledger/LedgerParts'
 import { useAuth } from '../hooks/useAuth'
-import { useSupplierBalances } from '../hooks/useSupplierLedger'
-import { LEDGER_WRITE_ROLES } from '../constants/supplierLedger'
+import { useSupplierBalances, useAdvanceBalances } from '../hooks/useSupplierLedger'
+import { LEDGER_WRITE_ROLES, ADVANCE_PEOPLE } from '../constants/supplierLedger'
 import { upcomingRuns } from '../utils/paymentRuns'
 import { exportSupplierBalances } from '../utils/supplierLedgerExport'
 import { todayLocal, formatAs } from '../utils/datetime'
@@ -156,6 +157,8 @@ export default function SupplierLedger() {
                     )}
                 </div>
 
+                <AdvancesPanel thisRun={thisRun} nextRun={nextRun} />
+
                 <p className="text-xs text-gray-500">
                     An invoice is due its submission date plus the supplier's credit days (blank counts as 0) and goes
                     in the first Wednesday run on or after that; it is overdue once that run has passed. The due figures
@@ -167,13 +170,65 @@ export default function SupplierLedger() {
     )
 }
 
-function Tile({ label, value, note, tone = '', highlight = false }) {
+/**
+ * What NVS owes the people who paid suppliers upfront (MAIN-119). Accounts pays each
+ * supplier Approved − Advance and repays the advance to whoever paid it, so its total
+ * outflow is the approved value and each person's balance keeps returning to zero.
+ */
+function AdvancesPanel({ thisRun, nextRun }) {
+    const { data: rows = [], isLoading, error } = useAdvanceBalances()
+    const runLabel = iso => formatAs(iso, 'dd MMM')
+
     return (
-        <div className={`bg-white rounded-xl shadow-sm p-4 ${highlight ? 'border-2 border-amber-400' : 'border border-gray-200'}`}>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-            <p className={`text-2xl font-bold text-gray-900 ${tone}`}>{value}</p>
-            {note && <p className="text-xs text-gray-500 mt-0.5">{note}</p>}
-        </div>
+        <section id="advances" className="space-y-2">
+            <div>
+                <h2 className="text-lg font-semibold text-gray-900">Advances to repay</h2>
+                <p className="text-sm text-gray-500">Advances Manjunath, Gokilavanan and Nithin paid to suppliers on accepted invoices, less what accounts has repaid them.</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+                {isLoading ? (
+                    <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
+                ) : error ? (
+                    <div className="p-6 text-center text-sm text-red-600">Could not load advances: {error.message}</div>
+                ) : (
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <Th>Person</Th>
+                                <Th>Ledger</Th>
+                                <Th right>Owed</Th>
+                                <Th right>Overdue</Th>
+                                <Th right className="bg-amber-50">Wed {runLabel(thisRun)}</Th>
+                                <Th right>Wed {runLabel(nextRun)}</Th>
+                                <Th right>Later</Th>
+                                <Th>Last repaid</Th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {rows.map(r => {
+                                const p = ADVANCE_PEOPLE.find(x => x.ledger === r.person)
+                                return (
+                                    <tr key={r.person} className="hover:bg-gray-50">
+                                        <td className="px-3 py-3 whitespace-nowrap">
+                                            <Link to={`/supplier-ledger/advances/${encodeURIComponent(r.person)}`} className="font-semibold text-blue-600 hover:underline">
+                                                {p?.name ?? r.person}
+                                            </Link>
+                                        </td>
+                                        <Td className="text-gray-500">{r.person}</Td>
+                                        <Td right strong>{fmtMoney(r.owed)}</Td>
+                                        <Td right className={r.overdue > 0 ? 'text-red-700 font-semibold' : ''}>{money(r.overdue)}</Td>
+                                        <Td right className={`bg-amber-50/60 ${r.due_this_wednesday > 0 ? 'text-amber-800 font-semibold' : ''}`}>{money(r.due_this_wednesday)}</Td>
+                                        <Td right>{money(r.due_next_wednesday)}</Td>
+                                        <Td right>{money(r.later)}</Td>
+                                        <Td className={r.last_repaid_on ? '' : 'text-gray-400'}>{r.last_repaid_on ? fmtDate(r.last_repaid_on) : 'None yet'}</Td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </section>
     )
 }
 

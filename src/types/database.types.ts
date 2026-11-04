@@ -14,6 +14,69 @@ export type Database = {
   }
   public: {
     Tables: {
+      advance_repayments: {
+        Row: {
+          amount: number
+          bank: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          created_at: string
+          id: string
+          paid_on: string
+          payment_method: string
+          person: string
+          recorded_by: string | null
+          status: string
+          utr: string | null
+        }
+        Insert: {
+          amount: number
+          bank?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          created_at?: string
+          id?: string
+          paid_on: string
+          payment_method: string
+          person: string
+          recorded_by?: string | null
+          status?: string
+          utr?: string | null
+        }
+        Update: {
+          amount?: number
+          bank?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          created_at?: string
+          id?: string
+          paid_on?: string
+          payment_method?: string
+          person?: string
+          recorded_by?: string | null
+          status?: string
+          utr?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "advance_repayments_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "advance_repayments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_logs: {
         Row: {
           action: string
@@ -567,6 +630,7 @@ export type Database = {
       }
       outsource_invoices: {
         Row: {
+          accepted_at: string | null
           advance_amount: number | null
           approved_amount: number | null
           batch_service_id: string | null
@@ -586,6 +650,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          accepted_at?: string | null
           advance_amount?: number | null
           approved_amount?: number | null
           batch_service_id?: string | null
@@ -605,6 +670,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          accepted_at?: string | null
           advance_amount?: number | null
           approved_amount?: number | null
           batch_service_id?: string | null
@@ -1630,6 +1696,10 @@ export type Database = {
           created_by: string | null
           id: string
           reason: string
+          reverse_reason: string | null
+          reversed_at: string | null
+          reversed_by: string | null
+          status: string
           supplier_id: string
           system_balance: number
         }
@@ -1642,6 +1712,10 @@ export type Database = {
           created_by?: string | null
           id?: string
           reason: string
+          reverse_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          status?: string
           supplier_id: string
           system_balance: number
         }
@@ -1654,6 +1728,10 @@ export type Database = {
           created_by?: string | null
           id?: string
           reason?: string
+          reverse_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          status?: string
           supplier_id?: string
           system_balance?: number
         }
@@ -1661,6 +1739,13 @@ export type Database = {
           {
             foreignKeyName: "supplier_ledger_adjustments_created_by_fkey"
             columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_ledger_adjustments_reversed_by_fkey"
+            columns: ["reversed_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1700,7 +1785,7 @@ export type Database = {
           cancelled_by?: string | null
           created_at?: string
           id?: string
-          ledger: string
+          ledger?: string
           paid_on: string
           payment_method: string
           recorded_by?: string | null
@@ -2332,11 +2417,48 @@ export type Database = {
         Args: { n_days: number; start_ts: string }
         Returns: string
       }
+      advance_ledger_lines: {
+        Args: never
+        Returns: {
+          amount: number
+          batch_number: number
+          counts: boolean
+          detail: Json
+          due_date: string
+          entry_at: string
+          invoice_no: string
+          job_card_number: number
+          kind: string
+          line_id: string
+          person: string
+        }[]
+      }
+      advance_open_items: {
+        Args: { p_today: string }
+        Returns: {
+          amount: number
+          batch_number: number
+          bucket: string
+          due_date: string
+          entry_at: string
+          invoice_no: string
+          job_card_number: number
+          line_id: string
+          person: string
+          remaining: number
+          run_date: string
+          supplier: string
+        }[]
+      }
       apply_part_stock_delta: {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
         Returns: undefined
       }
       assert_ledger_writer: { Args: never; Returns: undefined }
+      cancel_advance_repayment: {
+        Args: { p_reason: string; p_repayment_id: string }
+        Returns: undefined
+      }
       cancel_batch_service_invoice: {
         Args: { p_batch_id: string; p_reason: string }
         Returns: undefined
@@ -2364,6 +2486,7 @@ export type Database = {
         Args: { p_issue_part_id: string }
         Returns: Json
       }
+      end_of_ist_day: { Args: { p_date: string }; Returns: string }
       evaluate_acceptance_sla: {
         Args: { p_first_issue_created: string; p_ticket_id: string }
         Returns: Database["public"]["Enums"]["sla_status_enum"]
@@ -2371,6 +2494,50 @@ export type Database = {
       finalize_outsource_invoice: {
         Args: { p_job_card_id: string; p_remarks?: string }
         Returns: Json
+      }
+      get_advance_balances: {
+        Args: never
+        Returns: {
+          due_next_wednesday: number
+          due_this_wednesday: number
+          last_repaid_on: string
+          later: number
+          overdue: number
+          owed: number
+          person: string
+        }[]
+      }
+      get_advance_open_items: {
+        Args: { p_person: string }
+        Returns: {
+          amount: number
+          batch_number: number
+          bucket: string
+          due_date: string
+          entry_at: string
+          invoice_no: string
+          job_card_number: number
+          line_id: string
+          remaining: number
+          run_date: string
+          supplier: string
+        }[]
+      }
+      get_advance_statement: {
+        Args: { p_person: string }
+        Returns: {
+          amount: number
+          balance: number
+          batch_number: number
+          counts: boolean
+          detail: Json
+          due_date: string
+          entry_at: string
+          invoice_no: string
+          job_card_number: number
+          kind: string
+          line_id: string
+        }[]
       }
       get_blocking_scrap_for_issue_part: {
         Args: { p_issue_part_id: string }
@@ -2494,7 +2661,7 @@ export type Database = {
           batch_number: number
           bucket: string
           due_date: string
-          entry_date: string
+          entry_at: string
           invoice_no: string
           job_card_number: number
           kind: string
@@ -2510,10 +2677,9 @@ export type Database = {
           balance: number
           batch_number: number
           counts: boolean
-          created_at: string
           detail: Json
           due_date: string
-          entry_date: string
+          entry_at: string
           invoice_id: string
           invoice_no: string
           job_card_number: number
@@ -2524,6 +2690,12 @@ export type Database = {
       has_labour_on_job_card: {
         Args: { p_job_card_id: string }
         Returns: boolean
+      }
+      invoice_submitted_day: {
+        Args: {
+          p_invoice: Database["public"]["Tables"]["outsource_invoices"]["Row"]
+        }
+        Returns: string
       }
       is_finance: { Args: never; Returns: boolean }
       is_maintenance_exec: { Args: never; Returns: boolean }
@@ -2544,6 +2716,10 @@ export type Database = {
         }
         Returns: string
       }
+      record_advance_repayment: {
+        Args: { p_payment: Json; p_person: string }
+        Returns: string
+      }
       record_scrap_disposal: {
         Args: { p_header: Json; p_items: Json }
         Returns: Json
@@ -2558,6 +2734,10 @@ export type Database = {
       }
       restore_batch_service_invoice: {
         Args: { p_batch_id: string; p_links: Json }
+        Returns: undefined
+      }
+      reverse_ledger_adjustment: {
+        Args: { p_adjustment_id: string; p_reason: string }
         Returns: undefined
       }
       save_batch_service_invoice: {
@@ -2625,10 +2805,9 @@ export type Database = {
           amount: number
           batch_number: number
           counts: boolean
-          created_at: string
           detail: Json
           due_date: string
-          entry_date: string
+          entry_at: string
           invoice_id: string
           invoice_no: string
           job_card_number: number
@@ -2645,7 +2824,7 @@ export type Database = {
           batch_number: number
           bucket: string
           due_date: string
-          entry_date: string
+          entry_at: string
           invoice_no: string
           job_card_number: number
           kind: string
