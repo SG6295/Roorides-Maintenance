@@ -914,6 +914,39 @@ export type Database = {
           },
         ]
       }
+      refurbished_part_links: {
+        Row: {
+          created_at: string
+          original_part_id: string
+          refurbished_part_id: string
+        }
+        Insert: {
+          created_at?: string
+          original_part_id: string
+          refurbished_part_id: string
+        }
+        Update: {
+          created_at?: string
+          original_part_id?: string
+          refurbished_part_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "refurbished_part_links_original_part_id_fkey"
+            columns: ["original_part_id"]
+            isOneToOne: true
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "refurbished_part_links_refurbished_part_id_fkey"
+            columns: ["refurbished_part_id"]
+            isOneToOne: true
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scrap_disposal: {
         Row: {
           buyer_contact: string | null
@@ -1107,11 +1140,12 @@ export type Database = {
           quantity_snapshot: number
           received_at: string | null
           received_by: string | null
-          source_issue_id: string
+          source_audit_reason_id: string | null
+          source_issue_id: string | null
           source_issue_part_id: string | null
-          source_job_card_id: string
-          source_ticket_id: string
-          source_vehicle_number: string
+          source_job_card_id: string | null
+          source_ticket_id: string | null
+          source_vehicle_number: string | null
           status: Database["public"]["Enums"]["scrap_item_status"]
           unit_snapshot: string
           updated_at: string
@@ -1137,11 +1171,12 @@ export type Database = {
           quantity_snapshot: number
           received_at?: string | null
           received_by?: string | null
-          source_issue_id: string
+          source_audit_reason_id?: string | null
+          source_issue_id?: string | null
           source_issue_part_id?: string | null
-          source_job_card_id: string
-          source_ticket_id: string
-          source_vehicle_number: string
+          source_job_card_id?: string | null
+          source_ticket_id?: string | null
+          source_vehicle_number?: string | null
           status?: Database["public"]["Enums"]["scrap_item_status"]
           unit_snapshot: string
           updated_at?: string
@@ -1167,11 +1202,12 @@ export type Database = {
           quantity_snapshot?: number
           received_at?: string | null
           received_by?: string | null
-          source_issue_id?: string
+          source_audit_reason_id?: string | null
+          source_issue_id?: string | null
           source_issue_part_id?: string | null
-          source_job_card_id?: string
-          source_ticket_id?: string
-          source_vehicle_number?: string
+          source_job_card_id?: string | null
+          source_ticket_id?: string | null
+          source_vehicle_number?: string | null
           status?: Database["public"]["Enums"]["scrap_item_status"]
           unit_snapshot?: string
           updated_at?: string
@@ -1197,6 +1233,13 @@ export type Database = {
             columns: ["received_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_inventory_source_audit_reason_id_fkey"
+            columns: ["source_audit_reason_id"]
+            isOneToOne: false
+            referencedRelation: "stock_audit_item_reasons"
             referencedColumns: ["id"]
           },
           {
@@ -1232,6 +1275,78 @@ export type Database = {
             columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scrap_refurbishments: {
+        Row: {
+          comment: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          original_part_id: string
+          purchase_invoice_item_id: string
+          quantity: number
+          refurbished_part_id: string
+          scrap_inventory_id: string | null
+        }
+        Insert: {
+          comment?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          original_part_id: string
+          purchase_invoice_item_id: string
+          quantity: number
+          refurbished_part_id: string
+          scrap_inventory_id?: string | null
+        }
+        Update: {
+          comment?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          original_part_id?: string
+          purchase_invoice_item_id?: string
+          quantity?: number
+          refurbished_part_id?: string
+          scrap_inventory_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scrap_refurbishments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_refurbishments_original_part_id_fkey"
+            columns: ["original_part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_refurbishments_purchase_invoice_item_id_fkey"
+            columns: ["purchase_invoice_item_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_invoice_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_refurbishments_refurbished_part_id_fkey"
+            columns: ["refurbished_part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scrap_refurbishments_scrap_inventory_id_fkey"
+            columns: ["scrap_inventory_id"]
+            isOneToOne: false
+            referencedRelation: "scrap_inventory"
             referencedColumns: ["id"]
           },
         ]
@@ -1411,6 +1526,41 @@ export type Database = {
           sla_days?: number
         }
         Relationships: []
+      }
+      stock_audit_item_reasons: {
+        Row: {
+          audit_item_id: string
+          id: string
+          notes: string | null
+          quantity: number
+          reason: string
+          sort_order: number
+        }
+        Insert: {
+          audit_item_id: string
+          id?: string
+          notes?: string | null
+          quantity: number
+          reason: string
+          sort_order?: number
+        }
+        Update: {
+          audit_item_id?: string
+          id?: string
+          notes?: string | null
+          quantity?: number
+          reason?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_audit_item_reasons_audit_item_id_fkey"
+            columns: ["audit_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_audit_items"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       stock_audit_items: {
         Row: {
@@ -2718,6 +2868,10 @@ export type Database = {
       }
       record_advance_repayment: {
         Args: { p_payment: Json; p_person: string }
+        Returns: string
+      }
+      record_refurbishment: {
+        Args: { p_invoice: Json; p_lines: Json }
         Returns: string
       }
       record_scrap_disposal: {

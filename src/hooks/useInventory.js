@@ -333,17 +333,19 @@ export function usePartConsumption(filters = {}) {
 }
 
 /**
- * Completed stock-audit differences, shaped like consumption rows.
+ * Completed stock-audit differences, shaped like consumption rows — one row per reason
+ * line, since a difference can be split across several (MAIN-123).
  *
- * quantity_used is the negated variance: a shortfall of -3 reads as 3 units gone, and a
- * surplus of +5 reads as -5 — stock that came back. Matched parts are skipped entirely.
+ * quantity_used follows the variance's direction: a shortfall reads as units gone, and a
+ * surplus as a negative — stock that came back. Matched parts are skipped entirely.
  */
 async function fetchAuditConsumption(filters = {}) {
     let query = supabase
         .from('stock_audit_items')
         .select(`
             id, part_id, part_name_snapshot, part_number_snapshot, unit_snapshot,
-            variance, reason, reason_notes,
+            variance,
+            reason_lines:stock_audit_item_reasons(id, quantity, reason, notes),
             audit:stock_audits!audit_id(
                 id, audit_number, status, completed_at, completed_by_name,
                 location:workshop_locations!location_id(id, name)
@@ -365,10 +367,10 @@ async function fetchAuditConsumption(filters = {}) {
             if (to && at > to) return false
             return true
         })
-        .map(row => ({
-            id: `audit:${row.id}`,
+        .flatMap(row => (row.reason_lines ?? []).map(line => ({
+            id: `audit:${line.id}`,
             source: 'audit',
-            quantity_used: -Number(row.variance ?? 0),
+            quantity_used: Number(row.variance) < 0 ? Number(line.quantity) : -Number(line.quantity),
             added_at: row.audit.completed_at,
             part_name: row.part_name_snapshot,
             part_number: row.part_number_snapshot,
@@ -383,9 +385,9 @@ async function fetchAuditConsumption(filters = {}) {
             mechanic_name: null,
             audit_id: row.audit.id,
             audit_number: row.audit.audit_number,
-            audit_reason: row.reason,
-            audit_reason_notes: row.reason_notes,
-        }))
+            audit_reason: line.reason,
+            audit_reason_notes: line.notes,
+        })))
 }
 
 /**

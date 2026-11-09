@@ -4,6 +4,8 @@ import {
     ExclamationTriangleIcon,
     ChevronDownIcon,
     ChevronUpIcon,
+    PlusIcon,
+    TrashIcon,
 } from '@heroicons/react/24/outline'
 import CustomSelect from '../../shared/CustomSelect'
 import {
@@ -12,6 +14,13 @@ import {
     useSetStockAuditReasons,
     useCompleteStockAudit,
 } from '../../../hooks/useStockAudits'
+import {
+    initialAuditLines,
+    unallocatedQty,
+    lineNeedsNote,
+    isMismatchExplained,
+    savableAuditLines,
+} from '../../../utils/auditReasons'
 
 const SOURCE_LABELS = {
     consumption: 'Used on job card',
@@ -57,35 +66,37 @@ export default function AuditReviewTable({ audit, items }) {
     const mismatches = useMemo(() => items.filter(i => i.variance !== 0), [items])
     const rows = showAll ? items : mismatches
 
-    // What the row shows: a local edit if there is one, otherwise what is saved.
-    const valueFor = (item, field) =>
-        edits[item.part_id]?.[field] ?? (field === 'reason' ? item.reason : item.reason_notes) ?? ''
+    // What the row shows: local edits if there are any, otherwise what is saved.
+    const linesFor = item => edits[item.part_id] ?? initialAuditLines(item)
 
-    function setField(item, field, value) {
+    function setLines(item, lines) {
         setError(null)
-        setEdits(prev => ({
-            ...prev,
-            [item.part_id]: {
-                reason: prev[item.part_id]?.reason ?? item.reason ?? '',
-                notes: prev[item.part_id]?.notes ?? item.reason_notes ?? '',
-                [field]: value,
-            },
-        }))
+        setEdits(prev => ({ ...prev, [item.part_id]: lines }))
+    }
+
+    function setLineField(item, index, field, value) {
+        setLines(item, linesFor(item).map((l, i) => (i === index ? { ...l, [field]: value } : l)))
+    }
+
+    // A new line starts with whatever is left, so the common case needs no typing.
+    function addLine(item) {
+        const lines = linesFor(item)
+        const left = Math.max(unallocatedQty(item.variance, lines), 0)
+        setLines(item, [...lines, { quantity: left > 0 ? String(left) : '', reason: '', notes: '' }])
+    }
+
+    function removeLine(item, index) {
+        setLines(item, linesFor(item).filter((_, i) => i !== index))
     }
 
     const dirty = Object.keys(edits).length > 0
 
-    const unexplained = mismatches.filter(i => {
-        const reason = valueFor(i, 'reason')
-        if (!reason) return true
-        return reason === 'other' && !String(valueFor(i, 'notes')).trim()
-    })
+    const unexplained = mismatches.filter(i => !isMismatchExplained(i.variance, linesFor(i)))
 
     const pendingItems = () =>
-        Object.entries(edits).map(([part_id, v]) => ({
+        Object.entries(edits).map(([part_id, lines]) => ({
             part_id,
-            reason: v.reason || null,
-            notes: v.notes || null,
+            lines: savableAuditLines(lines),
         }))
 
     async function persistReasons() {
@@ -128,7 +139,7 @@ export default function AuditReviewTable({ audit, items }) {
                     </span>
                     {unexplained.length > 0 && (
                         <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-700 rounded-full">
-                            {unexplained.length} still need a reason
+                            {unexplained.length} still need reasons
                         </span>
                     )}
                 </div>
@@ -160,8 +171,7 @@ export default function AuditReviewTable({ audit, items }) {
                                     <th className="px-4 py-3 text-right">Counted</th>
                                     <th className="px-4 py-3 text-right">Difference</th>
                                     <th className="px-4 py-3 text-left">During audit</th>
-                                    <th className="px-4 py-3 text-left w-44">Reason</th>
-                                    <th className="px-4 py-3 text-left w-56">Note</th>
+                                    <th colSpan={2} className="px-4 py-3 text-left min-w-[28rem]">Qty, reason and comment</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50">
@@ -169,13 +179,13 @@ export default function AuditReviewTable({ audit, items }) {
                                     const moved = movements[item.part_id] || []
                                     const netMoved = moved.reduce((s, m) => s + m.quantity, 0)
                                     const isOpen = expanded === item.part_id
-                                    const reason = valueFor(item, 'reason')
-                                    const needsNote = reason === 'other' && !String(valueFor(item, 'notes')).trim()
+                                    const lines = linesFor(item)
+                                    const left = unallocatedQty(item.variance, lines)
 
                                     return (
                                         <Fragment key={item.part_id}>
                                             <tr className={`align-top ${
-                                                item.variance !== 0 && (!reason || needsNote)
+                                                item.variance !== 0 && !isMismatchExplained(item.variance, lines)
                                                     ? 'bg-yellow-50/50'
                                                     : 'hover:bg-gray-50'
                                             }`}>
@@ -213,30 +223,78 @@ export default function AuditReviewTable({ audit, items }) {
                                                         </button>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3">
+                                                <td colSpan={2} className="px-4 py-3">
                                                     {item.variance === 0 ? (
                                                         <span className="text-xs text-gray-400">Matched</span>
                                                     ) : (
-                                                        <CustomSelect
-                                                            value={reason}
-                                                            onChange={v => setField(item, 'reason', v)}
-                                                            options={reasonsFor(item.variance)}
-                                                            placeholder="Choose a reason…"
-                                                            compact
-                                                        />
-                                                    )}
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    {item.variance !== 0 && (
-                                                        <input
-                                                            type="text"
-                                                            value={valueFor(item, 'notes')}
-                                                            onChange={e => setField(item, 'notes', e.target.value)}
-                                                            placeholder={reason === 'other' ? 'Required' : 'Optional'}
-                                                            className={`w-full border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 ${
-                                                                needsNote ? 'border-yellow-400 bg-yellow-50' : ''
-                                                            }`}
-                                                        />
+                                                        <div className="space-y-2">
+                                                            {lines.map((line, i) => (
+                                                                <div key={i}>
+                                                                    <div className="grid grid-cols-[4.5rem_10rem_minmax(0,1fr)_1.25rem] gap-2 items-center">
+                                                                        <input
+                                                                            type="number"
+                                                                            min="0"
+                                                                            step="any"
+                                                                            aria-label="Quantity"
+                                                                            value={line.quantity}
+                                                                            onChange={e => setLineField(item, i, 'quantity', e.target.value)}
+                                                                            className="w-full border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
+                                                                        />
+                                                                        <CustomSelect
+                                                                            value={line.reason}
+                                                                            onChange={v => setLineField(item, i, 'reason', v)}
+                                                                            options={reasonsFor(item.variance)}
+                                                                            placeholder="Choose a reason…"
+                                                                            compact
+                                                                        />
+                                                                        <input
+                                                                            type="text"
+                                                                            aria-label="Comment"
+                                                                            value={line.notes}
+                                                                            onChange={e => setLineField(item, i, 'notes', e.target.value)}
+                                                                            placeholder={line.reason === 'other' ? 'Required' : 'Optional'}
+                                                                            className={`w-full border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 ${
+                                                                                lineNeedsNote(line) ? 'border-yellow-400 bg-yellow-50' : ''
+                                                                            }`}
+                                                                        />
+                                                                        {lines.length > 1 ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => removeLine(item, i)}
+                                                                                aria-label="Remove line"
+                                                                                className="text-gray-400 hover:text-red-500"
+                                                                            >
+                                                                                <TrashIcon className="w-4 h-4" />
+                                                                            </button>
+                                                                        ) : <span />}
+                                                                    </div>
+                                                                    {line.reason === 'damaged' && (
+                                                                        <p className="text-xs text-gray-400 mt-1">
+                                                                            {item.part?.default_exclude_from_scrap
+                                                                                ? 'Will not go to scrap — this part is set to skip it.'
+                                                                                : 'Will go to scrap when the audit completes.'}
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                            <div className="flex items-center justify-between">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => addLine(item)}
+                                                                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                                                                >
+                                                                    <PlusIcon className="w-3 h-3" />
+                                                                    Add another reason
+                                                                </button>
+                                                                {left !== 0 && (
+                                                                    <span className={`text-xs ${left < 0 ? 'text-red-600' : 'text-yellow-700'}`}>
+                                                                        {left > 0
+                                                                            ? `${fmt(left)} still to explain`
+                                                                            : `${fmt(-left)} more than the difference`}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
                                                     )}
                                                 </td>
                                             </tr>

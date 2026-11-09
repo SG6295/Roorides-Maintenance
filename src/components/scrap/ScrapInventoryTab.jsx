@@ -3,7 +3,7 @@ import { formatDate } from '../../utils/datetime'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import FilterSelect from '../shared/FilterSelect'
 import { TicketListSkeleton } from '../shared/LoadingSkeleton'
-import { useScrapInventory } from '../../hooks/useScrap'
+import { useScrapInventory, scrapSourceLabel } from '../../hooks/useScrap'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 
@@ -104,7 +104,7 @@ export default function ScrapInventoryTab() {
                                 <th className="px-4 py-3 text-right">Qty</th>
                                 <th className="px-4 py-3 text-left">Unit</th>
                                 <th className="px-4 py-3 text-left">Source Vehicle</th>
-                                <th className="px-4 py-3 text-left">Source JC</th>
+                                <th className="px-4 py-3 text-left">Source</th>
                                 <th className="px-4 py-3 text-left">Workshop</th>
                                 <th className="px-4 py-3 text-left">Status</th>
                                 <th className="px-4 py-3 text-left">Date Added</th>
@@ -119,7 +119,7 @@ export default function ScrapInventoryTab() {
                                     <td className="px-4 py-3 text-gray-500">{item.unit_snapshot}</td>
                                     <td className="px-4 py-3 text-gray-700">{item.source_vehicle_number || '—'}</td>
                                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">
-                                        {item.job_card?.job_card_number || '—'}
+                                        {scrapSourceLabel(item)}
                                     </td>
                                     <td className="px-4 py-3 text-gray-700">{item.location?.name || '—'}</td>
                                     <td className="px-4 py-3">

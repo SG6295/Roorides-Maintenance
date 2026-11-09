@@ -141,7 +141,14 @@ export function useStockAuditItems(auditId) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('stock_audit_items')
-                .select('*')
+                .select(`
+                    *,
+                    part:parts(default_exclude_from_scrap),
+                    reason_lines:stock_audit_item_reasons(
+                        id, quantity, reason, notes, sort_order,
+                        scrap:scrap_inventory(id)
+                    )
+                `)
                 .eq('audit_id', auditId)
                 .order('part_name_snapshot')
             if (error) throw error
@@ -192,6 +199,7 @@ function invalidateAudit(queryClient) {
     queryClient.invalidateQueries({ queryKey: ['part_stock'] })
     queryClient.invalidateQueries({ queryKey: ['parts'] })
     queryClient.invalidateQueries({ queryKey: ['part_consumption'] })
+    queryClient.invalidateQueries({ queryKey: ['scrap_inventory'] })
 }
 
 export function useStartStockAudit() {
@@ -222,18 +230,14 @@ export function useSubmitStockAuditCounts() {
     })
 }
 
-/** @param {Array<{part_id: string, reason: string|null, notes: string|null}>} items */
+/** @param {Array<{part_id: string, lines: Array<{quantity: number, reason: string, notes: string|null}>}>} items */
 export function useSetStockAuditReasons() {
     const queryClient = useQueryClient()
     return useMutation({
         mutationFn: ({ auditId, items }) =>
             callAuditRpc('set_stock_audit_reasons', {
                 p_audit_id: auditId,
-                p_items: items.map(i => ({
-                    part_id: i.part_id,
-                    reason: i.reason || null,
-                    notes: i.notes || null,
-                })),
+                p_items: items,
             }),
         onSuccess: () => invalidateAudit(queryClient),
     })

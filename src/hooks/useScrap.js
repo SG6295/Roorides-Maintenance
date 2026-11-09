@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { auditRef } from './useStockAudits'
 
 export class ScrapRPCError extends Error {
     constructor(payload) {
@@ -99,6 +100,18 @@ function throwIfRpcError(error) {
     throw error
 }
 
+const AUDIT_SOURCE_EMBED = `
+    audit_line:stock_audit_item_reasons!source_audit_reason_id(
+        audit_item:stock_audit_items!audit_item_id(audit:stock_audits!audit_id(audit_number))
+    )
+`
+
+/** Where a scrap row came from, as shown in a list: its job card or its stock audit. */
+export function scrapSourceLabel(item) {
+    const audit = item?.audit_line?.audit_item?.audit
+    return item?.job_card?.job_card_number || (audit ? auditRef(audit) : '—')
+}
+
 export function useScrapInventory(filters = {}) {
     return useQuery({
         queryKey: ['scrap_inventory', filters],
@@ -119,7 +132,8 @@ export function useScrapInventory(filters = {}) {
                     created_at,
                     location_id,
                     location:workshop_locations!location_id(id, name),
-                    job_card:job_cards!source_job_card_id(job_card_number)
+                    job_card:job_cards!source_job_card_id(job_card_number),
+                    ${AUDIT_SOURCE_EMBED}
                 `)
                 .order('created_at', { ascending: false })
 

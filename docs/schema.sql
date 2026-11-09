@@ -2066,11 +2066,15 @@ BEGIN
     END IF;
 
     SELECT count(*) INTO v_unexplained
-    FROM   public.stock_audit_items
-    WHERE  audit_id = p_audit_id AND variance <> 0 AND reason IS NULL;
+    FROM   public.stock_audit_items i
+    WHERE  i.audit_id = p_audit_id
+      AND  i.variance <> 0
+      AND  COALESCE((SELECT sum(l.quantity)
+                     FROM   public.stock_audit_item_reasons l
+                     WHERE  l.audit_item_id = i.id), 0) <> abs(i.variance);
 
     IF v_unexplained > 0 THEN
-        RAISE EXCEPTION '% mismatch(es) still need a reason before the audit can be completed.', v_unexplained;
+        RAISE EXCEPTION '% mismatch(es) still need reasons that add up to the difference before the audit can be completed.', v_unexplained;
     END IF;
 
     FOR r IN
@@ -2111,6 +2115,22 @@ BEGIN
             ELSE
                 v_net_value := v_net_value + round(r.variance * v_unit_value, 2);
             END IF;
+
+            -- One scrap item per Damaged line, so each keeps its own comment. Parts set
+            -- to skip scrap at job card closure skip it here too.
+            INSERT INTO public.scrap_inventory (
+                source_audit_reason_id, part_id_snapshot, part_name_snapshot,
+                part_number_snapshot, quantity_snapshot, unit_snapshot, notes,
+                status, location_id, created_by
+            )
+            SELECT l.id, r.part_id, r.part_name_snapshot, r.part_number_snapshot,
+                   l.quantity, r.unit_snapshot, l.notes,
+                   'in_storage'::public.scrap_item_status, v_location, auth.uid()
+            FROM   public.stock_audit_item_reasons l
+            JOIN   public.parts p ON p.id = r.part_id
+            WHERE  l.audit_item_id = r.id
+              AND  l.reason = 'damaged'
+              AND  NOT p.default_exclude_from_scrap;
         END IF;
 
         UPDATE public.stock_audit_items
@@ -3144,6 +3164,60 @@ $$;
 ALTER FUNCTION public.guard_outsource_invoice_status_owners() OWNER TO postgres;
 
 --
+-- Name: guard_refurbishment_invoice_line(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_refurbishment_invoice_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.scrap_refurbishments WHERE purchase_invoice_item_id = OLD.id) THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'This line came from a scrap refurbishment and cannot be removed.';
+        END IF;
+        IF (NEW.part_id, NEW.quantity, NEW.unit_price, NEW.gst_rate, NEW.discount_amount)
+           IS DISTINCT FROM (OLD.part_id, OLD.quantity, OLD.unit_price, OLD.gst_rate, OLD.discount_amount) THEN
+            RAISE EXCEPTION 'This line came from a scrap refurbishment and cannot be changed.';
+        END IF;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_refurbishment_invoice_line() OWNER TO postgres;
+
+--
+-- Name: guard_refurbishment_invoice_location(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_refurbishment_invoice_location() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM   public.purchase_invoice_items pii
+        JOIN   public.scrap_refurbishments sr ON sr.purchase_invoice_item_id = pii.id
+        WHERE  pii.invoice_id = NEW.id
+    ) THEN
+        RAISE EXCEPTION 'This invoice has scrap refurbishment lines, so its workshop cannot be changed.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_refurbishment_invoice_location() OWNER TO postgres;
+
+--
 -- Name: has_labour_on_job_card(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3677,6 +3751,239 @@ $$;
 
 
 ALTER FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) OWNER TO postgres;
+
+--
+-- Name: record_refurbishment(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.record_refurbishment(p_invoice jsonb, p_lines jsonb) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_location    uuid := NULLIF(p_invoice->>'location_id', '')::uuid;
+    v_invoice_id  uuid;
+    v_line        jsonb;
+    v_scrap_id    uuid;
+    v_scrap       public.scrap_inventory%ROWTYPE;
+    v_final_scrap uuid;
+    v_part_id     uuid;
+    v_part_name   text;
+    v_part_number text;
+    v_part_unit   text;
+    v_refurb_id   uuid;
+    v_item_id     uuid;
+    v_quantity    numeric;
+    v_unit_price  numeric;
+    v_comment     text;
+    v_seen        uuid[] := '{}';
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'UNAUTHORIZED',
+            'error_message', 'Only maintenance executives can record a refurbishment.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF NULLIF(btrim(COALESCE(p_invoice->>'invoice_number', '')), '') IS NULL
+       OR NULLIF(btrim(COALESCE(p_invoice->>'supplier_name', '')), '') IS NULL
+       OR NULLIF(p_invoice->>'invoice_date', '') IS NULL
+       OR v_location IS NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_INCOMPLETE',
+            'error_message', 'Supplier, invoice number, invoice date and workshop are required.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF jsonb_array_length(COALESCE(p_lines, '[]'::jsonb)) = 0 THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'NO_LINES',
+            'error_message', 'Add at least one refurbished part.',
+            'details',       null
+        )::text;
+    END IF;
+
+    -- In id order, so two invoices touching the same rows cannot deadlock.
+    PERFORM 1
+    FROM    public.scrap_inventory
+    WHERE   id IN (SELECT (l->>'scrap_inventory_id')::uuid
+                   FROM   jsonb_array_elements(p_lines) l
+                   WHERE  l->>'scrap_inventory_id' IS NOT NULL)
+    ORDER   BY id
+    FOR UPDATE;
+
+    v_invoice_id := public.save_purchase_invoice(NULL, p_invoice, '[]'::jsonb);
+
+    FOR v_line IN SELECT * FROM jsonb_array_elements(p_lines)
+    LOOP
+        v_scrap_id   := NULLIF(v_line->>'scrap_inventory_id', '')::uuid;
+        v_quantity   := round((v_line->>'quantity')::numeric, 2);
+        v_unit_price := (v_line->>'unit_price')::numeric;
+        v_comment    := NULLIF(btrim(COALESCE(v_line->>'comment', '')), '');
+
+        IF v_quantity IS NULL OR v_quantity <= 0 THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'INVALID_QUANTITY',
+                'error_message', 'Every line needs a quantity above zero.',
+                'details',       null
+            )::text;
+        END IF;
+        IF v_unit_price IS NULL OR v_unit_price < 0 THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'INVALID_PRICE',
+                'error_message', 'Every line needs a unit price.',
+                'details',       null
+            )::text;
+        END IF;
+
+        IF v_scrap_id IS NOT NULL THEN
+            IF v_scrap_id = ANY(v_seen) THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'DUPLICATE_SCRAP_ITEM',
+                    'error_message', 'The same scrap item appears more than once.',
+                    'details',       json_build_object('duplicate_id', v_scrap_id)
+                )::text;
+            END IF;
+            v_seen := v_seen || v_scrap_id;
+
+            SELECT * INTO v_scrap FROM public.scrap_inventory WHERE id = v_scrap_id;
+
+            IF NOT FOUND OR v_scrap.status <> 'in_storage' THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'INVALID_SCRAP_ITEM',
+                    'error_message', 'One of those scrap items is no longer in storage. Refresh and try again.',
+                    'details',       json_build_object('scrap_inventory_id', v_scrap_id)
+                )::text;
+            END IF;
+            IF v_scrap.location_id <> v_location THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'WRONG_WORKSHOP',
+                    'error_message', format('"%s" is held at another workshop.', v_scrap.part_name_snapshot),
+                    'details',       null
+                )::text;
+            END IF;
+            IF v_quantity > v_scrap.quantity_snapshot THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'QUANTITY_EXCEEDS_SCRAP',
+                    'error_message', format('Only %s of "%s" is in scrap.', v_scrap.quantity_snapshot, v_scrap.part_name_snapshot),
+                    'details',       null
+                )::text;
+            END IF;
+
+            v_part_id := v_scrap.part_id_snapshot;
+        ELSE
+            v_part_id := NULLIF(v_line->>'original_part_id', '')::uuid;
+
+            IF v_comment IS NULL THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'MISSING_COMMENT',
+                    'error_message', 'A comment is required for a part that is not in the scrap list.',
+                    'details',       null
+                )::text;
+            END IF;
+        END IF;
+
+        -- Locked so two invoices cannot each create a refurbished part for one original.
+        SELECT name, part_number, unit INTO v_part_name, v_part_number, v_part_unit
+        FROM   public.parts WHERE id = v_part_id FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'INVALID_PART',
+                'error_message', 'Choose the original part for every line.',
+                'details',       null
+            )::text;
+        END IF;
+
+        -- Matching on either side means a refurbished part that is scrapped and
+        -- refurbished again goes back to the same part.
+        v_refurb_id := NULL;
+        SELECT refurbished_part_id INTO v_refurb_id
+        FROM   public.refurbished_part_links
+        WHERE  original_part_id = v_part_id OR refurbished_part_id = v_part_id;
+
+        IF v_refurb_id IS NULL THEN
+            INSERT INTO public.parts (name, part_number, unit, quantity_in_stock)
+            VALUES (v_part_name || ' (Refurbished)', v_part_number, v_part_unit, 0)
+            RETURNING id INTO v_refurb_id;
+
+            INSERT INTO public.refurbished_part_links (refurbished_part_id, original_part_id)
+            VALUES (v_refurb_id, v_part_id);
+        END IF;
+
+        -- The insert trigger adds the stock at the invoice's workshop.
+        INSERT INTO public.purchase_invoice_items (invoice_id, part_id, quantity, unit_price, gst_rate)
+        VALUES (v_invoice_id, v_refurb_id, v_quantity, v_unit_price, COALESCE((v_line->>'gst_rate')::numeric, 0))
+        RETURNING id INTO v_item_id;
+
+        v_final_scrap := NULL;
+        IF v_scrap_id IS NOT NULL THEN
+            IF v_quantity = v_scrap.quantity_snapshot THEN
+                UPDATE public.scrap_inventory
+                SET    status = 'refurbished', updated_at = now(), updated_by = auth.uid()
+                WHERE  id = v_scrap_id;
+
+                v_final_scrap := v_scrap_id;
+            ELSE
+                -- The original row keeps the remainder, so a sale or write-off of it
+                -- still takes a whole row.
+                UPDATE public.scrap_inventory
+                SET    quantity_snapshot = quantity_snapshot - v_quantity,
+                       updated_at = now(), updated_by = auth.uid()
+                WHERE  id = v_scrap_id;
+
+                INSERT INTO public.scrap_inventory (
+                    source_ticket_id, source_job_card_id, source_issue_id,
+                    source_issue_part_id, source_vehicle_number, source_audit_reason_id,
+                    part_id_snapshot, part_name_snapshot, part_number_snapshot,
+                    quantity_snapshot, unit_snapshot, description, notes, photos, status,
+                    received_by, received_at, current_location,
+                    outsource_part_disposition_snapshot,
+                    outsource_vendor_credit_amount_snapshot,
+                    location_id, created_by, updated_by
+                ) VALUES (
+                    v_scrap.source_ticket_id, v_scrap.source_job_card_id, v_scrap.source_issue_id,
+                    v_scrap.source_issue_part_id, v_scrap.source_vehicle_number, v_scrap.source_audit_reason_id,
+                    v_scrap.part_id_snapshot, v_scrap.part_name_snapshot, v_scrap.part_number_snapshot,
+                    v_quantity, v_scrap.unit_snapshot, v_scrap.description, v_scrap.notes, v_scrap.photos, 'refurbished',
+                    v_scrap.received_by, v_scrap.received_at, v_scrap.current_location,
+                    v_scrap.outsource_part_disposition_snapshot,
+                    v_scrap.outsource_vendor_credit_amount_snapshot,
+                    v_scrap.location_id, v_scrap.created_by, auth.uid()
+                )
+                RETURNING id INTO v_final_scrap;
+
+                -- The insert trigger re-derives the workshop from the job card.
+                UPDATE public.scrap_inventory
+                SET    location_id = v_scrap.location_id
+                WHERE  id = v_final_scrap;
+            END IF;
+        END IF;
+
+        INSERT INTO public.scrap_refurbishments (
+            purchase_invoice_item_id, scrap_inventory_id, original_part_id,
+            refurbished_part_id, quantity, comment, created_by
+        ) VALUES (
+            v_item_id, v_final_scrap, v_part_id, v_refurb_id, v_quantity, v_comment, auth.uid()
+        );
+    END LOOP;
+
+    UPDATE public.purchase_invoices
+    SET    total_amount = (
+               SELECT COALESCE(sum(line_total), 0)
+               FROM   public.purchase_invoice_items
+               WHERE  invoice_id = v_invoice_id
+           )
+    WHERE  id = v_invoice_id;
+
+    RETURN v_invoice_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.record_refurbishment(p_invoice jsonb, p_lines jsonb) OWNER TO postgres;
 
 --
 -- Name: record_scrap_disposal(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4772,6 +5079,10 @@ CREATE FUNCTION public.set_scrap_location_from_job_card() RETURNS trigger
     SET search_path TO 'public'
     AS $$
 BEGIN
+    IF NEW.source_job_card_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
     SELECT jc.location_id INTO NEW.location_id
     FROM   public.job_cards jc
     WHERE  jc.id = NEW.source_job_card_id;
@@ -4799,15 +5110,19 @@ DECLARE
     v_role      text;
     v_status    text;
     r           RECORD;
+    l           RECORD;
+    v_item_id   uuid;
     v_variance  numeric;
     v_part_name text;
+    v_total     numeric;
+    v_sort      integer;
 BEGIN
     SELECT role INTO v_role FROM public.users WHERE id = auth.uid();
     IF v_role IS NULL OR v_role NOT IN ('finance', 'super_admin') THEN
         RAISE EXCEPTION 'Only finance or a super admin can explain an audit mismatch.';
     END IF;
 
-    SELECT status INTO v_status FROM public.stock_audits WHERE id = p_audit_id;
+    SELECT status INTO v_status FROM public.stock_audits WHERE id = p_audit_id FOR UPDATE;
     IF v_status IS NULL THEN
         RAISE EXCEPTION 'That audit no longer exists.';
     END IF;
@@ -4817,36 +5132,59 @@ BEGIN
 
     FOR r IN
         SELECT (elem->>'part_id')::uuid AS part_id,
-               NULLIF(btrim(COALESCE(elem->>'reason', '')), '') AS reason,
-               NULLIF(btrim(COALESCE(elem->>'notes',  '')), '') AS notes
+               COALESCE(elem->'lines', '[]'::jsonb) AS lines
         FROM   jsonb_array_elements(p_items) AS elem
     LOOP
-        SELECT variance, part_name_snapshot INTO v_variance, v_part_name
+        v_item_id := NULL;
+        SELECT id, variance, part_name_snapshot INTO v_item_id, v_variance, v_part_name
         FROM   public.stock_audit_items
         WHERE  audit_id = p_audit_id AND part_id = r.part_id;
 
-        IF v_part_name IS NULL THEN
+        IF v_item_id IS NULL THEN
             RAISE EXCEPTION 'One of those parts is not part of this audit.';
         END IF;
 
-        IF r.reason IS NOT NULL THEN
-            IF r.reason NOT IN ('missing', 'stolen', 'damaged', 'found', 'other') THEN
-                RAISE EXCEPTION 'Unknown reason "%".', r.reason;
+        DELETE FROM public.stock_audit_item_reasons WHERE audit_item_id = v_item_id;
+
+        v_total := 0;
+        v_sort  := 0;
+
+        FOR l IN
+            SELECT round((e->>'quantity')::numeric, 2) AS quantity,
+                   NULLIF(btrim(COALESCE(e->>'reason', '')), '') AS reason,
+                   NULLIF(btrim(COALESCE(e->>'notes',  '')), '') AS notes
+            FROM   jsonb_array_elements(r.lines) AS e
+        LOOP
+            IF l.quantity IS NULL OR l.quantity <= 0 THEN
+                RAISE EXCEPTION 'Every reason needs a quantity above zero (%).', v_part_name;
             END IF;
-            IF r.reason = 'other' AND r.notes IS NULL THEN
+            IF l.reason IS NULL THEN
+                RAISE EXCEPTION 'Every line needs a reason (%).', v_part_name;
+            END IF;
+            IF l.reason NOT IN ('missing', 'stolen', 'damaged', 'found', 'other') THEN
+                RAISE EXCEPTION 'Unknown reason "%".', l.reason;
+            END IF;
+            IF l.reason = 'other' AND l.notes IS NULL THEN
                 RAISE EXCEPTION 'A note is required when the reason is Other (%).', v_part_name;
             END IF;
-            IF r.reason = 'found' AND COALESCE(v_variance, 0) <= 0 THEN
+            IF l.reason = 'found' AND COALESCE(v_variance, 0) <= 0 THEN
                 RAISE EXCEPTION 'Found / excess only applies where more was counted than expected (%).', v_part_name;
             END IF;
-            IF r.reason IN ('missing', 'stolen', 'damaged') AND COALESCE(v_variance, 0) >= 0 THEN
+            IF l.reason IN ('missing', 'stolen', 'damaged') AND COALESCE(v_variance, 0) >= 0 THEN
                 RAISE EXCEPTION 'Missing, Stolen and Damaged only apply to a shortfall (%).', v_part_name;
             END IF;
-        END IF;
 
-        UPDATE public.stock_audit_items
-        SET reason = r.reason, reason_notes = r.notes
-        WHERE audit_id = p_audit_id AND part_id = r.part_id;
+            INSERT INTO public.stock_audit_item_reasons (audit_item_id, quantity, reason, notes, sort_order)
+            VALUES (v_item_id, l.quantity, l.reason, l.notes, v_sort);
+
+            v_total := v_total + l.quantity;
+            v_sort  := v_sort + 1;
+        END LOOP;
+
+        IF v_total > abs(COALESCE(v_variance, 0)) THEN
+            RAISE EXCEPTION 'The quantities for "%" add up to %, more than the difference of %.',
+                v_part_name, v_total, abs(COALESCE(v_variance, 0));
+        END IF;
     END LOOP;
 END;
 $$;
@@ -5247,12 +5585,16 @@ BEGIN
             RAISE EXCEPTION 'A counted quantity cannot be negative.';
         END IF;
 
+        -- A changed count makes the explanation of the old difference meaningless.
+        DELETE FROM public.stock_audit_item_reasons l
+        USING  public.stock_audit_items i
+        WHERE  l.audit_item_id = i.id
+          AND  i.audit_id = p_audit_id
+          AND  i.part_id = r.part_id
+          AND  i.counted_qty IS DISTINCT FROM r.counted_qty;
+
         UPDATE public.stock_audit_items
-        SET counted_qty  = r.counted_qty,
-            reason       = CASE WHEN counted_qty IS DISTINCT FROM r.counted_qty
-                                THEN NULL ELSE reason END,
-            reason_notes = CASE WHEN counted_qty IS DISTINCT FROM r.counted_qty
-                                THEN NULL ELSE reason_notes END
+        SET counted_qty = r.counted_qty
         WHERE audit_id = p_audit_id AND part_id = r.part_id;
 
         IF NOT FOUND THEN
@@ -9676,6 +10018,26 @@ COMMENT ON COLUMN public.purchase_invoices.location_id IS 'Workshop all line ite
 
 
 --
+-- Name: refurbished_part_links; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.refurbished_part_links (
+    refurbished_part_id uuid NOT NULL,
+    original_part_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.refurbished_part_links OWNER TO postgres;
+
+--
+-- Name: TABLE refurbished_part_links; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.refurbished_part_links IS 'Which catalog part holds the refurbished stock of an original part. One per original.';
+
+
+--
 -- Name: scrap_disposal; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -9751,11 +10113,11 @@ COMMENT ON COLUMN public.scrap_excluded_parts.from_part_default IS 'True when th
 
 CREATE TABLE public.scrap_inventory (
     id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    source_ticket_id uuid NOT NULL,
-    source_job_card_id uuid NOT NULL,
-    source_issue_id uuid NOT NULL,
+    source_ticket_id uuid,
+    source_job_card_id uuid,
+    source_issue_id uuid,
     source_issue_part_id uuid,
-    source_vehicle_number text NOT NULL,
+    source_vehicle_number text,
     part_id_snapshot uuid,
     part_name_snapshot text NOT NULL,
     part_number_snapshot text,
@@ -9775,7 +10137,9 @@ CREATE TABLE public.scrap_inventory (
     created_by uuid NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by uuid,
-    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL
+    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
+    source_audit_reason_id uuid,
+    CONSTRAINT scrap_inventory_one_source_check CHECK ((num_nonnulls(source_job_card_id, source_audit_reason_id) = 1))
 );
 
 
@@ -9786,6 +10150,41 @@ ALTER TABLE public.scrap_inventory OWNER TO postgres;
 --
 
 COMMENT ON COLUMN public.scrap_inventory.location_id IS 'Workshop holding this salvage item, inherited from the source job card. Supersedes the unused free-text current_location column.';
+
+
+--
+-- Name: COLUMN scrap_inventory.source_audit_reason_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.scrap_inventory.source_audit_reason_id IS 'The Damaged line of a stock audit this item came from. Exactly one of this and source_job_card_id is set.';
+
+
+--
+-- Name: scrap_refurbishments; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.scrap_refurbishments (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    purchase_invoice_item_id uuid NOT NULL,
+    scrap_inventory_id uuid,
+    original_part_id uuid NOT NULL,
+    refurbished_part_id uuid NOT NULL,
+    quantity numeric(10,2) NOT NULL,
+    comment text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT scrap_refurbishments_missing_source_comment_check CHECK (((scrap_inventory_id IS NOT NULL) OR (NULLIF(btrim(comment), ''::text) IS NOT NULL))),
+    CONSTRAINT scrap_refurbishments_quantity_check CHECK ((quantity > (0)::numeric))
+);
+
+
+ALTER TABLE public.scrap_refurbishments OWNER TO postgres;
+
+--
+-- Name: COLUMN scrap_refurbishments.scrap_inventory_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.scrap_refurbishments.scrap_inventory_id IS 'NULL when the part was never recorded as scrap ("Scrap source details missing") — for example it was excluded at job card closure but kept in the scrap room. A comment is then required.';
 
 
 --
@@ -9885,6 +10284,31 @@ CREATE TABLE public.sla_rules_config (
 ALTER TABLE public.sla_rules_config OWNER TO postgres;
 
 --
+-- Name: stock_audit_item_reasons; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.stock_audit_item_reasons (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    audit_item_id uuid NOT NULL,
+    quantity numeric(10,2) NOT NULL,
+    reason text NOT NULL,
+    notes text,
+    sort_order integer DEFAULT 0 NOT NULL,
+    CONSTRAINT stock_audit_item_reasons_quantity_check CHECK ((quantity > (0)::numeric)),
+    CONSTRAINT stock_audit_item_reasons_reason_check CHECK ((reason = ANY (ARRAY['missing'::text, 'stolen'::text, 'damaged'::text, 'found'::text, 'other'::text])))
+);
+
+
+ALTER TABLE public.stock_audit_item_reasons OWNER TO postgres;
+
+--
+-- Name: TABLE stock_audit_item_reasons; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.stock_audit_item_reasons IS 'Why a counted part differed from the system. The lines of a part must add up to the absolute variance before the audit can complete.';
+
+
+--
 -- Name: stock_audit_items; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -9932,6 +10356,20 @@ COMMENT ON COLUMN public.stock_audit_items.system_qty IS 'What the app believed 
 --
 
 COMMENT ON COLUMN public.stock_audit_items.was_found_row IS 'The part was written onto a blank row on the sheet rather than printed on it — stock the app did not know was here.';
+
+
+--
+-- Name: COLUMN stock_audit_items.reason; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.reason IS 'Superseded by stock_audit_item_reasons (MAIN-123). No longer written or read.';
+
+
+--
+-- Name: COLUMN stock_audit_items.reason_notes; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.reason_notes IS 'Superseded by stock_audit_item_reasons (MAIN-123). No longer written or read.';
 
 
 --
@@ -11125,6 +11563,22 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
+-- Name: refurbished_part_links refurbished_part_links_original_part_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.refurbished_part_links
+    ADD CONSTRAINT refurbished_part_links_original_part_id_key UNIQUE (original_part_id);
+
+
+--
+-- Name: refurbished_part_links refurbished_part_links_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.refurbished_part_links
+    ADD CONSTRAINT refurbished_part_links_pkey PRIMARY KEY (refurbished_part_id);
+
+
+--
 -- Name: scrap_disposal_items scrap_disposal_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -11162,6 +11616,14 @@ ALTER TABLE ONLY public.scrap_excluded_parts
 
 ALTER TABLE ONLY public.scrap_inventory
     ADD CONSTRAINT scrap_inventory_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scrap_refurbishments scrap_refurbishments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_refurbishments
+    ADD CONSTRAINT scrap_refurbishments_pkey PRIMARY KEY (id);
 
 
 --
@@ -11226,6 +11688,14 @@ ALTER TABLE ONLY public.sla_rules_config
 
 ALTER TABLE ONLY public.sla_rules_config
     ADD CONSTRAINT sla_rules_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_audit_item_reasons stock_audit_item_reasons_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audit_item_reasons
+    ADD CONSTRAINT stock_audit_item_reasons_pkey PRIMARY KEY (id);
 
 
 --
@@ -12168,6 +12638,13 @@ CREATE INDEX idx_scrap_excluded_parts_job_card_id ON public.scrap_excluded_parts
 
 
 --
+-- Name: idx_scrap_inventory_audit_reason_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_inventory_audit_reason_id ON public.scrap_inventory USING btree (source_audit_reason_id);
+
+
+--
 -- Name: idx_scrap_inventory_created_at; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -12203,6 +12680,20 @@ CREATE INDEX idx_scrap_inventory_ticket_id ON public.scrap_inventory USING btree
 
 
 --
+-- Name: idx_scrap_refurbishments_item; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_refurbishments_item ON public.scrap_refurbishments USING btree (purchase_invoice_item_id);
+
+
+--
+-- Name: idx_scrap_refurbishments_scrap; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_scrap_refurbishments_scrap ON public.scrap_refurbishments USING btree (scrap_inventory_id);
+
+
+--
 -- Name: idx_scrap_writeoff_items_scrap_inventory_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -12235,6 +12726,13 @@ CREATE INDEX idx_scrap_writeoff_writeoff_date ON public.scrap_writeoff USING btr
 --
 
 CREATE INDEX idx_sla_events_ticket_id ON public.sla_events USING btree (ticket_id);
+
+
+--
+-- Name: idx_stock_audit_item_reasons_item; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_stock_audit_item_reasons_item ON public.stock_audit_item_reasons USING btree (audit_item_id);
 
 
 --
@@ -12798,6 +13296,20 @@ CREATE TRIGGER trigger_guard_job_card_type_change BEFORE UPDATE OF type ON publi
 
 
 --
+-- Name: purchase_invoice_items trigger_guard_refurbishment_invoice_line; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_refurbishment_invoice_line BEFORE DELETE OR UPDATE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.guard_refurbishment_invoice_line();
+
+
+--
+-- Name: purchase_invoices trigger_guard_refurbishment_invoice_location; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_refurbishment_invoice_location BEFORE UPDATE OF location_id ON public.purchase_invoices FOR EACH ROW WHEN ((old.location_id IS DISTINCT FROM new.location_id)) EXECUTE FUNCTION public.guard_refurbishment_invoice_location();
+
+
+--
 -- Name: purchase_invoices trigger_move_invoice_stock_on_location_change; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -13306,6 +13818,22 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
+-- Name: refurbished_part_links refurbished_part_links_original_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.refurbished_part_links
+    ADD CONSTRAINT refurbished_part_links_original_part_id_fkey FOREIGN KEY (original_part_id) REFERENCES public.parts(id);
+
+
+--
+-- Name: refurbished_part_links refurbished_part_links_refurbished_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.refurbished_part_links
+    ADD CONSTRAINT refurbished_part_links_refurbished_part_id_fkey FOREIGN KEY (refurbished_part_id) REFERENCES public.parts(id);
+
+
+--
 -- Name: scrap_disposal_items scrap_disposal_items_disposal_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13386,6 +13914,14 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
+-- Name: scrap_inventory scrap_inventory_source_audit_reason_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_inventory
+    ADD CONSTRAINT scrap_inventory_source_audit_reason_id_fkey FOREIGN KEY (source_audit_reason_id) REFERENCES public.stock_audit_item_reasons(id);
+
+
+--
 -- Name: scrap_inventory scrap_inventory_source_issue_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13426,6 +13962,46 @@ ALTER TABLE ONLY public.scrap_inventory
 
 
 --
+-- Name: scrap_refurbishments scrap_refurbishments_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_refurbishments
+    ADD CONSTRAINT scrap_refurbishments_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: scrap_refurbishments scrap_refurbishments_original_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_refurbishments
+    ADD CONSTRAINT scrap_refurbishments_original_part_id_fkey FOREIGN KEY (original_part_id) REFERENCES public.parts(id);
+
+
+--
+-- Name: scrap_refurbishments scrap_refurbishments_purchase_invoice_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_refurbishments
+    ADD CONSTRAINT scrap_refurbishments_purchase_invoice_item_id_fkey FOREIGN KEY (purchase_invoice_item_id) REFERENCES public.purchase_invoice_items(id);
+
+
+--
+-- Name: scrap_refurbishments scrap_refurbishments_refurbished_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_refurbishments
+    ADD CONSTRAINT scrap_refurbishments_refurbished_part_id_fkey FOREIGN KEY (refurbished_part_id) REFERENCES public.parts(id);
+
+
+--
+-- Name: scrap_refurbishments scrap_refurbishments_scrap_inventory_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.scrap_refurbishments
+    ADD CONSTRAINT scrap_refurbishments_scrap_inventory_id_fkey FOREIGN KEY (scrap_inventory_id) REFERENCES public.scrap_inventory(id);
+
+
+--
 -- Name: scrap_writeoff_items scrap_writeoff_items_scrap_inventory_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13463,6 +14039,14 @@ ALTER TABLE ONLY public.sla_events
 
 ALTER TABLE ONLY public.sla_events
     ADD CONSTRAINT sla_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_audit_item_reasons stock_audit_item_reasons_audit_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_audit_item_reasons
+    ADD CONSTRAINT stock_audit_item_reasons_audit_item_id_fkey FOREIGN KEY (audit_item_id) REFERENCES public.stock_audit_items(id) ON DELETE CASCADE;
 
 
 --
@@ -14047,6 +14631,29 @@ CREATE POLICY "Exec and finance view invoice items" ON public.purchase_invoice_i
 CREATE POLICY "Exec and finance view invoices" ON public.purchase_invoices FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.users
   WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
+
+
+--
+-- Name: refurbished_part_links Exec and finance view refurbished_part_links; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view refurbished_part_links" ON public.refurbished_part_links FOR SELECT TO authenticated USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
+-- Name: scrap_refurbishments Exec and finance view scrap_refurbishments; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view scrap_refurbishments" ON public.scrap_refurbishments FOR SELECT TO authenticated USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
+-- Name: stock_audit_item_reasons Exec and finance view stock_audit_item_reasons; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view stock_audit_item_reasons" ON public.stock_audit_item_reasons FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.users u
+  WHERE ((u.id = auth.uid()) AND (u.role = ANY (ARRAY['finance'::text, 'super_admin'::text, 'maintenance_exec'::text]))))));
 
 
 --
@@ -14775,6 +15382,12 @@ ALTER TABLE public.purchase_invoice_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_invoices ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: refurbished_part_links; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.refurbished_part_links ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: scrap_disposal; Type: ROW SECURITY; Schema: public; Owner: postgres
 --
 
@@ -14797,6 +15410,12 @@ ALTER TABLE public.scrap_excluded_parts ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.scrap_inventory ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: scrap_refurbishments; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.scrap_refurbishments ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: scrap_writeoff; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -14827,6 +15446,12 @@ ALTER TABLE public.sla_events ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.sla_rules_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: stock_audit_item_reasons; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.stock_audit_item_reasons ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: stock_audit_items; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -16078,6 +16703,24 @@ GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO service_
 
 
 --
+-- Name: FUNCTION guard_refurbishment_invoice_line(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO anon;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_refurbishment_invoice_location(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_location() TO anon;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_location() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_location() TO service_role;
+
+
+--
 -- Name: FUNCTION has_labour_on_job_card(p_job_card_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -16219,6 +16862,15 @@ GRANT ALL ON FUNCTION public.reconcile_supplier_balance(p_supplier_id uuid, p_as
 GRANT ALL ON FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) TO anon;
 GRANT ALL ON FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.record_advance_repayment(p_person text, p_payment jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION record_refurbishment(p_invoice jsonb, p_lines jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.record_refurbishment(p_invoice jsonb, p_lines jsonb) TO anon;
+GRANT ALL ON FUNCTION public.record_refurbishment(p_invoice jsonb, p_lines jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.record_refurbishment(p_invoice jsonb, p_lines jsonb) TO service_role;
 
 
 --
@@ -17127,6 +17779,15 @@ GRANT ALL ON TABLE public.purchase_invoices TO service_role;
 
 
 --
+-- Name: TABLE refurbished_part_links; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.refurbished_part_links TO anon;
+GRANT ALL ON TABLE public.refurbished_part_links TO authenticated;
+GRANT ALL ON TABLE public.refurbished_part_links TO service_role;
+
+
+--
 -- Name: TABLE scrap_disposal; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17160,6 +17821,15 @@ GRANT ALL ON TABLE public.scrap_excluded_parts TO service_role;
 GRANT ALL ON TABLE public.scrap_inventory TO anon;
 GRANT ALL ON TABLE public.scrap_inventory TO authenticated;
 GRANT ALL ON TABLE public.scrap_inventory TO service_role;
+
+
+--
+-- Name: TABLE scrap_refurbishments; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.scrap_refurbishments TO anon;
+GRANT ALL ON TABLE public.scrap_refurbishments TO authenticated;
+GRANT ALL ON TABLE public.scrap_refurbishments TO service_role;
 
 
 --
@@ -17205,6 +17875,15 @@ GRANT ALL ON TABLE public.sla_events TO service_role;
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN,UPDATE ON TABLE public.sla_rules_config TO anon;
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN,UPDATE ON TABLE public.sla_rules_config TO authenticated;
 GRANT ALL ON TABLE public.sla_rules_config TO service_role;
+
+
+--
+-- Name: TABLE stock_audit_item_reasons; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.stock_audit_item_reasons TO anon;
+GRANT ALL ON TABLE public.stock_audit_item_reasons TO authenticated;
+GRANT ALL ON TABLE public.stock_audit_item_reasons TO service_role;
 
 
 --
