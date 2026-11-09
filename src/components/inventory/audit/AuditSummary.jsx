@@ -14,6 +14,21 @@ const fmt = n => {
 
 const signed = n => (Number(n ?? 0) > 0 ? `+${fmt(n)}` : fmt(n))
 
+const reasonLabel = reason => AUDIT_REASON_LABELS[reason] ?? reason
+
+const sortedLines = item => [...(item.reason_lines ?? [])].sort((a, b) => a.sort_order - b.sort_order)
+
+const skippedScrap = line => line.reason === 'damaged' && (line.scrap?.length ?? 0) === 0
+
+/** One cell's worth of text for the spreadsheet, e.g. "3 Missing; 1 Damaged (by Mr. Ram)". */
+const reasonsText = item =>
+    sortedLines(item)
+        .map(l => {
+            const detail = [l.notes, skippedScrap(l) ? 'not sent to scrap' : null].filter(Boolean).join(', ')
+            return `${fmt(l.quantity)} ${reasonLabel(l.reason)}${detail ? ` (${detail})` : ''}`
+        })
+        .join('; ')
+
 function Stat({ label, value, hint, tone = 'text-gray-900' }) {
     return (
         <div className="bg-white rounded-lg shadow-sm p-4">
@@ -46,8 +61,7 @@ export default function AuditSummary({ audit }) {
             'Difference': Number(i.variance ?? 0),
             'Moved During Audit': Number(i.moved_during_audit ?? 0),
             'Stock After': Number(i.final_qty ?? 0),
-            'Reason': i.reason ? AUDIT_REASON_LABELS[i.reason] ?? i.reason : '',
-            'Note': i.reason_notes ?? '',
+            'Reasons': reasonsText(i),
             'Unit Value': i.unit_value_snapshot === null ? '' : Number(i.unit_value_snapshot),
             'Value': i.variance_value === null ? '' : Number(i.variance_value),
             'Found On Shelf': i.was_found_row ? 'Yes' : '',
@@ -161,13 +175,19 @@ export default function AuditSummary({ audit }) {
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3">
-                                            <div className="text-gray-700">
-                                                {i.reason ? AUDIT_REASON_LABELS[i.reason] ?? i.reason : '—'}
-                                            </div>
-                                            {i.reason_notes && (
-                                                <div className="text-xs text-gray-400">{i.reason_notes}</div>
-                                            )}
+                                        <td className="px-4 py-3 space-y-1">
+                                            {sortedLines(i).length === 0 && <span className="text-gray-700">—</span>}
+                                            {sortedLines(i).map(l => (
+                                                <div key={l.id}>
+                                                    <div className="text-gray-700">
+                                                        <span className="font-medium">{fmt(l.quantity)}</span> {reasonLabel(l.reason)}
+                                                    </div>
+                                                    {l.notes && <div className="text-xs text-gray-400">{l.notes}</div>}
+                                                    {skippedScrap(l) && (
+                                                        <div className="text-xs text-amber-700">Not sent to scrap</div>
+                                                    )}
+                                                </div>
+                                            ))}
                                         </td>
                                     </tr>
                                 ))}
