@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
-import { useParts, useRecordPurchase, useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import { useParts, useRecordPurchase } from '../../hooks/useInventory'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
-import { PlusIcon, TrashIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
+import NewPartInlineForm from './NewPartInlineForm'
 import {
     lineSubtotal,
     lineDiscount,
@@ -29,17 +30,14 @@ const GST_RATES = [
 // remove-button column needs less.
 const LINE_GRID = 'grid gap-2 grid-cols-[minmax(0,3fr)_minmax(0,1.5fr)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.5fr)]'
 const emptyLine = () => ({ part_id: '', quantity: '', unit_price: '', gst_rate: 0, discount_amount: '', discount_pct: '', discount_mode: 'amount' })
-const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
 export default function PurchaseModal({ onClose }) {
     const { userProfile } = useAuth()
     const { data: parts = [] } = useParts()
-    const { data: partUnits = [] } = usePartUnits()
     const { data: locations = [] } = useWorkshopLocations()
     const recordPurchase = useRecordPurchase()
-    const createPart = useCreatePart()
 
-    // keyed by line index: { name, part_number, unit, saving, error }
+    // keyed by line index: true while that line is showing the new-part form
     const [newPartForms, setNewPartForms] = useState({})
 
     const [invoice, setInvoice] = useState({
@@ -78,36 +76,11 @@ export default function PurchaseModal({ onClose }) {
 
     function handlePartSelect(index, value) {
         if (value === NEW_PART_SENTINEL) {
-            setNewPartForms(prev => ({ ...prev, [index]: emptyNewPartForm() }))
+            setNewPartForms(prev => ({ ...prev, [index]: true }))
             updateLine(index, 'part_id', '')
         } else {
             setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
             updateLine(index, 'part_id', value)
-        }
-    }
-
-    function updateNewPartForm(index, field, value) {
-        setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], [field]: value } }))
-    }
-
-    async function confirmNewPart(index) {
-        const form = newPartForms[index]
-        if (!form.name.trim()) {
-            setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], error: 'Part name is required.' } }))
-            return
-        }
-        setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], saving: true, error: null } }))
-        try {
-            const newPart = await createPart.mutateAsync({
-                name: form.name.trim(),
-                part_number: form.part_number.trim() || null,
-                unit: form.unit.trim() || 'pcs',
-                quantity_in_stock: 0,
-            })
-            updateLine(index, 'part_id', newPart.id)
-            setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
-        } catch (err) {
-            setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], saving: false, error: err.message } }))
         }
     }
 
@@ -294,55 +267,13 @@ export default function PurchaseModal({ onClose }) {
                                             <div>
                                                 {npf ? (
                                                     /* ── Inline new-part form ── */
-                                                    <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
-                                                        <p className="text-xs font-medium text-blue-700">New part</p>
-                                                        <input
-                                                            autoFocus
-                                                            type="text"
-                                                            placeholder="Part name *"
-                                                            className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
-                                                            value={npf.name}
-                                                            onChange={e => updateNewPartForm(i, 'name', e.target.value)}
-                                                        />
-                                                        <div className="flex gap-1">
-                                                            <input
-                                                                type="text"
-                                                                placeholder="Part # (optional)"
-                                                                className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
-                                                                value={npf.part_number}
-                                                                onChange={e => updateNewPartForm(i, 'part_number', e.target.value)}
-                                                            />
-                                                            <div className="w-24">
-                                                                <CustomSelect
-                                                                    compact
-                                                                    value={npf.unit}
-                                                                    onChange={val => updateNewPartForm(i, 'unit', val)}
-                                                                    options={partUnits.map(u => u.name)}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                        {npf.error && (
-                                                            <p className="text-xs text-red-600">{npf.error}</p>
-                                                        )}
-                                                        <div className="flex gap-2 pt-0.5">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => confirmNewPart(i)}
-                                                                disabled={npf.saving}
-                                                                className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                                                            >
-                                                                <CheckIcon className="w-3 h-3" />
-                                                                {npf.saving ? 'Adding…' : 'Add part'}
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => cancelNewPart(i)}
-                                                                className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
-                                                            >
-                                                                Cancel
-                                                            </button>
-                                                        </div>
-                                                    </div>
+                                                    <NewPartInlineForm
+                                                        onCreated={part => {
+                                                            updateLine(i, 'part_id', part.id)
+                                                            cancelNewPart(i)
+                                                        }}
+                                                        onCancel={() => cancelNewPart(i)}
+                                                    />
                                                 ) : (
                                                     /* ── Part dropdown ── */
                                                     <SearchableSelect

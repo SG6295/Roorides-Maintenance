@@ -9,12 +9,14 @@ import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 
 const STATUS_BADGE = {
     in_storage:  'bg-green-100 text-green-700',
+    refurbished: 'bg-blue-100 text-blue-700',
     sold:        'bg-gray-100 text-gray-600',
     written_off: 'bg-red-100 text-red-700',
 }
 
 const STATUS_LABEL = {
     in_storage:  'In Storage',
+    refurbished: 'Refurbished',
     sold:        'Sold',
     written_off: 'Written Off',
 }
@@ -46,6 +48,7 @@ export default function ScrapInventoryTab() {
                         placeholder="All Statuses"
                         options={[
                             { value: 'in_storage',  label: 'In Storage' },
+                            { value: 'refurbished', label: 'Refurbished' },
                             { value: 'sold',        label: 'Sold' },
                             { value: 'written_off', label: 'Written Off' },
                         ]}
