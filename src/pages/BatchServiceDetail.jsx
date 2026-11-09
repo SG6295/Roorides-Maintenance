@@ -227,7 +227,11 @@ function BatchForm({ batch }) {
                 })),
             })
             if (batch) setSaved(true)
-            else navigate(batchPath(savedNumber), { replace: true })
+            else {
+                // Same pattern as a new ticket: confirm, then back to the list (MAIN-126).
+                alert(`Multi-vehicle invoice ${formatBatchNumber(savedNumber)} submitted successfully!`)
+                navigate('/outsource-invoices', { replace: true })
+            }
         } catch (e) {
             setSaveError(e.message)
         }
