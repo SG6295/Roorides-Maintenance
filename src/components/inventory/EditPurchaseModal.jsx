@@ -73,6 +73,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                     part_name: item.part?.name || '',
                     part_number: item.part?.part_number || '',
                     part_unit: item.part?.unit || '',
+                    locked: (item.refurbishment?.length ?? 0) > 0,
                     quantity: String(item.quantity),
                     unit_price: String(item.unit_price),
                     gst_rate: item.gst_rate ?? 0,
@@ -88,6 +89,8 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     // ── Line helpers ───────────────────────────────────────────────────────────
     const invoiceTotal = calcInvoiceTotal(lines || [])
     const totalDiscount = calcTotalDiscount(lines || [])
+    // A refurbishment's lines moved stock and marked scrap as refurbished, so they stay as recorded.
+    const hasLockedLines = (lines || []).some(l => l.locked)
 
     function updateLine(index, field, value) {
         setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
@@ -299,6 +302,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             }))}
                                             placeholder="Select workshop"
                                             compact
+                                            disabled={hasLockedLines}
                                         />
                                         {locationChanged && (
                                             <p className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
@@ -323,6 +327,11 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                             {/* Line Items */}
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
+                                {hasLockedLines && (
+                                    <p className="text-xs text-gray-500 mb-2">
+                                        Lines from a scrap refurbishment, and this invoice's workshop, cannot be changed.
+                                    </p>
+                                )}
                                 <div className="space-y-2">
                                     <div className={`${LINE_GRID} px-1 text-xs font-medium text-gray-500`}>
                                         <div>Part</div>
@@ -429,6 +438,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 <div className="pt-1">
                                                     <div className="relative">
                                                         <input
+                                                            disabled={line.locked}
                                                             type="number"
                                                             min="0"
                                                             step="any"
@@ -448,6 +458,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* Unit Price */}
                                                 <div className="pt-1">
                                                     <input
+                                                        disabled={line.locked}
                                                         type="number"
                                                         min="0"
                                                         step="0.01"
@@ -461,6 +472,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* Discount % */}
                                                 <div className="pt-1">
                                                     <input
+                                                        disabled={line.locked}
                                                         type="number"
                                                         min="0"
                                                         max="100"
@@ -475,6 +487,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* Discount amount */}
                                                 <div className="pt-1">
                                                     <input
+                                                        disabled={line.locked}
                                                         type="number"
                                                         min="0"
                                                         step="0.01"
@@ -488,6 +501,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* GST */}
                                                 <div className="pt-1">
                                                     <select
+                                                        disabled={line.locked}
                                                         className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
                                                         value={line.gst_rate}
                                                         onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
@@ -505,14 +519,16 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
                                                 {/* Remove */}
                                                 <div className="flex justify-center pt-3">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => removeLine(i)}
-                                                        className="text-gray-400 hover:text-red-500"
-                                                        title="Remove line"
-                                                    >
-                                                        <TrashIcon className="w-4 h-4" />
-                                                    </button>
+                                                    {!line.locked && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removeLine(i)}
+                                                            className="text-gray-400 hover:text-red-500"
+                                                            title="Remove line"
+                                                        >
+                                                            <TrashIcon className="w-4 h-4" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         )
@@ -546,6 +562,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                         step="0.01"
                                         className="no-spinner w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
                                         placeholder="0.00"
+                                        disabled={hasLockedLines}
                                         value={totalDiscount > 0 ? totalDiscount : ''}
                                         onChange={e => handleTotalDiscountChange(e.target.value)}
                                     />

@@ -64,21 +64,20 @@ export function useExistingScrapForJobCard(jobCardId) {
                 .eq('source_job_card_id', jobCardId)
             if (error) throw error
 
-            // Build map: prefer non-reversed entries; if a part has both a
-            // reversed and a non-reversed entry, the non-reversed entry wins.
+            // Build map: one row per part, permanent over anything else, and
+            // reversed only when there is nothing better. A partial refurbishment
+            // (MAIN-123) leaves one part with a refurbished row and an in-storage
+            // row, and close_job_card_with_scrap treats that part as permanent.
             // source_issue_part_id may be NULL when the issue_parts row was
             // deleted after scrap reversal — skip those rows, they can't be
             // keyed to an active part.
+            const rank = row =>
+                PERMANENT_SCRAP_STATUSES.includes(row.status) ? 2 : row.status === 'reversed' ? 0 : 1
             const map = {}
             for (const row of data || []) {
                 if (!row.source_issue_part_id) continue
                 const existing = map[row.source_issue_part_id]
-                if (!existing) {
-                    map[row.source_issue_part_id] = row
-                } else if (
-                    existing.status === 'reversed' &&
-                    row.status !== 'reversed'
-                ) {
+                if (!existing || rank(row) > rank(existing)) {
                     map[row.source_issue_part_id] = row
                 }
             }
@@ -312,6 +311,74 @@ export function useRecordScrapWriteoff() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['scrap_inventory'] })
             queryClient.invalidateQueries({ queryKey: ['scrap_writeoffs'] })
+        },
+    })
+}
+
+// ── MAIN-123: refurbishment ───────────────────────────────────────────────────
+
+export function useRefurbishments(filters = {}) {
+    return useQuery({
+        queryKey: ['scrap_refurbishments', filters],
+        placeholderData: keepPreviousData,
+        queryFn: async () => {
+            let query = supabase
+                .from('scrap_refurbishments')
+                .select(`
+                    id,
+                    quantity,
+                    comment,
+                    created_at,
+                    scrap_inventory_id,
+                    original:parts!original_part_id(name, part_number, unit),
+                    refurbished:parts!refurbished_part_id(name),
+                    created_by_user:users!created_by(name),
+                    line:purchase_invoice_items!purchase_invoice_item_id(
+                        line_total,
+                        invoice:purchase_invoices!invoice_id(
+                            invoice_number, supplier_name, invoice_date, invoice_file_url,
+                            location:workshop_locations!location_id(name)
+                        )
+                    ),
+                    scrap:scrap_inventory!scrap_inventory_id(
+                        job_card:job_cards!source_job_card_id(job_card_number),
+                        ${AUDIT_SOURCE_EMBED}
+                    )
+                `)
+                .order('created_at', { ascending: false })
+
+            if (filters.dateFrom) {
+                query = query.gte('created_at', filters.dateFrom)
+            }
+            if (filters.dateTo) {
+                query = query.lte('created_at', filters.dateTo + 'T23:59:59')
+            }
+
+            const { data, error } = await query
+            if (error) throw error
+            return data || []
+        },
+    })
+}
+
+export function useRecordRefurbishment() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async ({ invoice, lines }) => {
+            const { data, error } = await supabase.rpc('record_refurbishment', {
+                p_invoice: invoice,
+                p_lines:   lines,
+            })
+            if (error) throwIfRpcError(error)
+            return data
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['scrap_inventory'] })
+            queryClient.invalidateQueries({ queryKey: ['scrap_refurbishments'] })
+            queryClient.invalidateQueries({ queryKey: ['existing_scrap'] })
+            queryClient.invalidateQueries({ queryKey: ['parts'] })
+            queryClient.invalidateQueries({ queryKey: ['part_stock'] })
+            queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
         },
     })
 }

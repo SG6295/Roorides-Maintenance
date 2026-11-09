@@ -4,14 +4,17 @@ import Navigation from '../components/shared/Navigation'
 import ScrapInventoryTab from '../components/scrap/ScrapInventoryTab'
 import SaleHistoryTab from '../components/scrap/SaleHistoryTab'
 import WriteoffHistoryTab from '../components/scrap/WriteoffHistoryTab'
+import RefurbishmentHistoryTab from '../components/scrap/RefurbishmentHistoryTab'
 import RecordSaleModal from '../components/scrap/RecordSaleModal'
 import RecordWriteoffModal from '../components/scrap/RecordWriteoffModal'
+import RecordRefurbishmentModal from '../components/scrap/RecordRefurbishmentModal'
 import { useAuth } from '../hooks/useAuth'
 
 const TABS = [
     { key: 'inventory', label: 'Scrap Inventory' },
     { key: 'sales',     label: 'Sale History' },
     { key: 'writeoffs', label: 'Write-off History' },
+    { key: 'refurbishments', label: 'Refurbishment History' },
 ]
 
 export default function Scrap() {
@@ -19,6 +22,7 @@ export default function Scrap() {
     const [tab, setTab] = useState('inventory')
     const [showSaleModal, setShowSaleModal] = useState(false)
     const [showWriteoffModal, setShowWriteoffModal] = useState(false)
+    const [showRefurbishModal, setShowRefurbishModal] = useState(false)
 
     const isExec = userProfile?.role !== 'finance'
 
@@ -31,7 +35,14 @@ export default function Scrap() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <h1 className="text-2xl font-bold text-gray-900">Scrap Inventory</h1>
                     {isExec && (
-                        <div className="flex gap-3">
+                        <div className="flex flex-wrap gap-3">
+                            <button
+                                onClick={() => setShowRefurbishModal(true)}
+                                className="flex items-center gap-2 px-4 py-2 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50 shadow-sm"
+                            >
+                                <PlusIcon className="w-4 h-4" />
+                                Record Refurbishment
+                            </button>
                             <button
                                 onClick={() => setShowWriteoffModal(true)}
                                 className="flex items-center gap-2 px-4 py-2 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50 shadow-sm"
@@ -70,6 +81,7 @@ export default function Scrap() {
                 {tab === 'inventory' && <ScrapInventoryTab />}
                 {tab === 'sales'     && <SaleHistoryTab />}
                 {tab === 'writeoffs' && <WriteoffHistoryTab />}
+                {tab === 'refurbishments' && <RefurbishmentHistoryTab />}
             </div>
 
             {showSaleModal && (
@@ -77,6 +89,9 @@ export default function Scrap() {
             )}
             {showWriteoffModal && (
                 <RecordWriteoffModal onClose={() => setShowWriteoffModal(false)} />
+            )}
+            {showRefurbishModal && (
+                <RecordRefurbishmentModal onClose={() => setShowRefurbishModal(false)} />
             )}
         </div>
     )
