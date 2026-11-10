@@ -48,7 +48,11 @@ const PURCHASE_INVOICE_COLUMNS = `
     location_id,
     location:workshop_locations!location_id(id, name, address),
     created_by_user:users!created_by(name),
-    purchase_invoice_items(id)
+    purchase_invoice_items(id),
+    finance_invoice:outsource_invoices!purchase_invoice_id(
+        id, finance_payment_status, finance_remark, paid_by, maintenance_payment_status,
+        invoice_value, approved_amount, advance_amount, payby_date
+    )
 `
 
 /**
@@ -125,6 +129,24 @@ export function usePurchaseInvoiceItems(invoiceId) {
     })
 }
 
+// The finance invoice's details, as save_purchase_invoice reads them from p_invoice
+// (MAIN-129). Its number and date are the purchase invoice's own.
+const toFinanceDetails = finance => finance ? {
+    paid_by: finance.paid_by,
+    maintenance_payment_status: finance.maintenance_payment_status,
+    invoice_value: finance.invoice_value,
+    approved_amount: finance.approved_amount,
+    advance_amount: finance.advance_amount,
+    payby_date: finance.payby_date,
+} : {}
+
+// Purchases go to finance, so its views are stale after a save.
+function invalidateFinance(queryClient) {
+    queryClient.invalidateQueries({ queryKey: ['outsource_invoices'] })
+    queryClient.invalidateQueries({ queryKey: ['outsource_invoice_summary'] })
+    queryClient.invalidateQueries({ queryKey: ['supplier_ledger'] })
+}
+
 // Line items as save_purchase_invoice expects them. An id marks an existing line
 // to update; a line without one is inserted.
 const toInvoiceItem = item => ({
@@ -147,12 +169,15 @@ const toInvoiceItem = item => ({
  * changes (MAIN-72). The function takes supplier_name from the chosen supplier; an
  * invoice recorded before suppliers came from the list has no supplier_id and keeps
  * its typed name when none is chosen (MAIN-128).
+ *
+ * `finance` carries the invoice details for an invoice that went to finance (MAIN-129);
+ * an invoice recorded before then has none and saves without them.
  */
 export function useUpdatePurchaseInvoice() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ invoiceId, invoiceData, lineItems }) => {
+        mutationFn: async ({ invoiceId, invoiceData, lineItems, finance }) => {
             const { error } = await supabase.rpc('save_purchase_invoice', {
                 p_invoice_id: invoiceId,
                 p_invoice: {
@@ -162,6 +187,7 @@ export function useUpdatePurchaseInvoice() {
                     notes: invoiceData.notes || null,
                     invoice_file_url: invoiceData.invoice_file_url || null,
                     location_id: invoiceData.location_id,
+                    ...toFinanceDetails(finance),
                 },
                 p_items: lineItems.map(toInvoiceItem),
             })
@@ -174,6 +200,7 @@ export function useUpdatePurchaseInvoice() {
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoice_items', invoiceId] })
+            invalidateFinance(queryClient)
         },
     })
 }
@@ -182,13 +209,15 @@ export function useUpdatePurchaseInvoice() {
  * Record a purchase: the invoice and all its line items in one call to
  * save_purchase_invoice, so a failing line leaves no empty invoice behind (MAIN-97).
  * The DB trigger on purchase_invoice_items restocks parts; created_by and
- * total_amount are set by the function.
+ * total_amount are set by the function. `finance` carries the invoice details, and the
+ * invoice goes to finance in the same call — as New (invoice pending) when it has no
+ * file yet (MAIN-129).
  */
 export function useRecordPurchase() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ invoice, lineItems }) => {
+        mutationFn: async ({ invoice, lineItems, finance }) => {
             const { data: id, error } = await supabase.rpc('save_purchase_invoice', {
                 p_invoice_id: null,
                 p_invoice: {
@@ -198,6 +227,7 @@ export function useRecordPurchase() {
                     notes: invoice.notes || null,
                     invoice_file_url: invoice.invoice_file_url || null,
                     location_id: invoice.location_id,
+                    ...toFinanceDetails(finance),
                 },
                 p_items: lineItems.map(toInvoiceItem),
             })
@@ -209,6 +239,7 @@ export function useRecordPurchase() {
             // The new stock lands at one workshop, so the per-workshop views are stale too.
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
+            invalidateFinance(queryClient)
         },
     })
 }

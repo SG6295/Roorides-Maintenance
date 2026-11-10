@@ -2826,7 +2826,7 @@ ALTER FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) OWNER TO 
 -- Name: get_outsource_invoice_summary(text[], text[], date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date, p_finance_payment_status text[] DEFAULT NULL::text[]) RETURNS TABLE(new_count bigint, hold_count bigint, reject_count bigint, accepted_count bigint)
+CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date, p_finance_payment_status text[] DEFAULT NULL::text[]) RETURNS TABLE(new_count bigint, hold_count bigint, reject_count bigint, accepted_count bigint, pending_count bigint)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -2834,7 +2834,8 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
         COUNT(*) FILTER (WHERE oi.finance_payment_status = 'New')      AS new_count,
         COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Hold')     AS hold_count,
         COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Reject')   AS reject_count,
-        COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Accepted') AS accepted_count
+        COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Accepted') AS accepted_count,
+        COUNT(*) FILTER (WHERE oi.finance_payment_status = 'New (invoice pending)') AS pending_count
     FROM  outsource_invoices     oi
     LEFT JOIN job_cards          jc ON jc.id = oi.job_card_id
     LEFT JOIN batch_services     bs ON bs.id = oi.batch_service_id
@@ -2887,7 +2888,7 @@ BEGIN
         LEFT JOIN public.batch_services    bs ON bs.id = oi.batch_service_id
         LEFT JOIN public.purchase_invoices pi ON pi.id = oi.purchase_invoice_id
         WHERE  oi.submitted_on IS NOT NULL
-          AND  oi.finance_payment_status IN ('New', 'Hold')
+          AND  oi.finance_payment_status IN ('New', 'New (invoice pending)', 'Hold')
           AND  (bs.id IS NULL OR bs.status = 'Active')
         GROUP  BY 1
     )
@@ -3086,6 +3087,7 @@ DECLARE
     v_maintenance_changed boolean;
     v_old                 text;
     v_new                 text;
+    v_no_file             boolean;
 BEGIN
     IF auth.uid() IS NULL THEN
         RETURN NEW;
@@ -3148,8 +3150,23 @@ BEGIN
         END IF;
 
         IF NOT (   (v_old IN ('New', 'Hold') AND v_new IN ('New', 'Hold', 'Reject', 'Accepted'))
+                OR (v_old IN ('New (invoice pending)', 'Hold') AND v_new IN ('New (invoice pending)', 'Hold', 'Reject'))
                 OR (v_old = 'Accepted'       AND v_new IN ('Hold', 'Reject', 'GST reconciled & closed', 'GST not applicable & closed'))) THEN
             RAISE EXCEPTION 'Finance status cannot move from % to %.', v_old, v_new;
+        END IF;
+
+        v_no_file := public.purchase_invoice_file_missing(NEW.purchase_invoice_id);
+
+        IF v_no_file AND v_new = 'Accepted' THEN
+            RAISE EXCEPTION 'The invoice file has not been uploaded yet, so this invoice cannot be accepted.';
+        END IF;
+
+        IF v_no_file AND v_new = 'New' THEN
+            RAISE EXCEPTION 'The invoice file has not been uploaded yet, so this invoice goes back to New (invoice pending).';
+        END IF;
+
+        IF NOT v_no_file AND v_new = 'New (invoice pending)' THEN
+            RAISE EXCEPTION 'This invoice has its file, so it is not pending.';
         END IF;
 
         IF v_new = 'Reject'
@@ -3181,7 +3198,7 @@ BEGIN
         JOIN   public.scrap_refurbishments sr ON sr.purchase_invoice_item_id = pii.id
         WHERE  pii.invoice_id = NEW.id
     ) THEN
-        RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so only its notes can be changed.';
+        RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so its workshop cannot be changed.';
     END IF;
 
     RETURN NEW;
@@ -3268,7 +3285,7 @@ CREATE TABLE public.outsource_invoices (
     submitted_on date,
     accepted_at timestamp with time zone,
     purchase_invoice_id uuid,
-    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
+    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'New (invoice pending)'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
     CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
     CONSTRAINT outsource_invoices_one_owner_check CHECK ((num_nonnulls(job_card_id, batch_service_id, purchase_invoice_id) = 1)),
     CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'NVS Maintenance account'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
@@ -3572,6 +3589,22 @@ $$;
 ALTER FUNCTION public.payment_run_for(p_date date) OWNER TO postgres;
 
 --
+-- Name: purchase_invoice_file_missing(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT p_purchase_invoice_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM public.purchase_invoices
+                   WHERE  id = p_purchase_invoice_id AND invoice_file_url IS NULL)
+$$;
+
+
+ALTER FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) OWNER TO postgres;
+
+--
 -- Name: recalculate_open_slas(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3861,10 +3894,19 @@ BEGIN
     ORDER   BY id
     FOR UPDATE;
 
-    v_invoice_id := public.save_purchase_invoice(
-        NULL, p_invoice || jsonb_build_object('supplier_name', v_supplier), '[]'::jsonb);
-
-    UPDATE public.purchase_invoices SET supplier_id = v_supplier_id WHERE id = v_invoice_id;
+    INSERT INTO public.purchase_invoices
+        (invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
+    VALUES (
+        btrim(p_invoice->>'invoice_number'),
+        v_supplier_id,
+        v_supplier,
+        v_inv_date,
+        NULLIF(p_invoice->>'notes', ''),
+        btrim(p_invoice->>'invoice_file_url'),
+        v_location,
+        auth.uid()
+    )
+    RETURNING id INTO v_invoice_id;
 
     FOR v_line IN SELECT * FROM jsonb_array_elements(p_lines)
     LOOP
@@ -4037,14 +4079,7 @@ BEGIN
 
     UPDATE public.purchase_invoices SET total_amount = v_total WHERE id = v_invoice_id;
 
-    -- The insert trigger submits it to finance.
-    INSERT INTO public.outsource_invoices (
-        purchase_invoice_id, date_of_activity, invoice_no, paid_by, invoice_value,
-        approved_amount, advance_amount, maintenance_payment_status, payby_date, created_by
-    ) VALUES (
-        v_invoice_id, v_inv_date, btrim(p_invoice->>'invoice_number'), p_invoice->>'paid_by', v_inv_value,
-        v_approved, v_advance, p_invoice->>'maintenance_payment_status', v_payby, auth.uid()
-    );
+    PERFORM public.save_purchase_finance_invoice(v_invoice_id, p_invoice);
 
     RETURN v_invoice_id;
 END;
@@ -4949,6 +4984,97 @@ $_$;
 ALTER FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) OWNER TO postgres;
 
 --
+-- Name: save_purchase_finance_invoice(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.save_purchase_finance_invoice(p_invoice_id uuid, p_invoice jsonb) RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_header    public.purchase_invoices%ROWTYPE;
+    v_finance   public.outsource_invoices%ROWTYPE;
+    v_inv_value numeric := NULLIF(p_invoice->>'invoice_value', '')::numeric;
+    v_approved  numeric := NULLIF(p_invoice->>'approved_amount', '')::numeric;
+    v_advance   numeric := NULLIF(p_invoice->>'advance_amount', '')::numeric;
+    v_payby     date    := NULLIF(p_invoice->>'payby_date', '')::date;
+    v_total     numeric;
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION 'Only maintenance executives can record or edit a purchase invoice.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    SELECT * INTO v_header FROM public.purchase_invoices WHERE id = p_invoice_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Invoice not found.';
+    END IF;
+
+    -- The same rules as the invoice form on a job card or multi-vehicle invoice.
+    IF NULLIF(btrim(COALESCE(v_header.invoice_number, '')), '') IS NULL
+       OR v_header.invoice_date IS NULL
+       OR v_header.invoice_date > (now() AT TIME ZONE 'Asia/Kolkata')::date
+       OR NULLIF(p_invoice->>'paid_by', '') IS NULL
+       OR NULLIF(p_invoice->>'maintenance_payment_status', '') IS NULL
+       OR v_inv_value IS NULL OR v_inv_value <= 0
+       OR v_approved  IS NULL OR v_approved  < 0 OR v_approved > v_inv_value
+       OR v_advance   IS NULL OR v_advance   < 0 OR v_advance  > v_approved
+       OR v_payby     IS NULL OR v_payby < v_header.invoice_date THEN
+        RAISE EXCEPTION 'Check the invoice details.';
+    END IF;
+
+    SELECT COALESCE(sum(line_total), 0) INTO v_total
+    FROM   public.purchase_invoice_items
+    WHERE  invoice_id = p_invoice_id;
+
+    -- Compared in numeric, as on a multi-vehicle invoice.
+    IF v_total <> v_approved THEN
+        RAISE EXCEPTION 'The lines add up to ₹%; the approved amount is ₹%.',
+            to_char(v_total, 'FM999999999990.00'), to_char(v_approved, 'FM999999999990.00');
+    END IF;
+
+    SELECT * INTO v_finance
+    FROM   public.outsource_invoices
+    WHERE  purchase_invoice_id = p_invoice_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        -- The insert trigger submits it to finance.
+        INSERT INTO public.outsource_invoices (
+            purchase_invoice_id, date_of_activity, invoice_no, paid_by, invoice_value,
+            approved_amount, advance_amount, maintenance_payment_status, payby_date, created_by
+        ) VALUES (
+            p_invoice_id, v_header.invoice_date, btrim(v_header.invoice_number), p_invoice->>'paid_by', v_inv_value,
+            v_approved, v_advance, p_invoice->>'maintenance_payment_status', v_payby, auth.uid()
+        );
+        RETURN;
+    END IF;
+
+    -- Refused by the status guard once finance has accepted it, unless nothing changed.
+    UPDATE public.outsource_invoices
+    SET    date_of_activity           = v_header.invoice_date,
+           invoice_no                 = btrim(v_header.invoice_number),
+           paid_by                    = p_invoice->>'paid_by',
+           invoice_value              = v_inv_value,
+           approved_amount            = v_approved,
+           advance_amount             = v_advance,
+           maintenance_payment_status = p_invoice->>'maintenance_payment_status',
+           payby_date                 = v_payby
+    WHERE  id = v_finance.id;
+
+    -- The file has arrived: the invoice is ready for finance.
+    IF v_finance.finance_payment_status = 'New (invoice pending)' AND v_header.invoice_file_url IS NOT NULL THEN
+        PERFORM set_config('app.finance_submission', 'on', true);
+        UPDATE public.outsource_invoices SET finance_payment_status = 'New' WHERE id = v_finance.id;
+        PERFORM set_config('app.finance_submission', 'off', true);
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.save_purchase_finance_invoice(p_invoice_id uuid, p_invoice jsonb) OWNER TO postgres;
+
+--
 -- Name: save_purchase_invoice(uuid, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4961,26 +5087,75 @@ DECLARE
     v_item          jsonb;
     v_supplier_id   uuid := nullif(p_invoice->>'supplier_id', '')::uuid;
     v_supplier_name text;
-    v_old_id        uuid;
-    v_old_name      text;
+    v_file          text := nullif(p_invoice->>'invoice_file_url', '');
+    v_old           public.purchase_invoices%ROWTYPE;
+    v_status        text;
+    v_has_finance   boolean := false;
 BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION 'Only maintenance executives can record or edit a purchase invoice.'
+            USING ERRCODE = '42501';
+    END IF;
+
     IF v_invoice_id IS NOT NULL THEN
-        SELECT supplier_id, supplier_name INTO v_old_id, v_old_name
+        SELECT * INTO v_old
         FROM   public.purchase_invoices
         WHERE  id = v_invoice_id;
 
         IF NOT FOUND THEN
             RAISE EXCEPTION 'Invoice not found.';
         END IF;
+
+        -- Locked first, so finance cannot accept it in the middle of the save.
+        SELECT finance_payment_status INTO v_status
+        FROM   public.outsource_invoices
+        WHERE  purchase_invoice_id = v_invoice_id
+        FOR UPDATE;
+        v_has_finance := FOUND;
+    END IF;
+
+    IF v_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed') THEN
+        IF (p_invoice->>'invoice_number', (p_invoice->>'invoice_date')::date, v_file,
+            (p_invoice->>'location_id')::uuid, coalesce(v_supplier_id, v_old.supplier_id))
+           IS DISTINCT FROM
+           (v_old.invoice_number, v_old.invoice_date, v_old.invoice_file_url,
+            v_old.location_id, v_old.supplier_id)
+           OR EXISTS (
+               SELECT id, part_id, quantity, unit_price, gst_rate, discount_amount
+               FROM   public.purchase_invoice_items
+               WHERE  invoice_id = v_invoice_id
+               EXCEPT
+               SELECT (i->>'id')::uuid, (i->>'part_id')::uuid, (i->>'quantity')::numeric,
+                      (i->>'unit_price')::numeric, coalesce((i->>'gst_rate')::numeric, 0),
+                      coalesce((i->>'discount_amount')::numeric, 0)
+               FROM   jsonb_array_elements(p_items) i
+           )
+           OR EXISTS (
+               SELECT (i->>'id')::uuid, (i->>'part_id')::uuid, (i->>'quantity')::numeric,
+                      (i->>'unit_price')::numeric, coalesce((i->>'gst_rate')::numeric, 0),
+                      coalesce((i->>'discount_amount')::numeric, 0)
+               FROM   jsonb_array_elements(p_items) i
+               EXCEPT
+               SELECT id, part_id, quantity, unit_price, gst_rate, discount_amount
+               FROM   public.purchase_invoice_items
+               WHERE  invoice_id = v_invoice_id
+           ) THEN
+            RAISE EXCEPTION 'Finance has accepted this invoice, so only its notes can be changed.'
+                USING ERRCODE = '42501';
+        END IF;
+    END IF;
+
+    IF v_has_finance AND v_old.invoice_file_url IS NOT NULL AND v_file IS NULL THEN
+        RAISE EXCEPTION 'The invoice file cannot be removed once attached. Replace it instead.';
     END IF;
 
     IF v_supplier_id IS NULL THEN
-        IF v_invoice_id IS NULL OR v_old_id IS NOT NULL THEN
+        IF v_invoice_id IS NULL OR v_old.supplier_id IS NOT NULL THEN
             RAISE EXCEPTION 'Choose the supplier, or add them.';
         END IF;
-        v_supplier_name := v_old_name;
-    ELSIF v_supplier_id IS NOT DISTINCT FROM v_old_id THEN
-        v_supplier_name := v_old_name;
+        v_supplier_name := v_old.supplier_name;
+    ELSIF v_supplier_id IS NOT DISTINCT FROM v_old.supplier_id THEN
+        v_supplier_name := v_old.supplier_name;
     ELSE
         SELECT entity_name INTO v_supplier_name
         FROM   public.suppliers
@@ -5000,7 +5175,7 @@ BEGIN
             v_supplier_name,
             (p_invoice->>'invoice_date')::date,
             nullif(p_invoice->>'notes', ''),
-            nullif(p_invoice->>'invoice_file_url', ''),
+            v_file,
             (p_invoice->>'location_id')::uuid,
             auth.uid()
         )
@@ -5012,7 +5187,7 @@ BEGIN
                supplier_name    = v_supplier_name,
                invoice_date     = (p_invoice->>'invoice_date')::date,
                notes            = nullif(p_invoice->>'notes', ''),
-               invoice_file_url = nullif(p_invoice->>'invoice_file_url', ''),
+               invoice_file_url = v_file,
                location_id      = (p_invoice->>'location_id')::uuid
         WHERE  id = v_invoice_id;
 
@@ -5059,6 +5234,10 @@ BEGIN
                WHERE  invoice_id = v_invoice_id
            )
     WHERE  id = v_invoice_id;
+
+    IF p_invoice_id IS NULL OR v_has_finance THEN
+        PERFORM public.save_purchase_finance_invoice(v_invoice_id, p_invoice);
+    END IF;
 
     RETURN v_invoice_id;
 END;
@@ -5626,7 +5805,10 @@ BEGIN
     UPDATE public.outsource_invoices
     SET    submitted_on           = (now() AT TIME ZONE 'Asia/Kolkata')::date,
            finance_payment_status = CASE WHEN maintenance_payment_status IN ('Hold', 'Reject')
-                                         THEN maintenance_payment_status ELSE 'New' END,
+                                         THEN maintenance_payment_status
+                                         WHEN public.purchase_invoice_file_missing(purchase_invoice_id)
+                                         THEN 'New (invoice pending)'
+                                         ELSE 'New' END,
            finance_remark         = CASE WHEN maintenance_payment_status IN ('Hold', 'Reject')
                                          THEN maintenance_payment_status || ' set by maintenance exec'
                                          ELSE finance_remark END
@@ -13423,7 +13605,7 @@ CREATE TRIGGER trigger_guard_job_card_type_change BEFORE UPDATE OF type ON publi
 -- Name: purchase_invoices trigger_guard_refurbishment_invoice_header; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trigger_guard_refurbishment_invoice_header BEFORE UPDATE ON public.purchase_invoices FOR EACH ROW WHEN (((((((old.location_id IS DISTINCT FROM new.location_id) OR (old.supplier_id IS DISTINCT FROM new.supplier_id)) OR (old.supplier_name IS DISTINCT FROM new.supplier_name)) OR (old.invoice_number IS DISTINCT FROM new.invoice_number)) OR (old.invoice_date IS DISTINCT FROM new.invoice_date)) OR (old.invoice_file_url IS DISTINCT FROM new.invoice_file_url))) EXECUTE FUNCTION public.guard_refurbishment_invoice_header();
+CREATE TRIGGER trigger_guard_refurbishment_invoice_header BEFORE UPDATE ON public.purchase_invoices FOR EACH ROW WHEN ((old.location_id IS DISTINCT FROM new.location_id)) EXECUTE FUNCTION public.guard_refurbishment_invoice_header();
 
 
 --
@@ -14649,33 +14831,6 @@ CREATE POLICY "Everyone can read settings" ON public.system_settings FOR SELECT 
 
 
 --
--- Name: purchase_invoice_items Exec and finance delete invoice items; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Exec and finance delete invoice items" ON public.purchase_invoice_items FOR DELETE USING ((EXISTS ( SELECT 1
-   FROM public.users
-  WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
-
-
---
--- Name: purchase_invoice_items Exec and finance insert invoice items; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Exec and finance insert invoice items" ON public.purchase_invoice_items FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
-   FROM public.users
-  WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
-
-
---
--- Name: purchase_invoices Exec and finance insert invoices; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Exec and finance insert invoices" ON public.purchase_invoices FOR INSERT WITH CHECK (((auth.uid() = created_by) AND (EXISTS ( SELECT 1
-   FROM public.users
-  WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text])))))));
-
-
---
 -- Name: part_stock Exec and finance manage part_stock; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -14712,24 +14867,6 @@ CREATE POLICY "Exec and finance read ledger adjustments" ON public.supplier_ledg
 --
 
 CREATE POLICY "Exec and finance read supplier payments" ON public.supplier_payments FOR SELECT USING ((public.is_maintenance_exec() OR public.is_finance()));
-
-
---
--- Name: purchase_invoice_items Exec and finance update invoice items; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Exec and finance update invoice items" ON public.purchase_invoice_items FOR UPDATE USING ((EXISTS ( SELECT 1
-   FROM public.users
-  WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
-
-
---
--- Name: purchase_invoices Exec and finance update invoices; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Exec and finance update invoices" ON public.purchase_invoices FOR UPDATE USING ((EXISTS ( SELECT 1
-   FROM public.users
-  WHERE ((users.id = auth.uid()) AND (users.role = ANY (ARRAY['maintenance_exec'::text, 'finance'::text, 'super_admin'::text]))))));
 
 
 --
@@ -14881,6 +15018,27 @@ CREATE POLICY "Execs can update users" ON public.users FOR UPDATE USING (public.
 
 
 --
+-- Name: purchase_invoice_items Execs delete invoice items; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs delete invoice items" ON public.purchase_invoice_items FOR DELETE USING (public.is_maintenance_exec());
+
+
+--
+-- Name: purchase_invoice_items Execs insert invoice items; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs insert invoice items" ON public.purchase_invoice_items FOR INSERT WITH CHECK (public.is_maintenance_exec());
+
+
+--
+-- Name: purchase_invoices Execs insert invoices; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs insert invoices" ON public.purchase_invoices FOR INSERT WITH CHECK (((auth.uid() = created_by) AND public.is_maintenance_exec()));
+
+
+--
 -- Name: issue_labour Execs manage issue labour; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -14941,6 +15099,20 @@ CREATE POLICY "Execs manage scrap_writeoff" ON public.scrap_writeoff TO authenti
 --
 
 CREATE POLICY "Execs manage scrap_writeoff_items" ON public.scrap_writeoff_items TO authenticated USING (public.is_maintenance_exec()) WITH CHECK (public.is_maintenance_exec());
+
+
+--
+-- Name: purchase_invoice_items Execs update invoice items; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs update invoice items" ON public.purchase_invoice_items FOR UPDATE USING (public.is_maintenance_exec());
+
+
+--
+-- Name: purchase_invoices Execs update invoices; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs update invoices" ON public.purchase_invoices FOR UPDATE USING (public.is_maintenance_exec());
 
 
 --
@@ -16969,6 +17141,15 @@ GRANT ALL ON FUNCTION public.payment_run_for(p_date date) TO service_role;
 
 
 --
+-- Name: FUNCTION purchase_invoice_file_missing(p_purchase_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION recalculate_open_slas(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17083,6 +17264,15 @@ GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
 GRANT ALL ON FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) TO anon;
 GRANT ALL ON FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.save_batch_service_invoice(p_batch_id uuid, p_batch jsonb, p_invoice jsonb, p_lines jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION save_purchase_finance_invoice(p_invoice_id uuid, p_invoice jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.save_purchase_finance_invoice(p_invoice_id uuid, p_invoice jsonb) TO anon;
+GRANT ALL ON FUNCTION public.save_purchase_finance_invoice(p_invoice_id uuid, p_invoice jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.save_purchase_finance_invoice(p_invoice_id uuid, p_invoice jsonb) TO service_role;
 
 
 --

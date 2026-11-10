@@ -13,7 +13,7 @@ import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
  */
 export default function InvoiceCell({ columnKey, invoice: inv, canEdit }) {
     // A multi-vehicle invoice (MAIN-99) has a batch in place of a job card, and a
-    // refurbishment (MAIN-123) its purchase invoice.
+    // purchase or refurbishment (MAIN-123, MAIN-129) its purchase invoice.
     const batch = inv.batch_service
     const purchase = inv.purchase_invoice
     const owner = batch ?? purchase ?? inv.job_card
@@ -23,7 +23,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit }) {
             if (purchase) {
                 return (
                     <Link to={purchaseInvoicePath(purchase.id)} className="text-blue-600 hover:underline font-medium">
-                        Refurbishment
+                        {inv.refurbishment ? 'Refurbishment' : 'Purchase'}
                     </Link>
                 )
             }

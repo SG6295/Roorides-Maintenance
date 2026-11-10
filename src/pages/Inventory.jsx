@@ -904,6 +904,8 @@ export default function Inventory() {
     // The audit belongs to finance. maintenance_exec can see what an audit did to stock —
     // its write-offs show up in Consumption History — but takes no part in running one.
     const canAudit = ['finance', 'super_admin'].includes(userProfile?.role)
+    // Purchases go to finance for review, so finance does not record them (MAIN-129).
+    const canPurchase = userProfile?.role !== 'finance'
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -913,6 +915,7 @@ export default function Inventory() {
                 {/* Header row */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
+                    {canPurchase && (
                     <div className="flex gap-3">
                         <button
                             onClick={() => setShowBulkModal(true)}
@@ -929,6 +932,7 @@ export default function Inventory() {
                             Record Purchase
                         </button>
                     </div>
+                    )}
                 </div>
 
                 {/* Tabs */}

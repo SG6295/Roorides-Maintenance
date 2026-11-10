@@ -9,6 +9,13 @@ import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import InvoiceFileLink from '../outsource-invoices/InvoiceFileLink'
 import SupplierPicker from '../suppliers/SupplierPicker'
+import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../outsource-invoices/InvoiceDetailsFields'
+import { invoiceFormFromRow, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
+import { financeStatusColor } from '../outsource-invoices/format'
+import { isLockedByFinance } from '../../constants/outsourceInvoices'
+import { approvedAmountError } from '../../utils/refurbishment'
+import { todayLocal } from '../../utils/datetime'
+import { useAuth } from '../../hooks/useAuth'
 import {
     round2,
     lineSubtotal,
@@ -35,12 +42,24 @@ const emptyNewLine = () => ({ id: null, part_id: '', quantity: '', unit_price: '
 const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
 export default function EditPurchaseModal({ invoice, onClose }) {
+    const { userProfile } = useAuth()
     const { data: existingItems, isLoading: itemsLoading } = usePurchaseInvoiceItems(invoice.id)
     const { data: parts = [] } = useParts()
     const { data: partUnits = [] } = usePartUnits()
     const { data: locations = [] } = useWorkshopLocations()
     const updateInvoice = useUpdatePurchaseInvoice()
     const createPart = useCreatePart()
+    const todayStr = todayLocal()
+
+    // The invoice's finance invoice (MAIN-129). One recorded before purchases went to
+    // finance has none, and saves as it always did.
+    const finance = invoice.finance_invoice ?? null
+    // Finance reviews purchase invoices but does not edit them.
+    const isFinanceRole = userProfile?.role === 'finance'
+    // Once finance has accepted it, only the notes can change; finance moving it back to
+    // Hold lifts that.
+    const accepted = isLockedByFinance(finance)
+    const frozen = isFinanceRole || accepted
 
     const [invoiceData, setInvoiceData] = useState({
         invoice_number: invoice.invoice_number,
@@ -57,6 +76,13 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const [newPartForms, setNewPartForms] = useState({})
 
     const [error, setError] = useState(null)
+    // The finance details, with the invoice number and date — shared with the header.
+    const [invoiceForm, setInvoiceForm] = useState(() => finance && {
+        ...invoiceFormFromRow(finance),
+        dateOfActivity: invoice.invoice_date || '',
+        invoiceNo: invoice.invoice_number || '',
+    })
+    const [showErrors, setShowErrors] = useState(false)
     const [invoiceFile, setInvoiceFile] = useState(
         invoice.invoice_file_url
             ? { name: 'Existing document', url: invoice.invoice_file_url }
@@ -91,10 +117,14 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     // ── Line helpers ───────────────────────────────────────────────────────────
     const invoiceTotal = calcInvoiceTotal(lines || [])
     const totalDiscount = calcTotalDiscount(lines || [])
-    // A refurbishment's lines moved stock and marked scrap as refurbished, so they stay as
-    // recorded; its header went to finance, so only the notes stay editable (MAIN-123).
+    // A refurbishment's lines moved stock and marked scrap as refurbished, so they and its
+    // workshop stay as recorded (MAIN-123); its other details are edited like any
+    // purchase's until finance accepts it (MAIN-129).
     const hasLockedLines = (lines || []).some(l => l.locked)
-    const headerInputClass = `w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${hasLockedLines ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`
+    const headerInputClass = `w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${frozen ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`
+    const invoiceErrors = finance ? validateInvoiceForm(invoiceForm, todayStr) : {}
+    const amountProblem = finance && !frozen ? approvedAmountError(lines || [], invoiceForm.approvedAmount) : null
+    const filePending = !!finance && !invoiceFile?.url
 
     function updateLine(index, field, value) {
         setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
@@ -171,6 +201,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
+        setShowErrors(true)
 
         if (!invoiceData.location_id) {
             setError('Choose which workshop this invoice is being inwarded to.')
@@ -207,15 +238,32 @@ export default function EditPurchaseModal({ invoice, onClose }) {
             setError('A line discount cannot exceed its item subtotal (qty × unit price).')
             return
         }
+        if (finance && invoice.invoice_file_url && !invoiceFile?.url) {
+            setError('The invoice file cannot be removed once attached. Replace it instead.')
+            return
+        }
+        if (Object.keys(invoiceErrors).length > 0) {
+            setError('Check the invoice details.')
+            return
+        }
+        if (amountProblem) {
+            setError(amountProblem)
+            return
+        }
 
+        // An invoice with a finance invoice takes its number and date from the invoice
+        // details; its other details travel alongside.
+        const { invoice_no, date_of_activity, ...details } = finance ? invoiceFormToRow(invoiceForm) : {}
         try {
             await updateInvoice.mutateAsync({
                 invoiceId: invoice.id,
                 invoiceData: {
                     ...invoiceData,
+                    ...(finance ? { invoice_number: invoice_no, invoice_date: date_of_activity } : {}),
                     invoice_file_url: invoiceFile?.url || null,
                 },
                 lineItems: activeLines,
+                finance: finance ? details : null,
             })
             onClose()
         } catch (err) {
@@ -229,7 +277,17 @@ export default function EditPurchaseModal({ invoice, onClose }) {
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b">
-                    <h2 className="text-lg font-semibold text-gray-900">Edit Purchase</h2>
+                    <div className="flex items-center gap-3">
+                        <h2 className="text-lg font-semibold text-gray-900">{isFinanceRole ? 'Purchase' : 'Edit Purchase'}</h2>
+                        {finance && (
+                            <span
+                                title={finance.finance_remark || undefined}
+                                className={`px-2 py-0.5 rounded-full text-xs font-medium ${financeStatusColor(finance.finance_payment_status)}`}
+                            >
+                                Finance: {finance.finance_payment_status}
+                            </span>
+                        )}
+                    </div>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
                         <XMarkIcon className="w-5 h-5" />
                     </button>
@@ -255,7 +313,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             value={invoiceData.supplier_id}
                                             onChange={id => setInvoiceData(p => ({ ...p, supplier_id: id }))}
                                             current={invoice.supplier_id ? { id: invoice.supplier_id, name: invoice.supplier_name } : null}
-                                            disabled={hasLockedLines}
+                                            disabled={frozen}
                                         />
                                         {/* Recorded before suppliers came from the list (MAIN-128): the typed
                                             name stays as it is unless a supplier is chosen. */}
@@ -265,6 +323,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             </p>
                                         )}
                                     </div>
+                                    {!finance && <>
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">
                                             Invoice Number <span className="text-red-500">*</span>
@@ -273,7 +332,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             required
                                             type="text"
                                             className={headerInputClass}
-                                            disabled={hasLockedLines}
+                                            disabled={frozen}
                                             value={invoiceData.invoice_number}
                                             onChange={e => setInvoiceData(p => ({ ...p, invoice_number: e.target.value }))}
                                         />
@@ -286,16 +345,18 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             required
                                             type="date"
                                             className={headerInputClass}
-                                            disabled={hasLockedLines}
+                                            disabled={frozen}
                                             value={invoiceData.invoice_date}
                                             onChange={e => setInvoiceData(p => ({ ...p, invoice_date: e.target.value }))}
                                         />
                                     </div>
+                                    </>}
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
                                         <input
                                             type="text"
-                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${isFinanceRole ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                                            disabled={isFinanceRole}
                                             value={invoiceData.notes}
                                             onChange={e => setInvoiceData(p => ({ ...p, notes: e.target.value }))}
                                             placeholder="Optional"
@@ -314,7 +375,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                             }))}
                                             placeholder="Select workshop"
                                             compact
-                                            disabled={hasLockedLines}
+                                            disabled={hasLockedLines || frozen}
                                         />
                                         {locationChanged && (
                                             <p className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
@@ -330,12 +391,40 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                 </div>
                             </div>
 
+                            {finance && (
+                                <div>
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details for Finance</h3>
+                                    {frozen ? (
+                                        <InvoiceDetailsReadOnly invoice={finance} />
+                                    ) : (
+                                        <InvoiceDetailsFields
+                                            form={invoiceForm}
+                                            setForm={setInvoiceForm}
+                                            errors={invoiceErrors}
+                                            showErrors={showErrors}
+                                            todayStr={todayStr}
+                                            dateLabel="Invoice Date"
+                                        />
+                                    )}
+                                    {accepted && !isFinanceRole && (
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            Finance has accepted this invoice, so only its notes can be changed. Finance moving it back to Hold lifts this.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Invoice Document */}
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
-                                {hasLockedLines
+                                {frozen
                                     ? <InvoiceFileLink url={invoiceFile?.url} />
                                     : <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />}
+                                {filePending && !frozen && (
+                                    <p className="text-xs text-amber-700 mt-1">
+                                        Finance sees this invoice as New (invoice pending) and cannot accept it until the file is uploaded here.
+                                    </p>
+                                )}
                             </div>
 
                             {/* Line Items */}
@@ -343,7 +432,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
                                 {hasLockedLines && (
                                     <p className="text-xs text-gray-500 mb-2">
-                                        This invoice came from a scrap refurbishment and has gone to finance. Only its notes can be changed.
+                                        This invoice came from a scrap refurbishment, so its lines and workshop cannot be changed.
                                     </p>
                                 )}
                                 <div className="space-y-2">
@@ -452,7 +541,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 <div className="pt-1">
                                                     <div className="relative">
                                                         <input
-                                                            disabled={line.locked}
+                                                            disabled={line.locked || frozen}
                                                             type="number"
                                                             min="0"
                                                             step="any"
@@ -472,7 +561,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* Unit Price */}
                                                 <div className="pt-1">
                                                     <input
-                                                        disabled={line.locked}
+                                                        disabled={line.locked || frozen}
                                                         type="number"
                                                         min="0"
                                                         step="0.01"
@@ -486,7 +575,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* Discount % */}
                                                 <div className="pt-1">
                                                     <input
-                                                        disabled={line.locked}
+                                                        disabled={line.locked || frozen}
                                                         type="number"
                                                         min="0"
                                                         max="100"
@@ -501,7 +590,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* Discount amount */}
                                                 <div className="pt-1">
                                                     <input
-                                                        disabled={line.locked}
+                                                        disabled={line.locked || frozen}
                                                         type="number"
                                                         min="0"
                                                         step="0.01"
@@ -515,7 +604,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                                 {/* GST */}
                                                 <div className="pt-1">
                                                     <select
-                                                        disabled={line.locked}
+                                                        disabled={line.locked || frozen}
                                                         className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
                                                         value={line.gst_rate}
                                                         onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
@@ -533,7 +622,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
                                                 {/* Remove */}
                                                 <div className="flex justify-center pt-3">
-                                                    {!line.locked && (
+                                                    {!line.locked && !frozen && (
                                                         <button
                                                             type="button"
                                                             onClick={() => removeLine(i)}
@@ -549,14 +638,16 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                     })}
                                 </div>
 
-                                <button
-                                    type="button"
-                                    onClick={addLine}
-                                    className="mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
-                                >
-                                    <PlusIcon className="w-4 h-4" />
-                                    Add line item
-                                </button>
+                                {!hasLockedLines && !frozen && (
+                                    <button
+                                        type="button"
+                                        onClick={addLine}
+                                        className="mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                                    >
+                                        <PlusIcon className="w-4 h-4" />
+                                        Add line item
+                                    </button>
+                                )}
                             </div>
 
                             {error && (
@@ -576,13 +667,18 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                         step="0.01"
                                         className="no-spinner w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
                                         placeholder="0.00"
-                                        disabled={hasLockedLines}
+                                        disabled={hasLockedLines || frozen}
                                         value={totalDiscount > 0 ? totalDiscount : ''}
                                         onChange={e => handleTotalDiscountChange(e.target.value)}
                                     />
                                 </div>
-                                <div className="text-sm font-semibold text-gray-700">
-                                    Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                                <div className="text-sm">
+                                    <span className="font-semibold text-gray-700">
+                                        Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                                    </span>
+                                    {amountProblem && (
+                                        <p className="text-xs text-red-600 mt-0.5">{amountProblem}</p>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex gap-3">
@@ -591,15 +687,17 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                     onClick={onClose}
                                     className="px-4 py-2 text-sm text-gray-700 border rounded-lg hover:bg-gray-100"
                                 >
-                                    Cancel
+                                    {isFinanceRole ? 'Close' : 'Cancel'}
                                 </button>
-                                <button
-                                    type="submit"
-                                    disabled={updateInvoice.isPending}
-                                    className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                    {updateInvoice.isPending ? 'Saving…' : 'Save Changes'}
-                                </button>
+                                {!isFinanceRole && (
+                                    <button
+                                        type="submit"
+                                        disabled={updateInvoice.isPending}
+                                        className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                    >
+                                        {updateInvoice.isPending ? 'Saving…' : 'Save Changes'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </form>

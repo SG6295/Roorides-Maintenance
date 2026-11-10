@@ -31,6 +31,7 @@ export const MAINTENANCE_STATUS_COLORS = {
 
 // Both GST-closed statuses are final and share a colour.
 export function financeStatusColor(status) {
+    if (status === 'New (invoice pending)') return 'bg-orange-100 text-orange-800'
     if (status === 'Hold') return 'bg-amber-100 text-amber-800'
     if (status === 'Reject') return 'bg-red-100 text-red-800'
     if (status === 'Accepted') return 'bg-blue-100 text-blue-800'

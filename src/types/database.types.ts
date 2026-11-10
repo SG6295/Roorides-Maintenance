@@ -2804,6 +2804,7 @@ export type Database = {
           accepted_count: number
           hold_count: number
           new_count: number
+          pending_count: number
           reject_count: number
         }[]
       }
@@ -2875,6 +2876,10 @@ export type Database = {
         Returns: boolean
       }
       payment_run_for: { Args: { p_date: string }; Returns: string }
+      purchase_invoice_file_missing: {
+        Args: { p_purchase_invoice_id: string }
+        Returns: boolean
+      }
       recalculate_open_slas: { Args: never; Returns: undefined }
       reconcile_supplier_balance: {
         Args: {
@@ -2922,6 +2927,10 @@ export type Database = {
           p_lines: Json
         }
         Returns: string
+      }
+      save_purchase_finance_invoice: {
+        Args: { p_invoice: Json; p_invoice_id: string }
+        Returns: undefined
       }
       save_purchase_invoice: {
         Args: { p_invoice: Json; p_invoice_id: string; p_items: Json }
