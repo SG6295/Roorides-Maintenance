@@ -20,7 +20,9 @@ export default function HistoryDrawer({ invoice, onClose }) {
                             History — Invoice #{invoice.invoice_no || invoice.id.slice(0, 8)}
                         </h2>
                         <p className="text-xs text-gray-500">
-                            {invoice.batch_service
+                            {invoice.purchase_invoice
+                                ? `Refurbishment · ${invoice.purchase_invoice.supplier?.entity_name || '—'}`
+                                : invoice.batch_service
                                 // A multi-vehicle invoice (MAIN-99) has a batch in place of a job card.
                                 ? `${formatBatchNumber(invoice.batch_service.batch_number)} · ${workTypeSummary(invoice.batch_service.vehicles)} · ${vehicleCountLabel(invoice.batch_service.vehicles)} · ${invoice.batch_service.supplier?.entity_name || '—'}`
                                 : `Job card #${invoice.job_card?.job_card_number} · ${invoice.job_card?.vehicle_number || '—'} · ${invoice.job_card?.supplier?.entity_name || '—'}`}

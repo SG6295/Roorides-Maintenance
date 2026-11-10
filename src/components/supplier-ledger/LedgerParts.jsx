@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { invoiceOwner, LINE_TAGS, isVoided, entryDay } from '../../utils/supplierLedger'
 import { batchPath } from '../../utils/batchNumber'
+import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
 import { todayLocal } from '../../utils/datetime'
 import { fmtMoney, fmtDate, fmtDateTime } from '../outsource-invoices/format'
 
@@ -23,7 +24,9 @@ export function Tile({ label, value, note, tone = '', highlight = false }) {
 export function OwnerLink({ line }) {
     const owner = invoiceOwner(line)
     if (!owner) return null
-    const to = owner.jobCardNumber != null ? `/job-cards/${owner.jobCardNumber}` : batchPath(owner.batchNumber)
+    const to = owner.purchaseInvoiceId
+        ? purchaseInvoicePath(owner.purchaseInvoiceId)
+        : owner.jobCardNumber != null ? `/job-cards/${owner.jobCardNumber}` : batchPath(owner.batchNumber)
     return <Link to={to} className="text-blue-600 hover:underline">{owner.label}</Link>
 }
 

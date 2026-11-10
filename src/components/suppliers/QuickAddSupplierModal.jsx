@@ -13,15 +13,20 @@ const EMPTY_FORM = {
   nature_of_work: '',
 }
 
-function isFormDirty(form) {
-  return Object.values(form).some((v) => v.trim() !== '')
+function isFormDirty(form, initial) {
+  return Object.keys(form).some((k) => form[k].trim() !== initial[k].trim())
 }
 
-export default function QuickAddSupplierModal({ isOpen, onClose, onSuccess }) {
+/**
+ * `initialName` prefills the supplier name — the text typed into a supplier picker
+ * before choosing to add one. It is read when the modal mounts.
+ */
+export default function QuickAddSupplierModal({ isOpen, onClose, onSuccess, initialName = '' }) {
   const { userProfile } = useAuth()
   const quickAdd = useQuickAddSupplier()
 
-  const [form, setForm] = useState(EMPTY_FORM)
+  const [initialForm] = useState(() => ({ ...EMPTY_FORM, entity_name: initialName }))
+  const [form, setForm] = useState(initialForm)
   const [submitError, setSubmitError] = useState(null)
 
   const { data: nowSuggestions = [] } = useQuery({
@@ -45,8 +50,8 @@ export default function QuickAddSupplierModal({ isOpen, onClose, onSuccess }) {
   const allFilled = Object.values(form).every((v) => v.trim() !== '')
 
   const handleClose = () => {
-    if (isFormDirty(form) && !window.confirm('Discard changes?')) return
-    setForm(EMPTY_FORM)
+    if (isFormDirty(form, initialForm) && !window.confirm('Discard changes?')) return
+    setForm(initialForm)
     setSubmitError(null)
     onClose()
   }

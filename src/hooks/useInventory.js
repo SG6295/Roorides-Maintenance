@@ -35,6 +35,21 @@ export function useParts(filters = {}) {
     })
 }
 
+const PURCHASE_INVOICE_COLUMNS = `
+    id,
+    invoice_number,
+    supplier_name,
+    invoice_date,
+    total_amount,
+    notes,
+    invoice_file_url,
+    created_at,
+    location_id,
+    location:workshop_locations!location_id(id, name, address),
+    created_by_user:users!created_by(name),
+    purchase_invoice_items(id)
+`
+
 /**
  * All purchase invoices with item counts and created_by name.
  */
@@ -45,20 +60,7 @@ export function usePurchaseInvoices(filters = {}) {
         queryFn: async () => {
             let query = supabase
                 .from('purchase_invoices')
-                .select(`
-                    id,
-                    invoice_number,
-                    supplier_name,
-                    invoice_date,
-                    total_amount,
-                    notes,
-                    invoice_file_url,
-                    created_at,
-                    location_id,
-                    location:workshop_locations!location_id(id, name, address),
-                    created_by_user:users!created_by(name),
-                    purchase_invoice_items(id)
-                `)
+                .select(PURCHASE_INVOICE_COLUMNS)
                 .order('invoice_date', { ascending: false })
                 .order('created_at', { ascending: false })
 
@@ -80,6 +82,26 @@ export function usePurchaseInvoices(filters = {}) {
                 ...inv,
                 item_count: inv.purchase_invoice_items?.length ?? 0,
             }))
+        },
+    })
+}
+
+/**
+ * One purchase invoice by id, in the list's shape — for a link that opens it in Edit
+ * Purchase whatever the list's filters (MAIN-123). Null when there is none to see.
+ */
+export function usePurchaseInvoice(id) {
+    return useQuery({
+        queryKey: ['purchase_invoices', 'one', id],
+        enabled: !!id,
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('purchase_invoices')
+                .select(PURCHASE_INVOICE_COLUMNS)
+                .eq('id', id)
+                .maybeSingle()
+            if (error) throw error
+            return data && { ...data, item_count: data.purchase_invoice_items?.length ?? 0 }
         },
     })
 }

@@ -1,3 +1,6 @@
+import { invoiceTotal } from '../lib/invoiceDiscount'
+import { toPaise } from './settlement'
+
 /**
  * Line rules for recording a refurbishment (MAIN-123). The database enforces these too;
  * they are here so the form can say what is wrong before anything is sent.
@@ -54,4 +57,17 @@ export function toRefurbishmentLine(line) {
         unit_price: Number(line.unit_price),
         gst_rate: Number(line.gst_rate) || 0,
     }
+}
+
+/**
+ * The parts must add up to the approved amount exactly, compared in paise. Null when they
+ * do, or when the approved amount is blank or malformed — the invoice form reports that.
+ */
+export function approvedAmountError(lines, approvedAmount) {
+    if (String(approvedAmount ?? '').trim() === '') return null
+    const approved = toPaise(approvedAmount)
+    if (Number.isNaN(approved)) return null
+    const parts = Math.round(invoiceTotal(lines) * 100)
+    if (parts === approved) return null
+    return `The parts add up to ₹${(parts / 100).toFixed(2)}; the approved amount is ₹${(approved / 100).toFixed(2)}.`
 }

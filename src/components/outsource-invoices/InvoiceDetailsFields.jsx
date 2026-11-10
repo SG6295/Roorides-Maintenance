@@ -51,9 +51,9 @@ export function InvoiceDetailsReadOnly({ invoice }) {
  * The editable invoice fields. `errors` comes from validateInvoiceForm and is shown
  * only once `showErrors` is set; `children` render below the fields. `optional` drops the
  * required marks — on a job card the invoice may come later, but once started it is
- * checked in full.
+ * checked in full. `dateLabel` renames the date — a purchase invoice calls it Invoice Date.
  */
-export default function InvoiceDetailsFields({ form, setForm, errors, showErrors, todayStr, optional = false, children }) {
+export default function InvoiceDetailsFields({ form, setForm, errors, showErrors, todayStr, optional = false, dateLabel = 'Date of Activity', children }) {
     const req = optional ? null : <span className="text-red-500">*</span>
     const payableAmount = (() => {
         const aa = parseFloat(form.approvedAmount)
@@ -66,7 +66,7 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Date of Activity {req}
+                        {dateLabel} {req}
                     </label>
                     <input
                         type="date"

@@ -28,6 +28,7 @@ function classNames(...classes) {
  * unaffected.
  * showAllOnFocus: open the full list on click/focus (empty input = all options visible)
  * pinnedOption: { value, label } — always rendered first, never filtered out
+ * onChange(value, query) — query is what was typed when the option was picked
  * compact: the smaller size CustomSelect's `compact` uses, for table rows
  */
 export default function SearchableSelect({
@@ -57,8 +58,9 @@ export default function SearchableSelect({
     return found ? found.label : val
   }
 
+  // The typed text goes along too, so a pinned "add new" option can prefill it.
   const handleChange = (val) => {
-    onChange(val)
+    onChange(val, query)
     setQuery('')
   }
 

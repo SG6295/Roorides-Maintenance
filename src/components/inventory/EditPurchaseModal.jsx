@@ -7,6 +7,7 @@ import {
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
+import InvoiceFileLink from '../outsource-invoices/InvoiceFileLink'
 import {
     round2,
     lineSubtotal,
@@ -89,8 +90,10 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     // ── Line helpers ───────────────────────────────────────────────────────────
     const invoiceTotal = calcInvoiceTotal(lines || [])
     const totalDiscount = calcTotalDiscount(lines || [])
-    // A refurbishment's lines moved stock and marked scrap as refurbished, so they stay as recorded.
+    // A refurbishment's lines moved stock and marked scrap as refurbished, so they stay as
+    // recorded; its header went to finance, so only the notes stay editable (MAIN-123).
     const hasLockedLines = (lines || []).some(l => l.locked)
+    const headerInputClass = `w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${hasLockedLines ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`
 
     function updateLine(index, field, value) {
         setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
@@ -250,7 +253,8 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                         <input
                                             required
                                             type="text"
-                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            className={headerInputClass}
+                                            disabled={hasLockedLines}
                                             value={invoiceData.supplier_name}
                                             onChange={e => setInvoiceData(p => ({ ...p, supplier_name: e.target.value }))}
                                         />
@@ -262,7 +266,8 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                         <input
                                             required
                                             type="text"
-                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            className={headerInputClass}
+                                            disabled={hasLockedLines}
                                             value={invoiceData.invoice_number}
                                             onChange={e => setInvoiceData(p => ({ ...p, invoice_number: e.target.value }))}
                                         />
@@ -274,7 +279,8 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                         <input
                                             required
                                             type="date"
-                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                            className={headerInputClass}
+                                            disabled={hasLockedLines}
                                             value={invoiceData.invoice_date}
                                             onChange={e => setInvoiceData(p => ({ ...p, invoice_date: e.target.value }))}
                                         />
@@ -321,7 +327,9 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                             {/* Invoice Document */}
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
-                                <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />
+                                {hasLockedLines
+                                    ? <InvoiceFileLink url={invoiceFile?.url} />
+                                    : <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />}
                             </div>
 
                             {/* Line Items */}
@@ -329,7 +337,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
                                 {hasLockedLines && (
                                     <p className="text-xs text-gray-500 mb-2">
-                                        Lines from a scrap refurbishment, and this invoice's workshop, cannot be changed.
+                                        This invoice came from a scrap refurbishment and has gone to finance. Only its notes can be changed.
                                     </p>
                                 )}
                                 <div className="space-y-2">

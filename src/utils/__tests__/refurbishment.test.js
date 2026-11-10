@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { refurbishedName, refurbishmentLinesError, toRefurbishmentLine } from '../refurbishment'
+import { refurbishedName, refurbishmentLinesError, toRefurbishmentLine, approvedAmountError } from '../refurbishment'
 
 const scrapById = {
     s1: { quantity_snapshot: 4, unit_snapshot: 'pcs', part_name_snapshot: 'Alternator' },
@@ -69,5 +69,24 @@ describe('toRefurbishmentLine', () => {
         expect(toRefurbishmentLine(notInList())).toEqual({
             original_part_id: 'p1', comment: 'in the scrap room', quantity: 1, unit_price: 50, gst_rate: 0,
         })
+    })
+})
+
+describe('approvedAmountError', () => {
+    // 2 × 100 + 18% = 236.00, and 1 × 50 = 50.00
+    const lines = [fromScrap(), notInList()]
+
+    it('accepts an approved amount equal to the parts total, to the paisa', () => {
+        expect(approvedAmountError(lines, '286')).toBeNull()
+        expect(approvedAmountError(lines, '286.00')).toBeNull()
+    })
+
+    it('names both figures when they differ', () => {
+        expect(approvedAmountError(lines, '286.01')).toBe('The parts add up to ₹286.00; the approved amount is ₹286.01.')
+    })
+
+    it('leaves a blank or malformed amount to the invoice form', () => {
+        expect(approvedAmountError(lines, '')).toBeNull()
+        expect(approvedAmountError(lines, '12.345')).toBeNull()
     })
 })
