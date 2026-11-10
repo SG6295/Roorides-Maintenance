@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import CustomSelect from '../shared/CustomSelect'
 import RejectInvoiceModal from './RejectInvoiceModal'
 import { useUpdateFinancePaymentStatus } from '../../hooks/useOutsourceInvoices'
-import { FINANCE_STATUS_MOVES } from '../../constants/outsourceInvoices'
+import { financeStatusMoves } from '../../constants/outsourceInvoices'
 import { financeStatusColor } from './format'
 
 /**
@@ -10,7 +10,8 @@ import { financeStatusColor } from './format'
  * straight from the table and it saves on pick; everyone else sees the badge, with the
  * remark on hover.
  *
- * Only the moves allowed from the current status are offered, and a final status
+ * Only the moves allowed from the current status are offered — a purchase invoice
+ * waiting for its file cannot be accepted (MAIN-129) — and a final status
  * (Reject, either GST-closed) is a badge for everyone. Reject asks for its reason first
  * and saves the two together, so they land as one history entry.
  */
@@ -26,7 +27,7 @@ export default function FinanceStatusCell({ invoice, canEdit }) {
     }, [saved])
 
     const status = invoice.finance_payment_status
-    const moves = FINANCE_STATUS_MOVES[status] ?? []
+    const moves = financeStatusMoves(invoice)
 
     if (!canEdit || moves.length === 0) {
         return (

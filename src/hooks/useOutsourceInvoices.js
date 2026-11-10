@@ -62,8 +62,9 @@ const PAGE_SIZE = 50
  * Returns { invoices: [], totalCount: number | null }.
  * totalCount is null when page=null (search mode — client handles count).
  * Returns invoices of completed job cards, every multi-vehicle invoice (MAIN-99) and
- * every refurbishment's purchase invoice (MAIN-123) — a batch or refurbishment is
- * complete by construction, its invoice being mandatory at save. The job_card embed is
+ * every purchase invoice's finance invoice (refurbishments from MAIN-123, all purchases
+ * from MAIN-129) — a batch or purchase is complete by construction, its invoice details
+ * being mandatory at save. The job_card embed is
  * filtered to Completed, so it comes back null for an unfinished card, and the or()
  * keeps a row only if it is a batch, a purchase invoice the reader can see, or its job
  * card survived that filter. (PostgREST cannot put job_card.status itself inside an or().)
@@ -92,7 +93,8 @@ export function useOutsourceInvoices(filters = {}) {
                     ),
                     purchase_invoice:purchase_invoices!purchase_invoice_id(
                         id, invoice_number, invoice_file_url,
-                        supplier:suppliers!supplier_id(id, entity_name)
+                        supplier:suppliers!supplier_id(id, entity_name),
+                        lines:purchase_invoice_items(refurbishment:scrap_refurbishments(id))
                     )`,
                     isPaginated ? { count: 'exact' } : undefined,
                 )
@@ -145,6 +147,7 @@ export function useOutsourceInvoiceSummary(filters = {}) {
             const row = data?.[0] ?? {}
             return {
                 newCount:      Number(row.new_count      ?? 0),
+                pendingCount:  Number(row.pending_count  ?? 0),
                 holdCount:     Number(row.hold_count     ?? 0),
                 rejectCount:   Number(row.reject_count   ?? 0),
                 acceptedCount: Number(row.accepted_count ?? 0),

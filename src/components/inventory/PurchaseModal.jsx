@@ -8,6 +8,10 @@ import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import NewPartInlineForm from './NewPartInlineForm'
 import SupplierPicker from '../suppliers/SupplierPicker'
+import InvoiceDetailsFields from '../outsource-invoices/InvoiceDetailsFields'
+import { EMPTY_INVOICE_FORM, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
+import { approvedAmountError } from '../../utils/refurbishment'
+import { todayLocal } from '../../utils/datetime'
 import {
     lineSubtotal,
     lineDiscount,
@@ -37,17 +41,20 @@ export default function PurchaseModal({ onClose }) {
     const { data: parts = [] } = useParts()
     const { data: locations = [] } = useWorkshopLocations()
     const recordPurchase = useRecordPurchase()
+    const todayStr = todayLocal()
 
     // keyed by line index: true while that line is showing the new-part form
     const [newPartForms, setNewPartForms] = useState({})
 
     const [invoice, setInvoice] = useState({
-        invoice_number: '',
         supplier_id: '',
-        invoice_date: '',
         notes: '',
         location_id: '',
     })
+    // The finance details, as on a job card or refurbishment (MAIN-129); the date and
+    // number are the purchase invoice's own.
+    const [invoiceForm, setInvoiceForm] = useState(EMPTY_INVOICE_FORM)
+    const [showErrors, setShowErrors] = useState(false)
     const [lines, setLines] = useState([emptyLine()])
     const [error, setError] = useState(null)
 
@@ -56,6 +63,8 @@ export default function PurchaseModal({ onClose }) {
 
     const invoiceTotal = calcInvoiceTotal(lines)
     const totalDiscount = calcTotalDiscount(lines)
+    const invoiceErrors = validateInvoiceForm(invoiceForm, todayStr)
+    const amountProblem = approvedAmountError(lines, invoiceForm.approvedAmount)
 
     // With a single workshop there is nothing to choose, so pick it for them.
     const locationId = invoice.location_id || (locations.length === 1 ? locations[0].id : '')
@@ -100,6 +109,7 @@ export default function PurchaseModal({ onClose }) {
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
+        setShowErrors(true)
 
         if (!invoice.supplier_id) {
             setError('Choose the supplier, or add them.')
@@ -129,16 +139,28 @@ export default function PurchaseModal({ onClose }) {
             setError('A line discount cannot exceed its item subtotal (qty × unit price).')
             return
         }
+        if (Object.keys(invoiceErrors).length > 0) {
+            setError('Check the invoice details.')
+            return
+        }
+        if (amountProblem) {
+            setError(amountProblem)
+            return
+        }
 
+        const { invoice_no, date_of_activity, ...finance } = invoiceFormToRow(invoiceForm)
         try {
             await recordPurchase.mutateAsync({
                 invoice: {
                     ...invoice,
+                    invoice_number: invoice_no,
+                    invoice_date: date_of_activity,
                     location_id: locationId,
                     total_amount: invoiceTotal,
                     created_by: userProfile.id,
                     ...(invoiceFile?.url ? { invoice_file_url: invoiceFile.url } : {}),
                 },
+                finance,
                 lineItems: validLines.map(l => ({
                     part_id: l.part_id,
                     quantity: parseFloat(l.quantity),
@@ -177,31 +199,7 @@ export default function PurchaseModal({ onClose }) {
                                     <SupplierPicker
                                         value={invoice.supplier_id}
                                         onChange={id => setInvoice(p => ({ ...p, supplier_id: id }))}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Invoice Number <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        required
-                                        type="text"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                        value={invoice.invoice_number}
-                                        onChange={e => setInvoice(p => ({ ...p, invoice_number: e.target.value }))}
-                                        placeholder="e.g. INV-2024-001"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Invoice Date <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        required
-                                        type="date"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                        value={invoice.invoice_date}
-                                        onChange={e => setInvoice(p => ({ ...p, invoice_date: e.target.value }))}
+                                        error={showErrors && !invoice.supplier_id ? { message: 'Required' } : null}
                                     />
                                 </div>
                                 <div>
@@ -235,10 +233,30 @@ export default function PurchaseModal({ onClose }) {
                             </div>
                         </div>
 
+                        <div>
+                            <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details for Finance</h3>
+                            <InvoiceDetailsFields
+                                form={invoiceForm}
+                                setForm={setInvoiceForm}
+                                errors={invoiceErrors}
+                                showErrors={showErrors}
+                                todayStr={todayStr}
+                                dateLabel="Invoice Date"
+                            />
+                            <p className="text-xs text-gray-400 mt-2">
+                                Goes to finance in Outsource Invoices as soon as it is saved. The lines must add up to the Approved Amount.
+                            </p>
+                        </div>
+
                         {/* Invoice File Attachment */}
                         <div>
                             <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
                             <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />
+                            {!invoiceFile?.url && (
+                                <p className="text-xs text-amber-700 mt-1">
+                                    Without the file, finance sees this invoice as New (invoice pending) and cannot accept it until the file is uploaded from Edit Purchase.
+                                </p>
+                            )}
                         </div>
 
                         {/* Line Items */}
@@ -403,8 +421,13 @@ export default function PurchaseModal({ onClose }) {
                                     onChange={e => handleTotalDiscountChange(e.target.value)}
                                 />
                             </div>
-                            <div className="text-sm font-semibold text-gray-700">
-                                Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                            <div className="text-sm">
+                                <span className="font-semibold text-gray-700">
+                                    Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
+                                </span>
+                                {amountProblem && (
+                                    <p className="text-xs text-red-600 mt-0.5">{amountProblem}</p>
+                                )}
                             </div>
                         </div>
                         <div className="flex gap-3">

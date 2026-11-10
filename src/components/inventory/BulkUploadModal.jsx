@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { useAuth } from '../../hooks/useAuth'
 import { useParts, useRecordPurchase } from '../../hooks/useInventory'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
+import { useApprovedSuppliers } from '../../hooks/useSuppliers'
+import { checkBulkInvoices, cellDate } from '../../utils/bulkPurchase'
+import { todayLocal } from '../../utils/datetime'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import CustomSelect from '../shared/CustomSelect'
@@ -19,6 +21,10 @@ import {
 // taxable value BEFORE GST (mirrors the manual Record Purchase flow — MAIN-21).
 const ALLOWED_GST = [0, 5, 12, 18, 28]
 
+// Every invoice goes to finance (MAIN-129): supplier_name must be an approved supplier's
+// name, and the last five columns are the invoice's finance details, repeated on each of
+// its rows. maintenance_status defaults to Approved, advance_amount to 0 and
+// invoice_value to the lines' total, which is also the Approved Amount.
 const TEMPLATE_COLUMNS = [
     'invoice_number',
     'invoice_date',
@@ -31,19 +37,24 @@ const TEMPLATE_COLUMNS = [
     'gst_rate',
     'discount_amount',
     'notes',
+    'paid_by',
+    'pay_by_date',
+    'maintenance_status',
+    'advance_amount',
+    'invoice_value',
 ]
 
 const TEMPLATE_EXAMPLE = [
-    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'OIL-5W40', 'Engine Oil 5W40', 'L', 20, 85.00, 18, 0, 'Bulk purchase'],
-    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'FLT-OIL-01', 'Oil Filter', 'pcs', 10, 45.00, 18, 50, ''],
-    ['INV-002', '2024-01-16', 'Brake Masters', 'BRK-PAD-R', 'Rear Brake Pads', 'set', 5, 320.00, 28, 0, ''],
+    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'OIL-5W40', 'Engine Oil 5W40', 'L', 20, 85.00, 18, 0, 'Bulk purchase', 'Accounts', '2024-02-15', 'Approved', 0, ''],
+    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'FLT-OIL-01', 'Oil Filter', 'pcs', 10, 45.00, 18, 50, '', 'Accounts', '2024-02-15', 'Approved', 0, ''],
+    ['INV-002', '2024-01-16', 'Brake Masters', 'BRK-PAD-R', 'Rear Brake Pads', 'set', 5, 320.00, 28, 0, '', 'PCN', '2024-02-16', '', 500, ''],
 ]
 
 function downloadTemplate() {
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, ...TEMPLATE_EXAMPLE])
     // Column widths
-    ws['!cols'] = [16, 14, 20, 16, 24, 8, 10, 12, 10, 16, 24].map(w => ({ wch: w }))
+    ws['!cols'] = [16, 14, 20, 16, 24, 8, 10, 12, 10, 16, 24, 22, 14, 18, 16, 14].map(w => ({ wch: w }))
     XLSX.utils.book_append_sheet(wb, ws, 'Inventory Upload')
     XLSX.writeFile(wb, 'nvs_inventory_upload_template.xlsx')
 }
@@ -114,17 +125,7 @@ function validateRecords(records, partsMap) {
             }
         }
 
-        // Normalise date
-        let dateStr = ''
-        if (rec.invoice_date instanceof Date) {
-            dateStr = rec.invoice_date.toISOString().slice(0, 10)
-        } else if (typeof rec.invoice_date === 'number') {
-            // Excel serial date
-            const d = XLSX.SSF.parse_date_code(rec.invoice_date)
-            dateStr = `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`
-        } else {
-            dateStr = String(rec.invoice_date).trim()
-        }
+        const dateStr = cellDate(rec.invoice_date)
 
         // Match part
         const partKey = String(rec.part_number || '').trim().toLowerCase()
@@ -160,10 +161,12 @@ function validateRecords(records, partsMap) {
 const STEPS = { UPLOAD: 'upload', VALIDATE: 'validate', DONE: 'done' }
 
 export default function BulkUploadModal({ onClose }) {
-    const { userProfile } = useAuth()
     const { data: parts = [] } = useParts()
     const { data: locations = [] } = useWorkshopLocations()
+    const { data: suppliers = [] } = useApprovedSuppliers()
+    const recordPurchase = useRecordPurchase()
     const queryClient = useQueryClient()
+    const todayStr = todayLocal()
 
     const [step, setStep] = useState(STEPS.UPLOAD)
     const [chosenLocationId, setChosenLocationId] = useState('')
@@ -174,6 +177,7 @@ export default function BulkUploadModal({ onClose }) {
     const [importing, setImporting] = useState(false)
     const [importError, setImportError] = useState(null)
     const [importedCount, setImportedCount] = useState(0)
+    const [importedInvoices, setImportedInvoices] = useState(0)
     const fileRef = useRef()
 
     // One workshop for the whole batch (MAIN-73). An invoice holds a single
@@ -236,7 +240,14 @@ export default function BulkUploadModal({ onClose }) {
         )
     }
 
-    const hasErrors = editedRecords.some(r => r._errors.length > 0)
+    // Invoice-level checks span rows, so they are run over the whole sheet (MAIN-129).
+    const checked = useMemo(
+        () => checkBulkInvoices(editedRecords, suppliers, todayStr),
+        [editedRecords, suppliers, todayStr]
+    )
+    const errorsOf = rec => [...rec._errors, ...(checked.rowErrors[rec._rowIndex] ?? [])]
+
+    const hasErrors = editedRecords.some(r => errorsOf(r).length > 0)
     const hasWarnings = editedRecords.some(r => r._warnings.length > 0)
 
     async function handleImport() {
@@ -248,30 +259,16 @@ export default function BulkUploadModal({ onClose }) {
         setImporting(true)
         setImportError(null)
 
+        // Each invoice is saved, and sent to finance, in its own call, so one that fails
+        // leaves the ones before it saved.
+        let savedInvoices = 0
         try {
-            // Group rows by invoice_number + invoice_date + supplier_name
-            const invoiceGroups = {}
-            for (const rec of editedRecords) {
-                const key = `${rec.invoice_number}||${rec._dateStr}||${rec.supplier_name}`
-                if (!invoiceGroups[key]) {
-                    invoiceGroups[key] = {
-                        invoice_number: String(rec.invoice_number).trim(),
-                        invoice_date: rec._dateStr,
-                        supplier_name: String(rec.supplier_name).trim(),
-                        notes: String(rec.notes || '').trim(),
-                        created_by: userProfile.id,
-                        lines: [],
-                    }
-                }
-                invoiceGroups[key].lines.push(rec)
-            }
-
             let totalItems = 0
 
-            for (const group of Object.values(invoiceGroups)) {
+            for (const group of checked.invoices) {
                 // For each line, resolve or create the part
                 const lineItems = []
-                for (const rec of group.lines) {
+                for (const rec of group.rows) {
                     let part = rec._matchedPart
                     if (!part) {
                         // Create new part
@@ -297,36 +294,23 @@ export default function BulkUploadModal({ onClose }) {
                     })
                 }
 
-                // Insert invoice header
-                const { data: inv, error: invErr } = await supabase
-                    .from('purchase_invoices')
-                    .insert([{
-                        invoice_number: group.invoice_number,
-                        invoice_date: group.invoice_date,
-                        supplier_name: group.supplier_name,
-                        // Written before the line items below, so the restock trigger
-                        // reads this workshop off the header instead of the column
-                        // default (MAIN-73).
-                        location_id: locationId,
-                        notes: group.notes || null,
-                        total_amount: lineItems.reduce((s, l) => {
-                            const lineTotal = Math.round(
-                                (l.quantity * l.unit_price - (l.discount_amount || 0)) * (1 + (l.gst_rate || 0) / 100) * 100
-                            ) / 100
-                            return s + lineTotal
-                        }, 0),
-                        created_by: group.created_by,
-                    }])
-                    .select()
-                    .single()
-                if (invErr) throw new Error(`Failed to insert invoice ${group.invoice_number}: ${invErr.message}`)
+                try {
+                    await recordPurchase.mutateAsync({
+                        invoice: {
+                            invoice_number: group.invoice_number,
+                            invoice_date: group.invoice_date,
+                            supplier_id: group.supplier.id,
+                            notes: group.notes,
+                            location_id: locationId,
+                        },
+                        lineItems,
+                        finance: group.finance,
+                    })
+                } catch (err) {
+                    throw new Error(`Invoice ${group.invoice_number}: ${err.message}`)
+                }
 
-                // Insert line items
-                const { error: itemsErr } = await supabase
-                    .from('purchase_invoice_items')
-                    .insert(lineItems.map(l => ({ ...l, invoice_id: inv.id })))
-                if (itemsErr) throw new Error(`Failed to insert items for ${group.invoice_number}: ${itemsErr.message}`)
-
+                savedInvoices += 1
                 totalItems += lineItems.length
             }
 
@@ -334,9 +318,12 @@ export default function BulkUploadModal({ onClose }) {
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
             setImportedCount(totalItems)
+            setImportedInvoices(savedInvoices)
             setStep(STEPS.DONE)
         } catch (err) {
-            setImportError(err.message)
+            setImportError(savedInvoices > 0
+                ? `${err.message} The ${savedInvoices} invoice${savedInvoices !== 1 ? 's' : ''} before it ${savedInvoices !== 1 ? 'were' : 'was'} saved; remove ${savedInvoices !== 1 ? 'them' : 'it'} from the file before uploading again.`
+                : err.message)
         } finally {
             setImporting(false)
         }
@@ -396,7 +383,7 @@ export default function BulkUploadModal({ onClose }) {
                                 <div>
                                     <p className="text-sm font-medium text-blue-800">Download the template first</p>
                                     <p className="text-xs text-blue-600 mt-0.5">
-                                        Fill in your data using the exact column headers. Multiple rows with the same invoice_number will be grouped as one invoice. gst_rate (0/5/12/18/28) and discount_amount are optional and default to 0.
+                                        Fill in your data using the exact column headers. Multiple rows with the same invoice_number will be grouped as one invoice. gst_rate (0/5/12/18/28) and discount_amount are optional and default to 0. supplier_name must match a supplier in the supplier list. Every invoice goes to finance as New (invoice pending): repeat paid_by and pay_by_date on each row; maintenance_status (default Approved), advance_amount (default 0) and invoice_value (default the lines' total) are optional. Upload each file afterwards from Edit Purchase.
                                     </p>
                                 </div>
                                 <button
@@ -471,13 +458,18 @@ export default function BulkUploadModal({ onClose }) {
                                 {hasErrors && (
                                     <span className="text-xs px-2 py-1 bg-red-100 rounded-full text-red-700 flex items-center gap-1">
                                         <ExclamationTriangleIcon className="w-3 h-3" />
-                                        {editedRecords.filter(r => r._errors.length > 0).length} rows with errors (must fix)
+                                        {editedRecords.filter(r => errorsOf(r).length > 0).length} rows with errors (must fix)
                                     </span>
                                 )}
                                 {hasWarnings && (
                                     <span className="text-xs px-2 py-1 bg-yellow-100 rounded-full text-yellow-700 flex items-center gap-1">
                                         <ExclamationTriangleIcon className="w-3 h-3" />
                                         {editedRecords.filter(r => r._warnings.length > 0).length} rows with warnings (new parts will be created)
+                                    </span>
+                                )}
+                                {checked.unknownSuppliers.length > 0 && (
+                                    <span className="text-xs px-2 py-1 bg-red-100 rounded-full text-red-700">
+                                        Not in the supplier list: {checked.unknownSuppliers.join(', ')} — add them in Suppliers, or correct the name
                                     </span>
                                 )}
                                 {!hasErrors && !hasWarnings && (
@@ -509,7 +501,8 @@ export default function BulkUploadModal({ onClose }) {
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {editedRecords.map((rec) => {
-                                            const hasErr = rec._errors.length > 0
+                                            const recErrors = errorsOf(rec)
+                                            const hasErr = recErrors.length > 0
                                             const hasWarn = rec._warnings.length > 0
                                             const rowClass = hasErr
                                                 ? 'bg-red-50'
@@ -597,7 +590,7 @@ export default function BulkUploadModal({ onClose }) {
                                                     <td className="px-3 py-1.5">
                                                         {hasErr ? (
                                                             <div className="text-red-600 space-y-0.5">
-                                                                {rec._errors.map((e, i) => (
+                                                                {recErrors.map((e, i) => (
                                                                     <div key={i} className="flex items-start gap-1">
                                                                         <ExclamationTriangleIcon className="w-3 h-3 mt-0.5 shrink-0" />
                                                                         {e}
@@ -642,6 +635,9 @@ export default function BulkUploadModal({ onClose }) {
                             <h3 className="text-lg font-semibold text-gray-900">Import Successful</h3>
                             <p className="text-sm text-gray-500 mt-1">
                                 {importedCount} line item{importedCount !== 1 ? 's' : ''} recorded and inventory updated.
+                            </p>
+                            <p className="text-sm text-gray-500 mt-1">
+                                {importedInvoices} invoice{importedInvoices !== 1 ? 's' : ''} sent to finance as New (invoice pending). Upload each file from Edit Purchase.
                             </p>
                         </div>
                     )}

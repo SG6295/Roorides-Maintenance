@@ -21,6 +21,7 @@ export const MAINTENANCE_PAYMENT_STATUSES = ['Approved', 'Hold', 'Reject']
  */
 export const FINANCE_STATUSES = [
     'New',
+    'New (invoice pending)',
     'Hold',
     'Reject',
     'Accepted',
@@ -36,11 +37,31 @@ export const FINANCE_STATUSES = [
  */
 export const FINANCE_STATUS_MOVES = {
     'New':                         ['Hold', 'Reject', 'Accepted'],
-    'Hold':                        ['New', 'Reject', 'Accepted'],
+    'New (invoice pending)':       ['Hold', 'Reject'],
+    'Hold':                        ['New', 'New (invoice pending)', 'Reject', 'Accepted'],
     'Accepted':                    ['Hold', 'Reject', 'GST reconciled & closed', 'GST not applicable & closed'],
     'Reject':                      [],
     'GST reconciled & closed':     [],
     'GST not applicable & closed': [],
+}
+
+/**
+ * True for a purchase invoice whose file has not been uploaded yet (MAIN-129). Finance
+ * cannot accept it; uploading the file in Edit Purchase moves it to New.
+ */
+export const isInvoiceFilePending = invoice =>
+    !!invoice?.purchase_invoice_id && !invoice.purchase_invoice?.invoice_file_url
+
+/**
+ * The moves finance may make from this invoice's status. A purchase invoice waiting for
+ * its file can only go back to New (invoice pending), not New or Accepted; every other
+ * invoice never goes to it. Mirrors guard_outsource_invoice_status_owners.
+ */
+export function financeStatusMoves(invoice) {
+    const moves = FINANCE_STATUS_MOVES[invoice.finance_payment_status] ?? []
+    return isInvoiceFilePending(invoice)
+        ? moves.filter(m => m !== 'New' && m !== 'Accepted')
+        : moves.filter(m => m !== 'New (invoice pending)')
 }
 
 /**

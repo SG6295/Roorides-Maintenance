@@ -8,6 +8,8 @@ export function enrichInvoice(inv) {
         ...inv,
         // A cancelled multi-vehicle invoice (MAIN-112) stays listed but is owed nothing.
         cancelled: inv.batch_service?.status === 'Cancelled',
+        // A purchase invoice (MAIN-129) is a refurbishment when its lines came from scrap.
+        refurbishment: !!inv.purchase_invoice?.lines?.some(l => l.refurbishment?.length > 0),
         payable: toPaise(inv.approved_amount ?? 0) - toPaise(inv.advance_amount ?? 0),
         // Discount = Invoice value − Approved amount (MAIN-95).
         discount: toPaise(inv.invoice_value ?? 0) - toPaise(inv.approved_amount ?? 0),

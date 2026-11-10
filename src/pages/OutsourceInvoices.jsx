@@ -169,9 +169,11 @@ export default function OutsourceInvoices() {
                 </div>
 
                 {/* ── Summary tiles (from RPC) — counts by finance status (MAIN-118) ── */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
                     {[
                         ['New', summary?.newCount, 'text-gray-900'],
+                        // A purchase saved without its file (MAIN-129).
+                        ['Invoice pending', summary?.pendingCount, 'text-orange-600'],
                         ['Hold', summary?.holdCount, 'text-amber-600'],
                         ['Reject', summary?.rejectCount, 'text-red-600'],
                         ['Accepted', summary?.acceptedCount, 'text-blue-600'],
