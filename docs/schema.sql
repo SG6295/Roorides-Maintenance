@@ -1179,11 +1179,13 @@ CREATE FUNCTION public.advance_ledger_lines() RETURNS TABLE(person text, entry_a
          oi.invoice_no, jc.job_card_number, bs.batch_number,
          jsonb_build_object(
              'supplier', s.entity_name, 'supplier_id', s.id,
-             'approved', oi.approved_amount, 'to_supplier', oi.approved_amount - oi.advance_amount)
+             'approved', oi.approved_amount, 'to_supplier', oi.approved_amount - oi.advance_amount,
+             'purchase_invoice_id', oi.purchase_invoice_id)
   from   public.outsource_invoices oi
-  left join public.job_cards      jc on jc.id = oi.job_card_id
-  left join public.batch_services bs on bs.id = oi.batch_service_id
-  left join public.suppliers      s  on s.id  = coalesce(jc.supplier_id, bs.supplier_id)
+  left join public.job_cards         jc on jc.id = oi.job_card_id
+  left join public.batch_services    bs on bs.id = oi.batch_service_id
+  left join public.purchase_invoices pi on pi.id = oi.purchase_invoice_id
+  left join public.suppliers         s  on s.id  = coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id)
   where  oi.finance_payment_status in ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
     and  (bs.id is null or bs.status = 'Active')
     and  oi.advance_amount > 0
@@ -2836,7 +2838,7 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
     FROM  outsource_invoices     oi
     LEFT JOIN job_cards          jc ON jc.id = oi.job_card_id
     LEFT JOIN batch_services     bs ON bs.id = oi.batch_service_id
-    WHERE (bs.status = 'Active' OR jc.status = 'Completed')
+    WHERE (bs.status = 'Active' OR jc.status = 'Completed' OR oi.purchase_invoice_id IS NOT NULL)
       AND (p_maintenance_payment_status IS NULL OR oi.maintenance_payment_status = ANY(p_maintenance_payment_status))
       AND (p_finance_payment_status     IS NULL OR oi.finance_payment_status     = ANY(p_finance_payment_status))
       AND (p_paid_by                    IS NULL OR oi.paid_by                    = ANY(p_paid_by))
@@ -2879,10 +2881,11 @@ BEGIN
         GROUP  BY o.supplier_id
     ),
     pending AS (
-        SELECT coalesce(jc.supplier_id, bs.supplier_id) AS sid, count(*) AS n
+        SELECT coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id) AS sid, count(*) AS n
         FROM   public.outsource_invoices oi
-        LEFT JOIN public.job_cards      jc ON jc.id = oi.job_card_id
-        LEFT JOIN public.batch_services bs ON bs.id = oi.batch_service_id
+        LEFT JOIN public.job_cards         jc ON jc.id = oi.job_card_id
+        LEFT JOIN public.batch_services    bs ON bs.id = oi.batch_service_id
+        LEFT JOIN public.purchase_invoices pi ON pi.id = oi.purchase_invoice_id
         WHERE  oi.submitted_on IS NOT NULL
           AND  oi.finance_payment_status IN ('New', 'Hold')
           AND  (bs.id IS NULL OR bs.status = 'Active')
@@ -3164,6 +3167,31 @@ $$;
 ALTER FUNCTION public.guard_outsource_invoice_status_owners() OWNER TO postgres;
 
 --
+-- Name: guard_refurbishment_invoice_header(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_refurbishment_invoice_header() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM   public.purchase_invoice_items pii
+        JOIN   public.scrap_refurbishments sr ON sr.purchase_invoice_item_id = pii.id
+        WHERE  pii.invoice_id = NEW.id
+    ) THEN
+        RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so only its notes can be changed.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_refurbishment_invoice_header() OWNER TO postgres;
+
+--
 -- Name: guard_refurbishment_invoice_line(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3191,31 +3219,6 @@ $$;
 
 
 ALTER FUNCTION public.guard_refurbishment_invoice_line() OWNER TO postgres;
-
---
--- Name: guard_refurbishment_invoice_location(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.guard_refurbishment_invoice_location() RETURNS trigger
-    LANGUAGE plpgsql
-    SET search_path TO 'public'
-    AS $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM   public.purchase_invoice_items pii
-        JOIN   public.scrap_refurbishments sr ON sr.purchase_invoice_item_id = pii.id
-        WHERE  pii.invoice_id = NEW.id
-    ) THEN
-        RAISE EXCEPTION 'This invoice has scrap refurbishment lines, so its workshop cannot be changed.';
-    END IF;
-
-    RETURN NEW;
-END;
-$$;
-
-
-ALTER FUNCTION public.guard_refurbishment_invoice_location() OWNER TO postgres;
 
 --
 -- Name: has_labour_on_job_card(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3264,9 +3267,10 @@ CREATE TABLE public.outsource_invoices (
     batch_service_id uuid,
     submitted_on date,
     accepted_at timestamp with time zone,
+    purchase_invoice_id uuid,
     CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
     CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
-    CONSTRAINT outsource_invoices_one_owner_check CHECK (((job_card_id IS NULL) <> (batch_service_id IS NULL))),
+    CONSTRAINT outsource_invoices_one_owner_check CHECK ((num_nonnulls(job_card_id, batch_service_id, purchase_invoice_id) = 1)),
     CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'NVS Maintenance account'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
     CONSTRAINT outsource_invoices_reject_reason_check CHECK (((finance_payment_status <> 'Reject'::text) OR (NULLIF(btrim(finance_remark), ''::text) IS NOT NULL)))
 );
@@ -3762,6 +3766,14 @@ CREATE FUNCTION public.record_refurbishment(p_invoice jsonb, p_lines jsonb) RETU
     AS $$
 DECLARE
     v_location    uuid := NULLIF(p_invoice->>'location_id', '')::uuid;
+    v_supplier_id uuid := NULLIF(p_invoice->>'supplier_id', '')::uuid;
+    v_supplier    text;
+    v_inv_date    date := NULLIF(p_invoice->>'invoice_date', '')::date;
+    v_inv_value   numeric := NULLIF(p_invoice->>'invoice_value', '')::numeric;
+    v_approved    numeric := NULLIF(p_invoice->>'approved_amount', '')::numeric;
+    v_advance     numeric := NULLIF(p_invoice->>'advance_amount', '')::numeric;
+    v_payby       date := NULLIF(p_invoice->>'payby_date', '')::date;
+    v_total       numeric;
     v_invoice_id  uuid;
     v_line        jsonb;
     v_scrap_id    uuid;
@@ -3787,12 +3799,47 @@ BEGIN
     END IF;
 
     IF NULLIF(btrim(COALESCE(p_invoice->>'invoice_number', '')), '') IS NULL
-       OR NULLIF(btrim(COALESCE(p_invoice->>'supplier_name', '')), '') IS NULL
-       OR NULLIF(p_invoice->>'invoice_date', '') IS NULL
+       OR v_supplier_id IS NULL
+       OR v_inv_date IS NULL
        OR v_location IS NULL THEN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_INCOMPLETE',
             'error_message', 'Supplier, invoice number, invoice date and workshop are required.',
+            'details',       null
+        )::text;
+    END IF;
+
+    SELECT entity_name INTO v_supplier
+    FROM   public.suppliers
+    WHERE  id = v_supplier_id AND status = 'approved';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'SUPPLIER_NOT_APPROVED',
+            'error_message', 'Choose an approved supplier.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF NULLIF(btrim(COALESCE(p_invoice->>'invoice_file_url', '')), '') IS NULL THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_FILE_REQUIRED',
+            'error_message', 'Attach the invoice file.',
+            'details',       null
+        )::text;
+    END IF;
+
+    -- The same rules as the invoice form on a job card or multi-vehicle invoice.
+    IF v_inv_date > (now() AT TIME ZONE 'Asia/Kolkata')::date
+       OR NULLIF(p_invoice->>'paid_by', '') IS NULL
+       OR NULLIF(p_invoice->>'maintenance_payment_status', '') IS NULL
+       OR v_inv_value IS NULL OR v_inv_value <= 0
+       OR v_approved  IS NULL OR v_approved  < 0 OR v_approved > v_inv_value
+       OR v_advance   IS NULL OR v_advance   < 0 OR v_advance  > v_approved
+       OR v_payby     IS NULL OR v_payby < v_inv_date THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVOICE_DETAILS_INVALID',
+            'error_message', 'Check the invoice details.',
             'details',       null
         )::text;
     END IF;
@@ -3814,7 +3861,10 @@ BEGIN
     ORDER   BY id
     FOR UPDATE;
 
-    v_invoice_id := public.save_purchase_invoice(NULL, p_invoice, '[]'::jsonb);
+    v_invoice_id := public.save_purchase_invoice(
+        NULL, p_invoice || jsonb_build_object('supplier_name', v_supplier), '[]'::jsonb);
+
+    UPDATE public.purchase_invoices SET supplier_id = v_supplier_id WHERE id = v_invoice_id;
 
     FOR v_line IN SELECT * FROM jsonb_array_elements(p_lines)
     LOOP
@@ -3970,13 +4020,31 @@ BEGIN
         );
     END LOOP;
 
-    UPDATE public.purchase_invoices
-    SET    total_amount = (
-               SELECT COALESCE(sum(line_total), 0)
-               FROM   public.purchase_invoice_items
-               WHERE  invoice_id = v_invoice_id
-           )
-    WHERE  id = v_invoice_id;
+    SELECT COALESCE(sum(line_total), 0) INTO v_total
+    FROM   public.purchase_invoice_items
+    WHERE  invoice_id = v_invoice_id;
+
+    -- Compared in numeric, as on a multi-vehicle invoice.
+    IF v_total <> v_approved THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'AMOUNT_MISMATCH',
+            'error_message', format('The parts add up to ₹%s; the approved amount is ₹%s.',
+                                    to_char(v_total, 'FM999999999990.00'),
+                                    to_char(v_approved, 'FM999999999990.00')),
+            'details',       null
+        )::text;
+    END IF;
+
+    UPDATE public.purchase_invoices SET total_amount = v_total WHERE id = v_invoice_id;
+
+    -- The insert trigger submits it to finance.
+    INSERT INTO public.outsource_invoices (
+        purchase_invoice_id, date_of_activity, invoice_no, paid_by, invoice_value,
+        approved_amount, advance_amount, maintenance_payment_status, payby_date, created_by
+    ) VALUES (
+        v_invoice_id, v_inv_date, btrim(p_invoice->>'invoice_number'), p_invoice->>'paid_by', v_inv_value,
+        v_approved, v_advance, p_invoice->>'maintenance_payment_status', v_payby, auth.uid()
+    );
 
     RETURN v_invoice_id;
 END;
@@ -5483,6 +5551,7 @@ CREATE FUNCTION public.submit_invoice_on_insert() RETURNS trigger
     AS $$
 BEGIN
     IF NEW.batch_service_id IS NOT NULL
+       OR NEW.purchase_invoice_id IS NOT NULL
        OR EXISTS (SELECT 1 FROM public.job_cards WHERE id = NEW.job_card_id AND status = 'Completed') THEN
         PERFORM public.submit_outsource_invoice_to_finance(NEW.id);
     END IF;
@@ -5647,14 +5716,15 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
     AS $$
   with inv as (
       select oi.*,
-             coalesce(jc.supplier_id, bs.supplier_id)       as sup_id,
+             coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id) as sup_id,
              public.invoice_submitted_day(oi)               as submitted_day,
              coalesce(oi.accepted_at, oi.updated_at)        as entered_at,
              oi.paid_by in ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN') as by_person,
              jc.job_card_number, bs.batch_number
       from   public.outsource_invoices oi
-      left join public.job_cards      jc on jc.id = oi.job_card_id
-      left join public.batch_services bs on bs.id = oi.batch_service_id
+      left join public.job_cards         jc on jc.id = oi.job_card_id
+      left join public.batch_services    bs on bs.id = oi.batch_service_id
+      left join public.purchase_invoices pi on pi.id = oi.purchase_invoice_id
       where  oi.finance_payment_status in ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
         and  (bs.id is null or bs.status = 'Active')
   )
@@ -5668,7 +5738,8 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
              'paid_by',         inv.paid_by,
              'advance',         inv.advance_amount,
              'to_supplier',     inv.approved_amount - inv.advance_amount,
-             'advance_by_person', inv.by_person)
+             'advance_by_person', inv.by_person,
+             'purchase_invoice_id', inv.purchase_invoice_id)
   from   inv join public.suppliers s on s.id = inv.sup_id
 
   union all
@@ -5676,7 +5747,8 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
   select inv.sup_id, inv.entered_at, 2, inv.id, 'advance',
          -inv.advance_amount, true, null,
          inv.id, inv.invoice_no, inv.job_card_number, inv.batch_number,
-         jsonb_build_object('paid_by', inv.paid_by, 'advance_by_person', inv.by_person)
+         jsonb_build_object('paid_by', inv.paid_by, 'advance_by_person', inv.by_person,
+                            'purchase_invoice_id', inv.purchase_invoice_id)
   from   inv
   where  inv.advance_amount > 0
 
@@ -10004,7 +10076,8 @@ CREATE TABLE public.purchase_invoices (
     created_by uuid,
     created_at timestamp without time zone DEFAULT now(),
     invoice_file_url text,
-    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL
+    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
+    supplier_id uuid
 );
 
 
@@ -10015,6 +10088,13 @@ ALTER TABLE public.purchase_invoices OWNER TO postgres;
 --
 
 COMMENT ON COLUMN public.purchase_invoices.location_id IS 'Workshop all line items on this invoice are inwarded to. One invoice cannot span two locations.';
+
+
+--
+-- Name: COLUMN purchase_invoices.supplier_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.purchase_invoices.supplier_id IS 'The supplier, where one was chosen from the list. supplier_name holds its name at the time, so Purchase History reads the same either way.';
 
 
 --
@@ -11515,6 +11595,14 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
+-- Name: outsource_invoices outsource_invoices_purchase_invoice_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.outsource_invoices
+    ADD CONSTRAINT outsource_invoices_purchase_invoice_id_key UNIQUE (purchase_invoice_id);
+
+
+--
 -- Name: part_stock part_stock_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -12596,6 +12684,13 @@ CREATE INDEX idx_job_cards_status ON public.job_cards USING btree (status);
 
 
 --
+-- Name: idx_purchase_invoices_supplier; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_purchase_invoices_supplier ON public.purchase_invoices USING btree (supplier_id);
+
+
+--
 -- Name: idx_scrap_disposal_disposal_date; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -13296,17 +13391,17 @@ CREATE TRIGGER trigger_guard_job_card_type_change BEFORE UPDATE OF type ON publi
 
 
 --
+-- Name: purchase_invoices trigger_guard_refurbishment_invoice_header; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_refurbishment_invoice_header BEFORE UPDATE ON public.purchase_invoices FOR EACH ROW WHEN (((((((old.location_id IS DISTINCT FROM new.location_id) OR (old.supplier_id IS DISTINCT FROM new.supplier_id)) OR (old.supplier_name IS DISTINCT FROM new.supplier_name)) OR (old.invoice_number IS DISTINCT FROM new.invoice_number)) OR (old.invoice_date IS DISTINCT FROM new.invoice_date)) OR (old.invoice_file_url IS DISTINCT FROM new.invoice_file_url))) EXECUTE FUNCTION public.guard_refurbishment_invoice_header();
+
+
+--
 -- Name: purchase_invoice_items trigger_guard_refurbishment_invoice_line; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
 CREATE TRIGGER trigger_guard_refurbishment_invoice_line BEFORE DELETE OR UPDATE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.guard_refurbishment_invoice_line();
-
-
---
--- Name: purchase_invoices trigger_guard_refurbishment_invoice_location; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER trigger_guard_refurbishment_invoice_location BEFORE UPDATE OF location_id ON public.purchase_invoices FOR EACH ROW WHEN ((old.location_id IS DISTINCT FROM new.location_id)) EXECUTE FUNCTION public.guard_refurbishment_invoice_location();
 
 
 --
@@ -13770,6 +13865,14 @@ ALTER TABLE ONLY public.outsource_invoices
 
 
 --
+-- Name: outsource_invoices outsource_invoices_purchase_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.outsource_invoices
+    ADD CONSTRAINT outsource_invoices_purchase_invoice_id_fkey FOREIGN KEY (purchase_invoice_id) REFERENCES public.purchase_invoices(id);
+
+
+--
 -- Name: part_stock part_stock_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13815,6 +13918,14 @@ ALTER TABLE ONLY public.purchase_invoices
 
 ALTER TABLE ONLY public.purchase_invoices
     ADD CONSTRAINT purchase_invoices_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
+
+
+--
+-- Name: purchase_invoices purchase_invoices_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.purchase_invoices
+    ADD CONSTRAINT purchase_invoices_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id);
 
 
 --
@@ -16703,21 +16814,21 @@ GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO service_
 
 
 --
+-- Name: FUNCTION guard_refurbishment_invoice_header(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_header() TO anon;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_header() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_header() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_refurbishment_invoice_line(); Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO anon;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO service_role;
-
-
---
--- Name: FUNCTION guard_refurbishment_invoice_location(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_location() TO anon;
-GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_location() TO authenticated;
-GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_location() TO service_role;
 
 
 --

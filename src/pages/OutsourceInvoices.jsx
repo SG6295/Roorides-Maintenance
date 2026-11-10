@@ -71,7 +71,8 @@ export default function OutsourceInvoices() {
                 String(inv.job_card?.job_card_number ?? '').toLowerCase().includes(q) ||
                 inv.job_card?.vehicle_number?.toLowerCase().includes(q) ||
                 inv.batch_service?.vehicles?.some(v => v.vehicle_number.toLowerCase().includes(q)) ||
-                (inv.batch_service && formatBatchNumber(inv.batch_service.batch_number).toLowerCase().includes(q))
+                (inv.batch_service && formatBatchNumber(inv.batch_service.batch_number).toLowerCase().includes(q)) ||
+                (inv.purchase_invoice && 'refurbishment'.includes(q))
             )
         })
 

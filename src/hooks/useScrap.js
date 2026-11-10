@@ -379,6 +379,10 @@ export function useRecordRefurbishment() {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
+            // The invoice goes straight to finance.
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoices'] })
+            queryClient.invalidateQueries({ queryKey: ['outsource_invoice_summary'] })
+            queryClient.invalidateQueries({ queryKey: ['supplier_ledger'] })
         },
     })
 }

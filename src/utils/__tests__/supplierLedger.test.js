@@ -79,6 +79,10 @@ describe('invoiceOwner', () => {
         expect(invoiceOwner({ batch_number: 4 }).label).toBe('MVI-4')
         expect(invoiceOwner({})).toBeNull()
     })
+
+    it('names a refurbishment by its purchase invoice', () => {
+        expect(invoiceOwner({ detail: { purchase_invoice_id: 'pi1' } })).toEqual({ label: 'Refurbishment', purchaseInvoiceId: 'pi1' })
+    })
 })
 
 describe('balanceAsOf', () => {

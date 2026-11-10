@@ -15,6 +15,7 @@ import StockAuditTab from '../components/inventory/audit/StockAuditTab'
 import {
     useParts,
     usePurchaseInvoices,
+    usePurchaseInvoice,
     usePurchaseInvoiceItems,
     usePartConsumption,
     usePartStock,
@@ -550,6 +551,24 @@ function PurchaseHistory() {
     const [editingInvoice, setEditingInvoice] = useState(null)
     const [exporting, setExporting] = useState(false)
 
+    // ?invoice=<id> opens that invoice — Outsource Invoices and the supplier ledger link
+    // to a refurbishment's purchase invoice this way (MAIN-123).
+    const [searchParams, setSearchParams] = useSearchParams()
+    const linkedId = searchParams.get('invoice')
+    const { data: linkedInvoice } = usePurchaseInvoice(linkedId)
+    const openInvoice = editingInvoice ?? linkedInvoice ?? null
+
+    function closeInvoice() {
+        setEditingInvoice(null)
+        if (linkedId) {
+            setSearchParams(prev => {
+                const next = new URLSearchParams(prev)
+                next.delete('invoice')
+                return next
+            }, { replace: true })
+        }
+    }
+
     async function handleExport() {
         if (invoices.length === 0) return
         setExporting(true)
@@ -673,10 +692,11 @@ function PurchaseHistory() {
                 </div>
             )}
 
-            {editingInvoice && (
+            {openInvoice && (
                 <EditPurchaseModal
-                    invoice={editingInvoice}
-                    onClose={() => setEditingInvoice(null)}
+                    key={openInvoice.id}
+                    invoice={openInvoice}
+                    onClose={closeInvoice}
                 />
             )}
         </div>

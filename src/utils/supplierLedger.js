@@ -23,8 +23,9 @@ export const isVoided = line => line.kind === 'cancelled' || line.kind === 'reve
 
 const rupees = v => `₹${Number(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-/** The job card or multi-vehicle invoice a line belongs to. */
+/** The job card, multi-vehicle invoice or refurbishment purchase a line belongs to. */
 export function invoiceOwner(line) {
+    if (line.detail?.purchase_invoice_id) return { label: 'Refurbishment', purchaseInvoiceId: line.detail.purchase_invoice_id }
     if (line.job_card_number != null) return { label: `Job card #${line.job_card_number}`, jobCardNumber: line.job_card_number }
     if (line.batch_number != null) return { label: formatBatchNumber(line.batch_number), batchNumber: line.batch_number }
     return null

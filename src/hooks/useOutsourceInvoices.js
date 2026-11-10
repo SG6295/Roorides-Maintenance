@@ -61,11 +61,12 @@ const PAGE_SIZE = 50
  *
  * Returns { invoices: [], totalCount: number | null }.
  * totalCount is null when page=null (search mode — client handles count).
- * Returns invoices of completed job cards and every multi-vehicle invoice (MAIN-99) —
- * a batch is complete by construction, its invoice being mandatory at save. The
- * job_card embed is filtered to Completed, so it comes back null for an unfinished card,
- * and the or() keeps a row only if it is a batch or its job card survived that filter.
- * (PostgREST cannot put job_card.status itself inside an or().)
+ * Returns invoices of completed job cards, every multi-vehicle invoice (MAIN-99) and
+ * every refurbishment's purchase invoice (MAIN-123) — a batch or refurbishment is
+ * complete by construction, its invoice being mandatory at save. The job_card embed is
+ * filtered to Completed, so it comes back null for an unfinished card, and the or()
+ * keeps a row only if it is a batch, a purchase invoice the reader can see, or its job
+ * card survived that filter. (PostgREST cannot put job_card.status itself inside an or().)
  */
 export function useOutsourceInvoices(filters = {}) {
     return useQuery({
@@ -88,11 +89,15 @@ export function useOutsourceInvoices(filters = {}) {
                             id, vehicle_number, site, work_type, work_type_other, rate, quantity, amount,
                             linked_job_card:job_cards!job_card_id(job_card_number)
                         )
+                    ),
+                    purchase_invoice:purchase_invoices!purchase_invoice_id(
+                        id, invoice_number, invoice_file_url,
+                        supplier:suppliers!supplier_id(id, entity_name)
                     )`,
                     isPaginated ? { count: 'exact' } : undefined,
                 )
                 .eq('job_card.status', 'Completed')
-                .or('batch_service_id.not.is.null,job_card.not.is.null')
+                .or('batch_service_id.not.is.null,purchase_invoice.not.is.null,job_card.not.is.null')
                 // Newest submitted first: finance's review queue (MAIN-119).
                 .order('submitted_on', { ascending: false, nullsFirst: false })
                 .order('created_at', { ascending: false })

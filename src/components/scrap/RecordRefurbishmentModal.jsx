@@ -4,11 +4,17 @@ import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import NewPartInlineForm from '../inventory/NewPartInlineForm'
+import QuickAddSupplierModal from '../suppliers/QuickAddSupplierModal'
+import InvoiceDetailsFields from '../outsource-invoices/InvoiceDetailsFields'
+import { EMPTY_INVOICE_FORM, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
 import { useParts } from '../../hooks/useInventory'
+import { useApprovedSuppliers } from '../../hooks/useSuppliers'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import { useScrapInventory, useRecordRefurbishment, scrapSourceLabel } from '../../hooks/useScrap'
 import { lineTotal, invoiceTotal } from '../../lib/invoiceDiscount'
+import { todayLocal } from '../../utils/datetime'
 import {
+    approvedAmountError,
     refurbishedName,
     refurbishmentLinesError,
     toRefurbishmentLine,
@@ -16,6 +22,7 @@ import {
 
 const NOT_FOUND_SENTINEL = '__NOT_FOUND__'
 const NEW_PART_SENTINEL = '__NEW__'
+const QUICK_ADD_SENTINEL = '__QUICK_ADD__'
 const GST_OPTIONS = [
     { label: 'None', value: '0' },
     { label: '5%', value: '5' },
@@ -44,20 +51,29 @@ const emptyLine = key => ({
 
 export default function RecordRefurbishmentModal({ onClose }) {
     const { data: parts = [] } = useParts()
+    const { data: suppliers = [] } = useApprovedSuppliers()
     const { data: locations = [] } = useWorkshopLocations()
     const record = useRecordRefurbishment()
+    const todayStr = todayLocal()
 
     const nextKey = useRef(1)
     const [invoice, setInvoice] = useState({
-        invoice_number: '',
-        supplier_name: '',
-        invoice_date: '',
+        supplier_id: '',
         notes: '',
         location_id: '',
     })
+    // The finance details, as on a job card or multi-vehicle invoice; the date and
+    // number are the purchase invoice's own.
+    const [invoiceForm, setInvoiceForm] = useState(EMPTY_INVOICE_FORM)
+    const [showErrors, setShowErrors] = useState(false)
+    // The name typed before choosing "+ Add supplier", or null while Quick Add is closed.
+    const [quickAddName, setQuickAddName] = useState(null)
     const [invoiceFile, setInvoiceFile] = useState(null)
     const [lines, setLines] = useState([emptyLine(0)])
     const [error, setError] = useState(null)
+
+    const invoiceErrors = validateInvoiceForm(invoiceForm, todayStr)
+    const amountProblem = approvedAmountError(lines, invoiceForm.approvedAmount)
 
     // With a single workshop there is nothing to choose, so pick it for them.
     const locationId = invoice.location_id || (locations.length === 1 ? locations[0].id : '')
@@ -95,6 +111,14 @@ export default function RecordRefurbishmentModal({ onClose }) {
         }
     }
 
+    function chooseSupplier(value, typed) {
+        if (value === QUICK_ADD_SENTINEL) {
+            setQuickAddName(typed ?? '')
+        } else {
+            setInvoice(p => ({ ...p, supplier_id: value }))
+        }
+    }
+
     function addLine() {
         const key = nextKey.current++
         setLines(prev => [...prev, emptyLine(key)])
@@ -103,23 +127,40 @@ export default function RecordRefurbishmentModal({ onClose }) {
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
+        setShowErrors(true)
 
+        if (!invoice.supplier_id) {
+            setError('Choose the supplier, or add them.')
+            return
+        }
         if (!locationId) {
             setError('Choose which workshop these parts are being inwarded to.')
             return
         }
-        const problem = refurbishmentLinesError(lines, scrapById)
+        if (!invoiceFile?.url) {
+            setError('Attach the invoice file.')
+            return
+        }
+        if (Object.keys(invoiceErrors).length > 0) {
+            setError('Check the invoice details.')
+            return
+        }
+        const problem = refurbishmentLinesError(lines, scrapById) || amountProblem
         if (problem) {
             setError(problem)
             return
         }
 
+        const { invoice_no, date_of_activity, ...details } = invoiceFormToRow(invoiceForm)
         try {
             await record.mutateAsync({
                 invoice: {
                     ...invoice,
+                    ...details,
+                    invoice_number: invoice_no,
+                    invoice_date: date_of_activity,
                     location_id: locationId,
-                    invoice_file_url: invoiceFile?.url || null,
+                    invoice_file_url: invoiceFile.url,
                 },
                 lines: lines.map(toRefurbishmentLine),
             })
@@ -151,38 +192,16 @@ export default function RecordRefurbishmentModal({ onClose }) {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Vendor <span className="text-red-500">*</span>
+                                        Supplier <span className="text-red-500">*</span>
                                     </label>
-                                    <input
-                                        required
-                                        type="text"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                        value={invoice.supplier_name}
-                                        onChange={e => setInvoice(p => ({ ...p, supplier_name: e.target.value }))}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Invoice Number <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        required
-                                        type="text"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                        value={invoice.invoice_number}
-                                        onChange={e => setInvoice(p => ({ ...p, invoice_number: e.target.value }))}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Invoice Date <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        required
-                                        type="date"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                        value={invoice.invoice_date}
-                                        onChange={e => setInvoice(p => ({ ...p, invoice_date: e.target.value }))}
+                                    <SearchableSelect
+                                        value={invoice.supplier_id}
+                                        onChange={chooseSupplier}
+                                        options={suppliers.map(sp => ({ value: sp.id, label: sp.entity_name }))}
+                                        placeholder="Search suppliers…"
+                                        showAllOnFocus={true}
+                                        pinnedOption={{ value: QUICK_ADD_SENTINEL, label: '+ Add supplier…' }}
+                                        error={showErrors && !invoice.supplier_id ? { message: 'Required' } : null}
                                     />
                                 </div>
                                 <div>
@@ -217,8 +236,28 @@ export default function RecordRefurbishmentModal({ onClose }) {
                         </div>
 
                         <div>
-                            <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
+                            <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details for Finance</h3>
+                            <InvoiceDetailsFields
+                                form={invoiceForm}
+                                setForm={setInvoiceForm}
+                                errors={invoiceErrors}
+                                showErrors={showErrors}
+                                todayStr={todayStr}
+                                dateLabel="Invoice Date"
+                            />
+                            <p className="text-xs text-gray-400 mt-2">
+                                Goes to finance in Outsource Invoices as soon as it is saved. The parts must add up to the Approved Amount.
+                            </p>
+                        </div>
+
+                        <div>
+                            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                                Invoice Document <span className="text-red-500">*</span>
+                            </h3>
                             <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />
+                            {showErrors && !invoiceFile?.url && (
+                                <p className="text-xs text-red-600 mt-1">Required</p>
+                            )}
                         </div>
 
                         <div>
@@ -400,8 +439,13 @@ export default function RecordRefurbishmentModal({ onClose }) {
                     </div>
 
                     <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50 rounded-b-xl">
-                        <div className="text-sm font-semibold text-gray-700">
-                            Invoice Total: <span className="text-gray-900">{invoiceTotal(lines).toFixed(2)}</span>
+                        <div className="text-sm">
+                            <span className="font-semibold text-gray-700">
+                                Parts Total: <span className="text-gray-900">{invoiceTotal(lines).toFixed(2)}</span>
+                            </span>
+                            {amountProblem && (
+                                <p className="text-xs text-red-600 mt-0.5">{amountProblem}</p>
+                            )}
                         </div>
                         <div className="flex gap-3">
                             <button
@@ -422,6 +466,15 @@ export default function RecordRefurbishmentModal({ onClose }) {
                     </div>
                 </form>
             </div>
+
+            {quickAddName !== null && (
+                <QuickAddSupplierModal
+                    isOpen
+                    initialName={quickAddName}
+                    onClose={() => setQuickAddName(null)}
+                    onSuccess={supplier => setInvoice(p => ({ ...p, supplier_id: supplier.id }))}
+                />
+            )}
         </div>
     )
 }

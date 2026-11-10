@@ -646,6 +646,7 @@ export type Database = {
           maintenance_payment_status: string | null
           paid_by: string | null
           payby_date: string | null
+          purchase_invoice_id: string | null
           submitted_on: string | null
           updated_at: string
         }
@@ -666,6 +667,7 @@ export type Database = {
           maintenance_payment_status?: string | null
           paid_by?: string | null
           payby_date?: string | null
+          purchase_invoice_id?: string | null
           submitted_on?: string | null
           updated_at?: string
         }
@@ -686,6 +688,7 @@ export type Database = {
           maintenance_payment_status?: string | null
           paid_by?: string | null
           payby_date?: string | null
+          purchase_invoice_id?: string | null
           submitted_on?: string | null
           updated_at?: string
         }
@@ -709,6 +712,13 @@ export type Database = {
             columns: ["job_card_id"]
             isOneToOne: true
             referencedRelation: "job_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "outsource_invoices_purchase_invoice_id_fkey"
+            columns: ["purchase_invoice_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_invoices"
             referencedColumns: ["id"]
           },
         ]
@@ -870,6 +880,7 @@ export type Database = {
           invoice_number: string
           location_id: string
           notes: string | null
+          supplier_id: string | null
           supplier_name: string
           total_amount: number | null
         }
@@ -882,6 +893,7 @@ export type Database = {
           invoice_number: string
           location_id?: string
           notes?: string | null
+          supplier_id?: string | null
           supplier_name: string
           total_amount?: number | null
         }
@@ -894,6 +906,7 @@ export type Database = {
           invoice_number?: string
           location_id?: string
           notes?: string | null
+          supplier_id?: string | null
           supplier_name?: string
           total_amount?: number | null
         }
@@ -910,6 +923,13 @@ export type Database = {
             columns: ["location_id"]
             isOneToOne: false
             referencedRelation: "workshop_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_invoices_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
             referencedColumns: ["id"]
           },
         ]
