@@ -46,12 +46,13 @@ function wrapper({ children }) {
 
 const INVOICE_ID = 'inv-1'
 const LOCATION_ID = 'a1e1d4c0-0000-4000-8000-000000000002'
+const SUPPLIER_ID = 'a1e1d4c0-0000-4000-8000-000000000003'
 
 const baseArgs = {
     invoiceId: INVOICE_ID,
     invoiceData: {
         invoice_number: 'INV-001',
-        supplier_name: 'AutoParts Ltd',
+        supplier_id: SUPPLIER_ID,
         invoice_date: '2026-09-01',
         notes: '',
         location_id: LOCATION_ID,
@@ -85,7 +86,7 @@ describe('useUpdatePurchaseInvoice — MAIN-72', () => {
 
         expect(saveCall().args.p_invoice).toMatchObject({
             invoice_number: 'INV-001',
-            supplier_name: 'AutoParts Ltd',
+            supplier_id: SUPPLIER_ID,
             invoice_date: '2026-09-01',
         })
     })
@@ -141,15 +142,30 @@ describe('useRecordPurchase — MAIN-97', () => {
         const { result } = renderHook(() => useRecordPurchase(), { wrapper })
 
         const created = await result.current.mutateAsync({
-            invoice: { invoice_number: 'INV-002', supplier_name: 'AutoParts Ltd', invoice_date: '2026-09-02', notes: '', location_id: LOCATION_ID },
+            invoice: { invoice_number: 'INV-002', supplier_id: SUPPLIER_ID, invoice_date: '2026-09-02', notes: '', location_id: LOCATION_ID },
             lineItems: [{ part_id: 'part-1', quantity: 3, unit_price: 10, gst_rate: 0, discount_amount: 0 }],
         })
 
         expect(rpcCalls).toHaveLength(1)
         expect(tableCalls).toHaveLength(0)
         expect(saveCall().args.p_invoice_id).toBeNull()
-        expect(saveCall().args.p_invoice).toMatchObject({ invoice_number: 'INV-002', location_id: LOCATION_ID })
+        expect(saveCall().args.p_invoice).toMatchObject({ invoice_number: 'INV-002', supplier_id: SUPPLIER_ID, location_id: LOCATION_ID })
         expect(saveCall().args.p_items[0]).not.toHaveProperty('id')
         expect(created).toEqual({ id: 'new-inv' })
+    })
+})
+
+describe('supplier from the list — MAIN-128', () => {
+    it('sends the supplier id and leaves the name to the database', async () => {
+        await runUpdate()
+
+        expect(saveCall().args.p_invoice.supplier_id).toBe(SUPPLIER_ID)
+        expect(saveCall().args.p_invoice).not.toHaveProperty('supplier_name')
+    })
+
+    it('sends no supplier for an old typed-name invoice left unlinked, so its name is kept', async () => {
+        await runUpdate({ ...baseArgs, invoiceData: { ...baseArgs.invoiceData, supplier_id: '' } })
+
+        expect(saveCall().args.p_invoice.supplier_id).toBeNull()
     })
 })

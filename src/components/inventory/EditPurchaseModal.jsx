@@ -8,6 +8,7 @@ import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import InvoiceFileLink from '../outsource-invoices/InvoiceFileLink'
+import SupplierPicker from '../suppliers/SupplierPicker'
 import {
     round2,
     lineSubtotal,
@@ -43,7 +44,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
     const [invoiceData, setInvoiceData] = useState({
         invoice_number: invoice.invoice_number,
-        supplier_name: invoice.supplier_name,
+        supplier_id: invoice.supplier_id || '',
         invoice_date: invoice.invoice_date,
         notes: invoice.notes || '',
         location_id: invoice.location_id,
@@ -248,16 +249,21 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Supplier Name <span className="text-red-500">*</span>
+                                            Supplier {invoice.supplier_id && <span className="text-red-500">*</span>}
                                         </label>
-                                        <input
-                                            required
-                                            type="text"
-                                            className={headerInputClass}
+                                        <SupplierPicker
+                                            value={invoiceData.supplier_id}
+                                            onChange={id => setInvoiceData(p => ({ ...p, supplier_id: id }))}
+                                            current={invoice.supplier_id ? { id: invoice.supplier_id, name: invoice.supplier_name } : null}
                                             disabled={hasLockedLines}
-                                            value={invoiceData.supplier_name}
-                                            onChange={e => setInvoiceData(p => ({ ...p, supplier_name: e.target.value }))}
                                         />
+                                        {/* Recorded before suppliers came from the list (MAIN-128): the typed
+                                            name stays as it is unless a supplier is chosen. */}
+                                        {!invoice.supplier_id && !invoiceData.supplier_id && (
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Recorded as "{invoice.supplier_name}", not linked to a supplier. You can leave it or choose one.
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 mb-1">

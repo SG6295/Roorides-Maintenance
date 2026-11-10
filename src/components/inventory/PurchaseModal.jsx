@@ -7,6 +7,7 @@ import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import NewPartInlineForm from './NewPartInlineForm'
+import SupplierPicker from '../suppliers/SupplierPicker'
 import {
     lineSubtotal,
     lineDiscount,
@@ -42,7 +43,7 @@ export default function PurchaseModal({ onClose }) {
 
     const [invoice, setInvoice] = useState({
         invoice_number: '',
-        supplier_name: '',
+        supplier_id: '',
         invoice_date: '',
         notes: '',
         location_id: '',
@@ -100,6 +101,10 @@ export default function PurchaseModal({ onClose }) {
         e.preventDefault()
         setError(null)
 
+        if (!invoice.supplier_id) {
+            setError('Choose the supplier, or add them.')
+            return
+        }
         if (!locationId) {
             setError('Choose which workshop this invoice is being inwarded to.')
             return
@@ -167,15 +172,11 @@ export default function PurchaseModal({ onClose }) {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Supplier Name <span className="text-red-500">*</span>
+                                        Supplier <span className="text-red-500">*</span>
                                     </label>
-                                    <input
-                                        required
-                                        type="text"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                        value={invoice.supplier_name}
-                                        onChange={e => setInvoice(p => ({ ...p, supplier_name: e.target.value }))}
-                                        placeholder="e.g. AutoParts Ltd"
+                                    <SupplierPicker
+                                        value={invoice.supplier_id}
+                                        onChange={id => setInvoice(p => ({ ...p, supplier_id: id }))}
                                     />
                                 </div>
                                 <div>
