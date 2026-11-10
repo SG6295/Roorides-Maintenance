@@ -2,30 +2,65 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // Keep this in sync when a module adds OR drops a table. It has drifted twice: eight
 // tables behind (the whole scrap module plus outsource invoices), and later a phantom
-// `sla_rules` left over after MAIN-47 dropped it. A failed table read is swallowed as
-// [], so both directions fail quietly — and the missing direction costs real data.
+// `sla_rules` left over after MAIN-47 dropped it. A table missing from here is still
+// left out quietly, and that direction costs real data; a phantom now fails the run.
 // MAIN-33 would replace this with dynamic discovery; until it lands, this list is manual.
 const TABLES = [
   'sites', 'users', 'user_sites', 'user_settings', 'user_audit_logs',
   'vehicles', 'vehicle_sites',
-  'tickets', 'issues', 'job_cards', 'issue_parts',
+  'tickets', 'issues', 'job_cards', 'issue_parts', 'issue_labour',
   'parts', 'part_units', 'purchase_invoices', 'purchase_invoice_items',
   'finance_entries', 'sla_rules_config', 'sla_events',
   'holidays', 'system_settings', 'suppliers', 'audit_logs',
   // Scrap / salvage
   'scrap_inventory', 'scrap_disposal', 'scrap_disposal_items',
   'scrap_writeoff', 'scrap_writeoff_items', 'scrap_excluded_parts',
+  'scrap_refurbishments', 'refurbished_part_links',
   // Outsource invoices (per-invoice payments went in MAIN-118) and the supplier ledger (MAIN-119)
-  'outsource_invoices', 'supplier_payments', 'supplier_ledger_adjustments',
+  'outsource_invoices', 'supplier_payments', 'supplier_ledger_adjustments', 'advance_repayments',
   // Multi-vehicle outsource invoices (MAIN-99)
   'batch_services', 'batch_service_vehicles',
   // Workshop locations
   'workshop_locations', 'part_stock', 'stock_transfers', 'stock_transfer_items',
   // Stock audits
-  'stock_audits', 'stock_audit_items',
+  'stock_audits', 'stock_audit_items', 'stock_audit_item_reasons',
 ]
 
+// Batches are ordered by primary key, so each table not keyed on `id` must be listed here.
+const PRIMARY_KEYS: Record<string, string[]> = {
+  part_stock: ['part_id', 'location_id'],
+  refurbished_part_links: ['refurbished_part_id'],
+  system_settings: ['key'],
+  user_settings: ['user_id'],
+  vehicle_sites: ['vehicle_id', 'site_name'],
+}
+
+// Must not exceed the API's Max rows: a short batch is read as the end of the table.
+const PAGE_SIZE = 1000
 const RETENTION_DAYS = 7
+
+// One request returns at most Max rows and says nothing about the rest, so read in batches.
+// A row inserted mid-read shifts the next batch by one, hence the de-duplication.
+async function readAllRows(
+  supabase: ReturnType<typeof createClient>,
+  table: string,
+): Promise<Record<string, unknown>[]> {
+  const keys = PRIMARY_KEYS[table] ?? ['id']
+  const rows = new Map<string, Record<string, unknown>>()
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase.from(table).select('*')
+    for (const key of keys) query = query.order(key)
+
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1)
+    if (error) throw new Error(error.message)
+
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      rows.set(keys.map(key => row[key]).join('|'), row)
+    }
+    if (!data || data.length < PAGE_SIZE) return [...rows.values()]
+  }
+}
 
 Deno.serve(async () => {
   try {
@@ -36,20 +71,24 @@ Deno.serve(async () => {
 
     // Dump every table
     const backup: Record<string, unknown[]> = {}
+    const failedTables: Record<string, string> = {}
     for (const table of TABLES) {
-      const { data, error } = await supabase.from(table).select('*')
-      if (error) {
-        console.error(`Failed to read ${table}:`, error.message)
-        backup[table] = []
-      } else {
-        backup[table] = data ?? []
+      try {
+        backup[table] = await readAllRows(supabase, table)
+      } catch (err) {
+        console.error(`Failed to read ${table}:`, String(err))
+        failedTables[table] = String(err)
       }
     }
 
     const now = new Date()
     const label = now.toISOString().replace(/[:.]/g, '-')
     const fileName = `nvs-backup-${label}.json`
-    const content = JSON.stringify({ backed_up_at: now.toISOString(), tables: backup }, null, 2)
+    const content = JSON.stringify(
+      { backed_up_at: now.toISOString(), tables: backup, failed_tables: failedTables },
+      null,
+      2,
+    )
 
     const accessToken = await getGoogleAccessToken(
       Deno.env.get('GOOGLE_SERVICE_ACCOUNT_EMAIL')!,
@@ -61,8 +100,12 @@ Deno.serve(async () => {
     await deleteOldBackups(accessToken, folderId)
     await uploadToDrive(accessToken, folderId, fileName, content)
 
-    console.log(`Backup complete: ${fileName}`)
-    return new Response(JSON.stringify({ ok: true, file: fileName }), {
+    // A partial backup is still uploaded, since it beats none, but the run reports failure.
+    const ok = Object.keys(failedTables).length === 0
+    const rows = Object.fromEntries(Object.entries(backup).map(([table, r]) => [table, r.length]))
+    console.log(`Backup ${ok ? 'complete' : 'incomplete'}: ${fileName} (${content.length} chars)`)
+    return new Response(JSON.stringify({ ok, file: fileName, rows, failed_tables: failedTables }), {
+      status: ok ? 200 : 500,
       headers: { 'Content-Type': 'application/json' },
     })
   } catch (err) {
