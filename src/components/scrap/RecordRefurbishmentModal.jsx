@@ -4,11 +4,10 @@ import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import NewPartInlineForm from '../inventory/NewPartInlineForm'
-import QuickAddSupplierModal from '../suppliers/QuickAddSupplierModal'
+import SupplierPicker from '../suppliers/SupplierPicker'
 import InvoiceDetailsFields from '../outsource-invoices/InvoiceDetailsFields'
 import { EMPTY_INVOICE_FORM, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
 import { useParts } from '../../hooks/useInventory'
-import { useApprovedSuppliers } from '../../hooks/useSuppliers'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import { useScrapInventory, useRecordRefurbishment, scrapSourceLabel } from '../../hooks/useScrap'
 import { lineTotal, invoiceTotal } from '../../lib/invoiceDiscount'
@@ -22,7 +21,6 @@ import {
 
 const NOT_FOUND_SENTINEL = '__NOT_FOUND__'
 const NEW_PART_SENTINEL = '__NEW__'
-const QUICK_ADD_SENTINEL = '__QUICK_ADD__'
 const GST_OPTIONS = [
     { label: 'None', value: '0' },
     { label: '5%', value: '5' },
@@ -51,7 +49,6 @@ const emptyLine = key => ({
 
 export default function RecordRefurbishmentModal({ onClose }) {
     const { data: parts = [] } = useParts()
-    const { data: suppliers = [] } = useApprovedSuppliers()
     const { data: locations = [] } = useWorkshopLocations()
     const record = useRecordRefurbishment()
     const todayStr = todayLocal()
@@ -66,8 +63,6 @@ export default function RecordRefurbishmentModal({ onClose }) {
     // number are the purchase invoice's own.
     const [invoiceForm, setInvoiceForm] = useState(EMPTY_INVOICE_FORM)
     const [showErrors, setShowErrors] = useState(false)
-    // The name typed before choosing "+ Add supplier", or null while Quick Add is closed.
-    const [quickAddName, setQuickAddName] = useState(null)
     const [invoiceFile, setInvoiceFile] = useState(null)
     const [lines, setLines] = useState([emptyLine(0)])
     const [error, setError] = useState(null)
@@ -108,14 +103,6 @@ export default function RecordRefurbishmentModal({ onClose }) {
             updateLine(line.key, { creatingPart: true, original_part_id: '' })
         } else {
             updateLine(line.key, { original_part_id: value })
-        }
-    }
-
-    function chooseSupplier(value, typed) {
-        if (value === QUICK_ADD_SENTINEL) {
-            setQuickAddName(typed ?? '')
-        } else {
-            setInvoice(p => ({ ...p, supplier_id: value }))
         }
     }
 
@@ -194,13 +181,9 @@ export default function RecordRefurbishmentModal({ onClose }) {
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
                                         Supplier <span className="text-red-500">*</span>
                                     </label>
-                                    <SearchableSelect
+                                    <SupplierPicker
                                         value={invoice.supplier_id}
-                                        onChange={chooseSupplier}
-                                        options={suppliers.map(sp => ({ value: sp.id, label: sp.entity_name }))}
-                                        placeholder="Search suppliers…"
-                                        showAllOnFocus={true}
-                                        pinnedOption={{ value: QUICK_ADD_SENTINEL, label: '+ Add supplier…' }}
+                                        onChange={id => setInvoice(p => ({ ...p, supplier_id: id }))}
                                         error={showErrors && !invoice.supplier_id ? { message: 'Required' } : null}
                                     />
                                 </div>
@@ -466,15 +449,6 @@ export default function RecordRefurbishmentModal({ onClose }) {
                     </div>
                 </form>
             </div>
-
-            {quickAddName !== null && (
-                <QuickAddSupplierModal
-                    isOpen
-                    initialName={quickAddName}
-                    onClose={() => setQuickAddName(null)}
-                    onSuccess={supplier => setInvoice(p => ({ ...p, supplier_id: supplier.id }))}
-                />
-            )}
         </div>
     )
 }

@@ -4957,15 +4957,47 @@ CREATE FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb,
     SET search_path TO 'public'
     AS $$
 DECLARE
-    v_invoice_id uuid := p_invoice_id;
-    v_item       jsonb;
+    v_invoice_id    uuid := p_invoice_id;
+    v_item          jsonb;
+    v_supplier_id   uuid := nullif(p_invoice->>'supplier_id', '')::uuid;
+    v_supplier_name text;
+    v_old_id        uuid;
+    v_old_name      text;
 BEGIN
+    IF v_invoice_id IS NOT NULL THEN
+        SELECT supplier_id, supplier_name INTO v_old_id, v_old_name
+        FROM   public.purchase_invoices
+        WHERE  id = v_invoice_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Invoice not found.';
+        END IF;
+    END IF;
+
+    IF v_supplier_id IS NULL THEN
+        IF v_invoice_id IS NULL OR v_old_id IS NOT NULL THEN
+            RAISE EXCEPTION 'Choose the supplier, or add them.';
+        END IF;
+        v_supplier_name := v_old_name;
+    ELSIF v_supplier_id IS NOT DISTINCT FROM v_old_id THEN
+        v_supplier_name := v_old_name;
+    ELSE
+        SELECT entity_name INTO v_supplier_name
+        FROM   public.suppliers
+        WHERE  id = v_supplier_id AND status = 'approved';
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Choose an approved supplier.';
+        END IF;
+    END IF;
+
     IF v_invoice_id IS NULL THEN
         INSERT INTO public.purchase_invoices
-            (invoice_number, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
+            (invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
         VALUES (
             p_invoice->>'invoice_number',
-            p_invoice->>'supplier_name',
+            v_supplier_id,
+            v_supplier_name,
             (p_invoice->>'invoice_date')::date,
             nullif(p_invoice->>'notes', ''),
             nullif(p_invoice->>'invoice_file_url', ''),
@@ -4976,16 +5008,13 @@ BEGIN
     ELSE
         UPDATE public.purchase_invoices
         SET    invoice_number   = p_invoice->>'invoice_number',
-               supplier_name    = p_invoice->>'supplier_name',
+               supplier_id      = v_supplier_id,
+               supplier_name    = v_supplier_name,
                invoice_date     = (p_invoice->>'invoice_date')::date,
                notes            = nullif(p_invoice->>'notes', ''),
                invoice_file_url = nullif(p_invoice->>'invoice_file_url', ''),
                location_id      = (p_invoice->>'location_id')::uuid
         WHERE  id = v_invoice_id;
-
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'Invoice not found.';
-        END IF;
 
         DELETE FROM public.purchase_invoice_items
         WHERE  invoice_id = v_invoice_id

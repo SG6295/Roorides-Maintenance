@@ -38,6 +38,7 @@ export function useParts(filters = {}) {
 const PURCHASE_INVOICE_COLUMNS = `
     id,
     invoice_number,
+    supplier_id,
     supplier_name,
     invoice_date,
     total_amount,
@@ -143,7 +144,9 @@ const toInvoiceItem = item => ({
  * in a single transaction (MAIN-97). It used to be five separate calls, so a stock
  * check failing on a later line left the earlier changes saved. The function writes
  * the header first, so a workshop change still moves the stock before any line
- * changes (MAIN-72).
+ * changes (MAIN-72). The function takes supplier_name from the chosen supplier; an
+ * invoice recorded before suppliers came from the list has no supplier_id and keeps
+ * its typed name when none is chosen (MAIN-128).
  */
 export function useUpdatePurchaseInvoice() {
     const queryClient = useQueryClient()
@@ -154,7 +157,7 @@ export function useUpdatePurchaseInvoice() {
                 p_invoice_id: invoiceId,
                 p_invoice: {
                     invoice_number: invoiceData.invoice_number,
-                    supplier_name: invoiceData.supplier_name,
+                    supplier_id: invoiceData.supplier_id || null,
                     invoice_date: invoiceData.invoice_date,
                     notes: invoiceData.notes || null,
                     invoice_file_url: invoiceData.invoice_file_url || null,
@@ -190,7 +193,7 @@ export function useRecordPurchase() {
                 p_invoice_id: null,
                 p_invoice: {
                     invoice_number: invoice.invoice_number,
-                    supplier_name: invoice.supplier_name,
+                    supplier_id: invoice.supplier_id,
                     invoice_date: invoice.invoice_date,
                     notes: invoice.notes || null,
                     invoice_file_url: invoice.invoice_file_url || null,
