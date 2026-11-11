@@ -51,7 +51,7 @@ const PURCHASE_INVOICE_COLUMNS = `
     created_by_user:users!created_by(name),
     purchase_invoice_items(id),
     finance_invoice:outsource_invoices!purchase_invoice_id(
-        id, finance_payment_status, finance_remark, paid_by, maintenance_payment_status,
+        id, invoice_no, date_of_activity, finance_payment_status, finance_remark, paid_by, maintenance_payment_status,
         invoice_value, approved_amount, advance_amount, payby_date
     )
 `
