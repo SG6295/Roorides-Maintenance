@@ -5,6 +5,7 @@ import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 import { useLabourReport } from '../../hooks/useLabourReport'
 import { useAllSites } from '../../hooks/useSites'
 import { formatSiteLabel } from '../../utils/siteLabel'
+import { useWorkshopSiteGroups } from '../../hooks/useSiteWorkshops'
 import { todayLocal } from '../../utils/datetime'
 import { formatHours } from '../../utils/labour'
 import {
@@ -36,6 +37,8 @@ export default function LabourUtilisation() {
 
     const { data: rows = [], isLoading, isFetching, error } = useLabourReport(dateRange)
     const { data: sites = [] } = useAllSites()
+    // Workshop rows in the site filter tick the sites mapped to them (MAIN-131).
+    const workshopGroups = useWorkshopSiteGroups(sites)
 
     const days = useMemo(() => enumerateDays(dateRange.start, dateRange.end), [dateRange])
     const tooManyDays = dayCount(dateRange.start, dateRange.end) > MAX_GRID_DAYS
@@ -79,6 +82,7 @@ export default function LabourUtilisation() {
                         onChange={setSelectedSites}
                         placeholder="All Sites"
                         noun="sites"
+                        groups={workshopGroups}
                         options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
                     />
                     <FilterSelect

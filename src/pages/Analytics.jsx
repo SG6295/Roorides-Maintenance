@@ -5,6 +5,7 @@ import { format, subMonths, endOfMonth } from 'date-fns'
 import Navigation from '../components/shared/Navigation'
 import { useAllSites } from '../hooks/useSites'
 import { formatSiteLabel } from '../utils/siteLabel'
+import { useWorkshopSiteGroups } from '../hooks/useSiteWorkshops'
 import MultiFilterSelect from '../components/shared/MultiFilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
@@ -16,6 +17,8 @@ import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon 
 export default function Analytics({ embedded = false }) {
     // All sites, not just active — reporting on a departed school must still be possible.
     const { data: sites = [] } = useAllSites()
+    // Workshop rows in the site filter tick the sites mapped to them (MAIN-131).
+    const workshopGroups = useWorkshopSiteGroups(sites)
     // [] = all sites. Exact `sites.name` values — matching is case-sensitive.
     const [selectedSites, setSelectedSites] = useState([])
     const [dateRange, setDateRange] = useState({
@@ -264,6 +267,7 @@ export default function Analytics({ embedded = false }) {
                                 onChange={setSelectedSites}
                                 placeholder="All Sites"
                                 noun="sites"
+                                groups={workshopGroups}
                                 options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
                             />
 

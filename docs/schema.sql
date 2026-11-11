@@ -10570,6 +10570,26 @@ CREATE TABLE public.scrap_writeoff_items (
 ALTER TABLE public.scrap_writeoff_items OWNER TO postgres;
 
 --
+-- Name: site_workshops; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.site_workshops (
+    site_id uuid NOT NULL,
+    location_id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.site_workshops OWNER TO postgres;
+
+--
+-- Name: TABLE site_workshops; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.site_workshops IS 'Default workshop for each site (MAIN-131). No row = not assigned. Maintained by super_admin in Settings › Workshop Hub Mapping.';
+
+
+--
 -- Name: sites; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -12006,6 +12026,14 @@ ALTER TABLE ONLY public.scrap_writeoff
 
 
 --
+-- Name: site_workshops site_workshops_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.site_workshops
+    ADD CONSTRAINT site_workshops_pkey PRIMARY KEY (site_id);
+
+
+--
 -- Name: sites sites_name_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13207,6 +13235,13 @@ CREATE INDEX purchase_invoices_location_idx ON public.purchase_invoices USING bt
 --
 
 CREATE INDEX scrap_inventory_location_idx ON public.scrap_inventory USING btree (location_id);
+
+
+--
+-- Name: site_workshops_location_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX site_workshops_location_id_idx ON public.site_workshops USING btree (location_id);
 
 
 --
@@ -14418,6 +14453,22 @@ ALTER TABLE ONLY public.scrap_writeoff
 
 
 --
+-- Name: site_workshops site_workshops_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.site_workshops
+    ADD CONSTRAINT site_workshops_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.workshop_locations(id);
+
+
+--
+-- Name: site_workshops site_workshops_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.site_workshops
+    ADD CONSTRAINT site_workshops_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id);
+
+
+--
 -- Name: sla_events sla_events_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -14828,6 +14879,13 @@ CREATE POLICY "All authenticated users see vehicles" ON public.vehicles FOR SELE
 --
 
 CREATE POLICY "Authenticated read part_units" ON public.part_units FOR SELECT USING ((auth.role() = 'authenticated'::text));
+
+
+--
+-- Name: site_workshops Authenticated read site_workshops; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Authenticated read site_workshops" ON public.site_workshops FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
@@ -15430,10 +15488,31 @@ CREATE POLICY "Super admins can update settings" ON public.system_settings FOR U
 
 
 --
+-- Name: site_workshops Super admins delete site_workshops; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Super admins delete site_workshops" ON public.site_workshops FOR DELETE USING (public.is_super_admin());
+
+
+--
+-- Name: site_workshops Super admins insert site_workshops; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Super admins insert site_workshops" ON public.site_workshops FOR INSERT WITH CHECK (public.is_super_admin());
+
+
+--
 -- Name: workshop_locations Super admins insert workshop_locations; Type: POLICY; Schema: public; Owner: postgres
 --
 
 CREATE POLICY "Super admins insert workshop_locations" ON public.workshop_locations FOR INSERT WITH CHECK (public.is_super_admin());
+
+
+--
+-- Name: site_workshops Super admins update site_workshops; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Super admins update site_workshops" ON public.site_workshops FOR UPDATE USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
 
 
 --
@@ -15810,6 +15889,12 @@ ALTER TABLE public.scrap_writeoff ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.scrap_writeoff_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: site_workshops; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.site_workshops ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: sites; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -18266,6 +18351,15 @@ GRANT ALL ON TABLE public.scrap_writeoff TO service_role;
 GRANT ALL ON TABLE public.scrap_writeoff_items TO anon;
 GRANT ALL ON TABLE public.scrap_writeoff_items TO authenticated;
 GRANT ALL ON TABLE public.scrap_writeoff_items TO service_role;
+
+
+--
+-- Name: TABLE site_workshops; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.site_workshops TO anon;
+GRANT ALL ON TABLE public.site_workshops TO authenticated;
+GRANT ALL ON TABLE public.site_workshops TO service_role;
 
 
 --

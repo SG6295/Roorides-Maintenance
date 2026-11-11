@@ -21,7 +21,7 @@ const TABLES = [
   // Multi-vehicle outsource invoices (MAIN-99)
   'batch_services', 'batch_service_vehicles',
   // Workshop locations
-  'workshop_locations', 'part_stock', 'stock_transfers', 'stock_transfer_items',
+  'workshop_locations', 'site_workshops', 'part_stock', 'stock_transfers', 'stock_transfer_items',
   // Stock audits
   'stock_audits', 'stock_audit_items', 'stock_audit_item_reasons',
 ]
@@ -30,6 +30,7 @@ const TABLES = [
 const PRIMARY_KEYS: Record<string, string[]> = {
   part_stock: ['part_id', 'location_id'],
   refurbished_part_links: ['refurbished_part_id'],
+  site_workshops: ['site_id'],
   system_settings: ['key'],
   user_settings: ['user_id'],
   vehicle_sites: ['vehicle_id', 'site_name'],
