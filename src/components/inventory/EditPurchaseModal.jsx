@@ -1,21 +1,13 @@
 import { useState, useEffect } from 'react'
-import { usePurchaseInvoiceItems, useUpdatePurchaseInvoice, useParts, useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import { usePurchaseInvoiceItems, useParts, useCreatePart, usePartUnits } from '../../hooks/useInventory'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
+import { usePurchaseInvoiceForm } from '../../hooks/usePurchaseInvoiceForm'
 import {
-    PlusIcon, TrashIcon, XMarkIcon, CheckIcon, ExclamationTriangleIcon,
+    PlusIcon, TrashIcon, CheckIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
-import MultiFileAttach from '../shared/MultiFileAttach'
-import InvoiceFileLink from '../outsource-invoices/InvoiceFileLink'
-import SupplierPicker from '../suppliers/SupplierPicker'
-import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../outsource-invoices/InvoiceDetailsFields'
-import { invoiceFormFromRow, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
-import { financeStatusColor } from '../outsource-invoices/format'
-import { isLockedByFinance } from '../../constants/outsourceInvoices'
-import { approvedAmountError } from '../../utils/refurbishment'
-import { todayLocal } from '../../utils/datetime'
-import { useAuth } from '../../hooks/useAuth'
+import { PurchaseInvoiceModal, PurchaseInvoiceFields, InvoiceTotal } from './PurchaseInvoiceShared'
 import {
     round2,
     lineSubtotal,
@@ -41,33 +33,21 @@ const LINE_GRID = 'grid gap-2 grid-cols-[minmax(0,3fr)_minmax(0,1.5fr)_minmax(0,
 const emptyNewLine = () => ({ id: null, part_id: '', quantity: '', unit_price: '', gst_rate: 0, discount_amount: '', discount_pct: '', discount_mode: 'amount' })
 const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
+/**
+ * Edit an ordinary purchase invoice: its lines, discounts and workshop, plus what every
+ * purchase invoice shares (PurchaseInvoiceShared). A refurbishment opens in
+ * EditRefurbishmentModal instead (MAIN-130).
+ */
 export default function EditPurchaseModal({ invoice, onClose }) {
-    const { userProfile } = useAuth()
+    const form = usePurchaseInvoiceForm(invoice)
+    const { frozen, isFinanceRole } = form
     const { data: existingItems, isLoading: itemsLoading } = usePurchaseInvoiceItems(invoice.id)
     const { data: parts = [] } = useParts()
     const { data: partUnits = [] } = usePartUnits()
     const { data: locations = [] } = useWorkshopLocations()
-    const updateInvoice = useUpdatePurchaseInvoice()
     const createPart = useCreatePart()
-    const todayStr = todayLocal()
 
-    // The invoice's finance invoice (MAIN-129). One recorded before purchases went to
-    // finance has none, and saves as it always did.
-    const finance = invoice.finance_invoice ?? null
-    // Finance reviews purchase invoices but does not edit them.
-    const isFinanceRole = userProfile?.role === 'finance'
-    // Once finance has accepted it, only the notes can change; finance moving it back to
-    // Hold lifts that.
-    const accepted = isLockedByFinance(finance)
-    const frozen = isFinanceRole || accepted
-
-    const [invoiceData, setInvoiceData] = useState({
-        invoice_number: invoice.invoice_number,
-        supplier_id: invoice.supplier_id || '',
-        invoice_date: invoice.invoice_date,
-        notes: invoice.notes || '',
-        location_id: invoice.location_id,
-    })
+    const [locationId, setLocationId] = useState(invoice.location_id)
 
     // lines = mix of existing items (have id) and new items (id: null)
     const [lines, setLines] = useState(null)
@@ -76,18 +56,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const [newPartForms, setNewPartForms] = useState({})
 
     const [error, setError] = useState(null)
-    // The finance details, with the invoice number and date — shared with the header.
-    const [invoiceForm, setInvoiceForm] = useState(() => finance && {
-        ...invoiceFormFromRow(finance),
-        dateOfActivity: invoice.invoice_date || '',
-        invoiceNo: invoice.invoice_number || '',
-    })
-    const [showErrors, setShowErrors] = useState(false)
-    const [invoiceFile, setInvoiceFile] = useState(
-        invoice.invoice_file_url
-            ? { name: 'Existing document', url: invoice.invoice_file_url }
-            : null
-    )
 
     // Populate lines from loaded items (runs once)
     useEffect(() => {
@@ -101,7 +69,6 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                     part_name: item.part?.name || '',
                     part_number: item.part?.part_number || '',
                     part_unit: item.part?.unit || '',
-                    locked: (item.refurbishment?.length ?? 0) > 0,
                     quantity: String(item.quantity),
                     unit_price: String(item.unit_price),
                     gst_rate: item.gst_rate ?? 0,
@@ -117,14 +84,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     // ── Line helpers ───────────────────────────────────────────────────────────
     const invoiceTotal = calcInvoiceTotal(lines || [])
     const totalDiscount = calcTotalDiscount(lines || [])
-    // A refurbishment's lines moved stock and marked scrap as refurbished, so they and its
-    // workshop stay as recorded (MAIN-123); its other details are edited like any
-    // purchase's until finance accepts it (MAIN-129).
-    const hasLockedLines = (lines || []).some(l => l.locked)
-    const headerInputClass = `w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${frozen ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`
-    const invoiceErrors = finance ? validateInvoiceForm(invoiceForm, todayStr) : {}
-    const amountProblem = finance && !frozen ? approvedAmountError(lines || [], invoiceForm.approvedAmount) : null
-    const filePending = !!finance && !invoiceFile?.url
+    const amountProblem = form.amountError(lines || [])
 
     function updateLine(index, field, value) {
         setLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l))
@@ -192,18 +152,18 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     }
 
     // Changing an invoice's workshop moves every quantity it inwarded, so say so first.
-    const locationChanged = invoiceData.location_id !== invoice.location_id
+    const locationChanged = locationId !== invoice.location_id
     const locationName = id => locations.find(l => l.id === id)?.name || 'the previous workshop'
     const originalLocationName = locationName(invoice.location_id)
-    const newLocationName = locationName(invoiceData.location_id)
+    const newLocationName = locationName(locationId)
 
     // ── Submit ─────────────────────────────────────────────────────────────────
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
-        setShowErrors(true)
+        form.revealErrors()
 
-        if (!invoiceData.location_id) {
+        if (!locationId) {
             setError('Choose which workshop this invoice is being inwarded to.')
             return
         }
@@ -238,33 +198,14 @@ export default function EditPurchaseModal({ invoice, onClose }) {
             setError('A line discount cannot exceed its item subtotal (qty × unit price).')
             return
         }
-        if (finance && invoice.invoice_file_url && !invoiceFile?.url) {
-            setError('The invoice file cannot be removed once attached. Replace it instead.')
-            return
-        }
-        if (Object.keys(invoiceErrors).length > 0) {
-            setError('Check the invoice details.')
-            return
-        }
-        if (amountProblem) {
-            setError(amountProblem)
+        const sharedError = form.sharedError(activeLines)
+        if (sharedError) {
+            setError(sharedError)
             return
         }
 
-        // An invoice with a finance invoice takes its number and date from the invoice
-        // details; its other details travel alongside.
-        const { invoice_no, date_of_activity, ...details } = finance ? invoiceFormToRow(invoiceForm) : {}
         try {
-            await updateInvoice.mutateAsync({
-                invoiceId: invoice.id,
-                invoiceData: {
-                    ...invoiceData,
-                    ...(finance ? { invoice_number: invoice_no, invoice_date: date_of_activity } : {}),
-                    invoice_file_url: invoiceFile?.url || null,
-                },
-                lineItems: activeLines,
-                finance: finance ? details : null,
-            })
+            await form.save({ locationId, lines: activeLines })
             onClose()
         } catch (err) {
             setError(err.message)
@@ -273,436 +214,278 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-                {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b">
-                    <div className="flex items-center gap-3">
-                        <h2 className="text-lg font-semibold text-gray-900">{isFinanceRole ? 'Purchase' : 'Edit Purchase'}</h2>
-                        {finance && (
-                            <span
-                                title={finance.finance_remark || undefined}
-                                className={`px-2 py-0.5 rounded-full text-xs font-medium ${financeStatusColor(finance.finance_payment_status)}`}
-                            >
-                                Finance: {finance.finance_payment_status}
-                            </span>
-                        )}
-                    </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-                        <XMarkIcon className="w-5 h-5" />
-                    </button>
+        <PurchaseInvoiceModal
+            title={isFinanceRole ? 'Purchase' : 'Edit Purchase'}
+            form={form}
+            loading={itemsLoading || lines === null}
+            error={error}
+            onClose={onClose}
+            onSubmit={handleSubmit}
+            footer={<>
+                <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-600">Total discount</label>
+                    <span className="text-sm text-gray-400">₹</span>
+                    <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="no-spinner w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
+                        placeholder="0.00"
+                        disabled={frozen}
+                        value={totalDiscount > 0 ? totalDiscount : ''}
+                        onChange={e => handleTotalDiscountChange(e.target.value)}
+                    />
                 </div>
+                <InvoiceTotal total={invoiceTotal} amountProblem={amountProblem} />
+            </>}
+        >
+            <PurchaseInvoiceFields
+                form={form}
+                workshop={<>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Inward to Workshop <span className="text-red-500">*</span>
+                    </label>
+                    <CustomSelect
+                        value={locationId}
+                        onChange={setLocationId}
+                        options={locations.map(l => ({
+                            value: l.id,
+                            label: l.address ? `${l.name} — ${l.address}` : l.name,
+                        }))}
+                        placeholder="Select workshop"
+                        compact
+                        disabled={frozen}
+                    />
+                    {locationChanged && (
+                        <p className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                            <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-px" />
+                            <span>
+                                Saving will move everything this invoice inwarded from{' '}
+                                <strong>{originalLocationName}</strong> to <strong>{newLocationName}</strong>.
+                                If any of it has already been used, the move will be refused.
+                            </span>
+                        </p>
+                    )}
+                </>}
+            />
 
-                {itemsLoading || lines === null ? (
-                    <div className="flex-1 flex items-center justify-center py-16 text-sm text-gray-400">
-                        Loading invoice details…
+            {/* Line Items */}
+            <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
+                <div className="space-y-2">
+                    <div className={`${LINE_GRID} px-1 text-xs font-medium text-gray-500`}>
+                        <div>Part</div>
+                        <div>Qty</div>
+                        <div>Unit Price</div>
+                        <div>Disc %</div>
+                        <div>Discount</div>
+                        <div>GST</div>
+                        <div className="text-right">Line Total</div>
+                        <div></div>
                     </div>
-                ) : (
-                    <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-                        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-6">
 
-                            {/* Invoice Details */}
-                            <div>
-                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details</h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Supplier {invoice.supplier_id && <span className="text-red-500">*</span>}
-                                        </label>
-                                        <SupplierPicker
-                                            value={invoiceData.supplier_id}
-                                            onChange={id => setInvoiceData(p => ({ ...p, supplier_id: id }))}
-                                            current={invoice.supplier_id ? { id: invoice.supplier_id, name: invoice.supplier_name } : null}
-                                            disabled={frozen}
-                                        />
-                                        {/* Recorded before suppliers came from the list (MAIN-128): the typed
-                                            name stays as it is unless a supplier is chosen. */}
-                                        {!invoice.supplier_id && !invoiceData.supplier_id && (
-                                            <p className="text-xs text-gray-500 mt-1">
-                                                Recorded as "{invoice.supplier_name}", not linked to a supplier. You can leave it or choose one.
-                                            </p>
-                                        )}
-                                    </div>
-                                    {!finance && <>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Invoice Number <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            required
-                                            type="text"
-                                            className={headerInputClass}
-                                            disabled={frozen}
-                                            value={invoiceData.invoice_number}
-                                            onChange={e => setInvoiceData(p => ({ ...p, invoice_number: e.target.value }))}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Invoice Date <span className="text-red-500">*</span>
-                                        </label>
-                                        <input
-                                            required
-                                            type="date"
-                                            className={headerInputClass}
-                                            disabled={frozen}
-                                            value={invoiceData.invoice_date}
-                                            onChange={e => setInvoiceData(p => ({ ...p, invoice_date: e.target.value }))}
-                                        />
-                                    </div>
-                                    </>}
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                                        <input
-                                            type="text"
-                                            className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${isFinanceRole ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
-                                            disabled={isFinanceRole}
-                                            value={invoiceData.notes}
-                                            onChange={e => setInvoiceData(p => ({ ...p, notes: e.target.value }))}
-                                            placeholder="Optional"
-                                        />
-                                    </div>
-                                    <div className="sm:col-span-2">
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                                            Inward to Workshop <span className="text-red-500">*</span>
-                                        </label>
-                                        <CustomSelect
-                                            value={invoiceData.location_id}
-                                            onChange={v => setInvoiceData(p => ({ ...p, location_id: v }))}
-                                            options={locations.map(l => ({
-                                                value: l.id,
-                                                label: l.address ? `${l.name} — ${l.address}` : l.name,
-                                            }))}
-                                            placeholder="Select workshop"
-                                            compact
-                                            disabled={hasLockedLines || frozen}
-                                        />
-                                        {locationChanged && (
-                                            <p className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
-                                                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-px" />
-                                                <span>
-                                                    Saving will move everything this invoice inwarded from{' '}
-                                                    <strong>{originalLocationName}</strong> to <strong>{newLocationName}</strong>.
-                                                    If any of it has already been used, the move will be refused.
-                                                </span>
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
+                    {(lines ?? []).map((line, i) => {
+                        const sub = lineSubtotal(line)
+                        const lineTotal = calcLineTotal(line)
+                        const isExisting = !!line.id
+                        const npf = !isExisting ? newPartForms[i] : null
+                        const selectedPart = !isExisting ? parts.find(p => p.id === line.part_id) : null
+                        const discountInvalid = (parseFloat(line.discount_amount) || 0) > sub + 1e-9
 
-                            {finance && (
+                        return (
+                            <div key={line.id || `new-${i}`} className={`${LINE_GRID} items-start`}>
+                                {/* Part cell */}
                                 <div>
-                                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details for Finance</h3>
-                                    {frozen ? (
-                                        <InvoiceDetailsReadOnly invoice={finance} />
-                                    ) : (
-                                        <InvoiceDetailsFields
-                                            form={invoiceForm}
-                                            setForm={setInvoiceForm}
-                                            errors={invoiceErrors}
-                                            showErrors={showErrors}
-                                            todayStr={todayStr}
-                                            dateLabel="Invoice Date"
-                                        />
-                                    )}
-                                    {accepted && !isFinanceRole && (
-                                        <p className="text-xs text-gray-500 mt-2">
-                                            Finance has accepted this invoice, so only its notes can be changed. Finance moving it back to Hold lifts this.
-                                        </p>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Invoice Document */}
-                            <div>
-                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Document</h3>
-                                {frozen
-                                    ? <InvoiceFileLink url={invoiceFile?.url} />
-                                    : <MultiFileAttach value={invoiceFile} onChange={setInvoiceFile} />}
-                                {filePending && !frozen && (
-                                    <p className="text-xs text-amber-700 mt-1">
-                                        Finance sees this invoice as New (invoice pending) and cannot accept it until the file is uploaded here.
-                                    </p>
-                                )}
-                            </div>
-
-                            {/* Line Items */}
-                            <div>
-                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Line Items</h3>
-                                {hasLockedLines && (
-                                    <p className="text-xs text-gray-500 mb-2">
-                                        This invoice came from a scrap refurbishment, so its lines and workshop cannot be changed.
-                                    </p>
-                                )}
-                                <div className="space-y-2">
-                                    <div className={`${LINE_GRID} px-1 text-xs font-medium text-gray-500`}>
-                                        <div>Part</div>
-                                        <div>Qty</div>
-                                        <div>Unit Price</div>
-                                        <div>Disc %</div>
-                                        <div>Discount</div>
-                                        <div>GST</div>
-                                        <div className="text-right">Line Total</div>
-                                        <div></div>
-                                    </div>
-
-                                    {lines.map((line, i) => {
-                                        const sub = lineSubtotal(line)
-                                        const lineTotal = calcLineTotal(line)
-                                        const isExisting = !!line.id
-                                        const npf = !isExisting ? newPartForms[i] : null
-                                        const selectedPart = !isExisting ? parts.find(p => p.id === line.part_id) : null
-                                        const discountInvalid = (parseFloat(line.discount_amount) || 0) > sub + 1e-9
-
-                                        return (
-                                            <div key={line.id || `new-${i}`} className={`${LINE_GRID} items-start`}>
-                                                {/* Part cell */}
-                                                <div>
-                                                    {isExisting ? (
-                                                        /* Existing item — part is locked, shown as read-only */
-                                                        <div className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700 truncate">
-                                                            {line.part_name}
-                                                            {line.part_number && (
-                                                                <span className="text-gray-400 font-mono text-xs ml-1">({line.part_number})</span>
-                                                            )}
-                                                            {line.part_unit && (
-                                                                <span className="text-gray-400 text-xs ml-1">· {line.part_unit}</span>
-                                                            )}
-                                                        </div>
-                                                    ) : npf ? (
-                                                        /* Inline new-part form */
-                                                        <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
-                                                            <p className="text-xs font-medium text-blue-700">New part</p>
-                                                            <input
-                                                                autoFocus
-                                                                type="text"
-                                                                placeholder="Part name *"
-                                                                className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
-                                                                value={npf.name}
-                                                                onChange={e => updateNewPartForm(i, 'name', e.target.value)}
-                                                            />
-                                                            <div className="flex gap-1">
-                                                                <input
-                                                                    type="text"
-                                                                    placeholder="Part # (optional)"
-                                                                    className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
-                                                                    value={npf.part_number}
-                                                                    onChange={e => updateNewPartForm(i, 'part_number', e.target.value)}
-                                                                />
-                                                                <div className="w-24">
-                                                                    <CustomSelect
-                                                                        compact
-                                                                        value={npf.unit}
-                                                                        onChange={val => updateNewPartForm(i, 'unit', val)}
-                                                                        options={partUnits.map(u => u.name)}
-                                                                    />
-                                                                </div>
-                                                            </div>
-                                                            {npf.error && (
-                                                                <p className="text-xs text-red-600">{npf.error}</p>
-                                                            )}
-                                                            <div className="flex gap-2 pt-0.5">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => confirmNewPart(i)}
-                                                                    disabled={npf.saving}
-                                                                    className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                                                                >
-                                                                    <CheckIcon className="w-3 h-3" />
-                                                                    {npf.saving ? 'Adding…' : 'Add part'}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => cancelNewPart(i)}
-                                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
-                                                                >
-                                                                    Cancel
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        /* Part dropdown for new lines */
-                                                        <SearchableSelect
-                                                            value={line.part_id}
-                                                            onChange={val => handlePartSelect(i, val)}
-                                                            options={parts.map(p => ({
-                                                                value: p.id,
-                                                                label: `${p.name}${p.part_number ? ` (${p.part_number})` : ''} · ${p.unit}`,
-                                                            }))}
-                                                            placeholder="Select part…"
-                                                            showAllOnFocus={true}
-                                                            pinnedOption={{ value: NEW_PART_SENTINEL, label: '+ Create new part…' }}
-                                                        />
-                                                    )}
-                                                </div>
-
-                                                {/* Qty */}
-                                                <div className="pt-1">
-                                                    <div className="relative">
-                                                        <input
-                                                            disabled={line.locked || frozen}
-                                                            type="number"
-                                                            min="0"
-                                                            step="any"
-                                                            className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${(isExisting ? line.part_unit : selectedPart?.unit) ? 'pr-7' : ''}`}
-                                                            placeholder="0"
-                                                            value={line.quantity}
-                                                            onChange={e => setLineField(i, 'quantity', e.target.value)}
-                                                        />
-                                                        {(isExisting ? line.part_unit : selectedPart?.unit) && (
-                                                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 pointer-events-none">
-                                                                {isExisting ? line.part_unit : selectedPart?.unit}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {/* Unit Price */}
-                                                <div className="pt-1">
-                                                    <input
-                                                        disabled={line.locked || frozen}
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.01"
-                                                        className="no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                                        placeholder="0.00"
-                                                        value={line.unit_price}
-                                                        onChange={e => setLineField(i, 'unit_price', e.target.value)}
+                                    {isExisting ? (
+                                        /* Existing item — part is locked, shown as read-only */
+                                        <div className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700 truncate">
+                                            {line.part_name}
+                                            {line.part_number && (
+                                                <span className="text-gray-400 font-mono text-xs ml-1">({line.part_number})</span>
+                                            )}
+                                            {line.part_unit && (
+                                                <span className="text-gray-400 text-xs ml-1">· {line.part_unit}</span>
+                                            )}
+                                        </div>
+                                    ) : npf ? (
+                                        /* Inline new-part form */
+                                        <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
+                                            <p className="text-xs font-medium text-blue-700">New part</p>
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                placeholder="Part name *"
+                                                className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
+                                                value={npf.name}
+                                                onChange={e => updateNewPartForm(i, 'name', e.target.value)}
+                                            />
+                                            <div className="flex gap-1">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Part # (optional)"
+                                                    className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
+                                                    value={npf.part_number}
+                                                    onChange={e => updateNewPartForm(i, 'part_number', e.target.value)}
+                                                />
+                                                <div className="w-24">
+                                                    <CustomSelect
+                                                        compact
+                                                        value={npf.unit}
+                                                        onChange={val => updateNewPartForm(i, 'unit', val)}
+                                                        options={partUnits.map(u => u.name)}
                                                     />
-                                                </div>
-
-                                                {/* Discount % */}
-                                                <div className="pt-1">
-                                                    <input
-                                                        disabled={line.locked || frozen}
-                                                        type="number"
-                                                        min="0"
-                                                        max="100"
-                                                        step="0.01"
-                                                        className="no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                                                        placeholder="0"
-                                                        value={line.discount_pct}
-                                                        onChange={e => setLineField(i, 'discount_pct', e.target.value)}
-                                                    />
-                                                </div>
-
-                                                {/* Discount amount */}
-                                                <div className="pt-1">
-                                                    <input
-                                                        disabled={line.locked || frozen}
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.01"
-                                                        className={`no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 ${discountInvalid ? 'border-red-400 focus:ring-red-500' : 'focus:ring-blue-500'}`}
-                                                        placeholder="0.00"
-                                                        value={line.discount_amount}
-                                                        onChange={e => setLineField(i, 'discount_amount', e.target.value)}
-                                                    />
-                                                </div>
-
-                                                {/* GST */}
-                                                <div className="pt-1">
-                                                    <select
-                                                        disabled={line.locked || frozen}
-                                                        className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
-                                                        value={line.gst_rate}
-                                                        onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
-                                                    >
-                                                        {GST_RATES.map(r => (
-                                                            <option key={r.value} value={r.value}>{r.label}</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-
-                                                {/* Line Total */}
-                                                <div className="text-sm text-gray-700 text-right pr-1 pt-3">
-                                                    {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}
-                                                </div>
-
-                                                {/* Remove */}
-                                                <div className="flex justify-center pt-3">
-                                                    {!line.locked && !frozen && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => removeLine(i)}
-                                                            className="text-gray-400 hover:text-red-500"
-                                                            title="Remove line"
-                                                        >
-                                                            <TrashIcon className="w-4 h-4" />
-                                                        </button>
-                                                    )}
                                                 </div>
                                             </div>
-                                        )
-                                    })}
+                                            {npf.error && (
+                                                <p className="text-xs text-red-600">{npf.error}</p>
+                                            )}
+                                            <div className="flex gap-2 pt-0.5">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => confirmNewPart(i)}
+                                                    disabled={npf.saving}
+                                                    className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                                >
+                                                    <CheckIcon className="w-3 h-3" />
+                                                    {npf.saving ? 'Adding…' : 'Add part'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => cancelNewPart(i)}
+                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        /* Part dropdown for new lines */
+                                        <SearchableSelect
+                                            value={line.part_id}
+                                            onChange={val => handlePartSelect(i, val)}
+                                            options={parts.map(p => ({
+                                                value: p.id,
+                                                label: `${p.name}${p.part_number ? ` (${p.part_number})` : ''} · ${p.unit}`,
+                                            }))}
+                                            placeholder="Select part…"
+                                            showAllOnFocus={true}
+                                            pinnedOption={{ value: NEW_PART_SENTINEL, label: '+ Create new part…' }}
+                                        />
+                                    )}
                                 </div>
 
-                                {!hasLockedLines && !frozen && (
-                                    <button
-                                        type="button"
-                                        onClick={addLine}
-                                        className="mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
-                                    >
-                                        <PlusIcon className="w-4 h-4" />
-                                        Add line item
-                                    </button>
-                                )}
-                            </div>
+                                {/* Qty */}
+                                <div className="pt-1">
+                                    <div className="relative">
+                                        <input
+                                            disabled={frozen}
+                                            type="number"
+                                            min="0"
+                                            step="any"
+                                            className={`w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 ${(isExisting ? line.part_unit : selectedPart?.unit) ? 'pr-7' : ''}`}
+                                            placeholder="0"
+                                            value={line.quantity}
+                                            onChange={e => setLineField(i, 'quantity', e.target.value)}
+                                        />
+                                        {(isExisting ? line.part_unit : selectedPart?.unit) && (
+                                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 pointer-events-none">
+                                                {isExisting ? line.part_unit : selectedPart?.unit}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
 
-                            {error && (
-                                <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
-                            )}
-                        </div>
-
-                        {/* Footer */}
-                        <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50 rounded-b-xl">
-                            <div className="flex items-center gap-6">
-                                <div className="flex items-center gap-2">
-                                    <label className="text-sm font-medium text-gray-600">Total discount</label>
-                                    <span className="text-sm text-gray-400">₹</span>
+                                {/* Unit Price */}
+                                <div className="pt-1">
                                     <input
+                                        disabled={frozen}
                                         type="number"
                                         min="0"
                                         step="0.01"
-                                        className="no-spinner w-28 border rounded-lg px-2 py-1.5 text-sm text-right focus:ring-2 focus:ring-blue-500"
+                                        className="no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                                         placeholder="0.00"
-                                        disabled={hasLockedLines || frozen}
-                                        value={totalDiscount > 0 ? totalDiscount : ''}
-                                        onChange={e => handleTotalDiscountChange(e.target.value)}
+                                        value={line.unit_price}
+                                        onChange={e => setLineField(i, 'unit_price', e.target.value)}
                                     />
                                 </div>
-                                <div className="text-sm">
-                                    <span className="font-semibold text-gray-700">
-                                        Invoice Total: <span className="text-gray-900">{invoiceTotal.toFixed(2)}</span>
-                                    </span>
-                                    {amountProblem && (
-                                        <p className="text-xs text-red-600 mt-0.5">{amountProblem}</p>
+
+                                {/* Discount % */}
+                                <div className="pt-1">
+                                    <input
+                                        disabled={frozen}
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        className="no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                        placeholder="0"
+                                        value={line.discount_pct}
+                                        onChange={e => setLineField(i, 'discount_pct', e.target.value)}
+                                    />
+                                </div>
+
+                                {/* Discount amount */}
+                                <div className="pt-1">
+                                    <input
+                                        disabled={frozen}
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        className={`no-spinner w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 ${discountInvalid ? 'border-red-400 focus:ring-red-500' : 'focus:ring-blue-500'}`}
+                                        placeholder="0.00"
+                                        value={line.discount_amount}
+                                        onChange={e => setLineField(i, 'discount_amount', e.target.value)}
+                                    />
+                                </div>
+
+                                {/* GST */}
+                                <div className="pt-1">
+                                    <select
+                                        disabled={frozen}
+                                        className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                        value={line.gst_rate}
+                                        onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
+                                    >
+                                        {GST_RATES.map(r => (
+                                            <option key={r.value} value={r.value}>{r.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Line Total */}
+                                <div className="text-sm text-gray-700 text-right pr-1 pt-3">
+                                    {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}
+                                </div>
+
+                                {/* Remove */}
+                                <div className="flex justify-center pt-3">
+                                    {!frozen && (
+                                        <button
+                                            type="button"
+                                            onClick={() => removeLine(i)}
+                                            className="text-gray-400 hover:text-red-500"
+                                            title="Remove line"
+                                        >
+                                            <TrashIcon className="w-4 h-4" />
+                                        </button>
                                     )}
                                 </div>
                             </div>
-                            <div className="flex gap-3">
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="px-4 py-2 text-sm text-gray-700 border rounded-lg hover:bg-gray-100"
-                                >
-                                    {isFinanceRole ? 'Close' : 'Cancel'}
-                                </button>
-                                {!isFinanceRole && (
-                                    <button
-                                        type="submit"
-                                        disabled={updateInvoice.isPending}
-                                        className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                                    >
-                                        {updateInvoice.isPending ? 'Saving…' : 'Save Changes'}
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </form>
+                        )
+                    })}
+                </div>
+
+                {!frozen && (
+                    <button
+                        type="button"
+                        onClick={addLine}
+                        className="mt-3 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        <PlusIcon className="w-4 h-4" />
+                        Add line item
+                    </button>
                 )}
             </div>
-        </div>
+        </PurchaseInvoiceModal>
     )
 }

@@ -878,6 +878,7 @@ export type Database = {
           invoice_date: string
           invoice_file_url: string | null
           invoice_number: string
+          kind: string
           location_id: string
           notes: string | null
           supplier_id: string | null
@@ -891,6 +892,7 @@ export type Database = {
           invoice_date: string
           invoice_file_url?: string | null
           invoice_number: string
+          kind?: string
           location_id?: string
           notes?: string | null
           supplier_id?: string | null
@@ -904,6 +906,7 @@ export type Database = {
           invoice_date?: string
           invoice_file_url?: string | null
           invoice_number?: string
+          kind?: string
           location_id?: string
           notes?: string | null
           supplier_id?: string | null

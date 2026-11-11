@@ -317,6 +317,37 @@ export function useRecordScrapWriteoff() {
 
 // ── MAIN-123: refurbishment ───────────────────────────────────────────────────
 
+/**
+ * A refurbishment invoice's lines with where each part came from, for its editing form
+ * (MAIN-130). `refurbishment` is an array of one: PostgREST cannot tell that a line has
+ * at most one scrap_refurbishments row.
+ */
+export function useRefurbishmentInvoiceLines(invoiceId) {
+    return useQuery({
+        queryKey: ['purchase_invoice_items', invoiceId, 'refurbishment'],
+        enabled: !!invoiceId,
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('purchase_invoice_items')
+                .select(`
+                    id, part_id, quantity, unit_price, gst_rate, discount_amount, line_total,
+                    part:parts(name, part_number, unit),
+                    refurbishment:scrap_refurbishments(
+                        id, comment, scrap_inventory_id,
+                        original:parts!original_part_id(name, part_number),
+                        scrap:scrap_inventory!scrap_inventory_id(
+                            job_card:job_cards!source_job_card_id(job_card_number),
+                            ${AUDIT_SOURCE_EMBED}
+                        )
+                    )
+                `)
+                .eq('invoice_id', invoiceId)
+            if (error) throw error
+            return (data || []).map(({ refurbishment, ...line }) => ({ ...line, refurbishment: refurbishment?.[0] ?? null }))
+        },
+    })
+}
+
 export function useRefurbishments(filters = {}) {
     return useQuery({
         queryKey: ['scrap_refurbishments', filters],

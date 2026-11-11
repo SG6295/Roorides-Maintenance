@@ -37,6 +37,7 @@ export function useParts(filters = {}) {
 
 const PURCHASE_INVOICE_COLUMNS = `
     id,
+    kind,
     invoice_number,
     supplier_id,
     supplier_name,
@@ -121,7 +122,7 @@ export function usePurchaseInvoiceItems(invoiceId) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('purchase_invoice_items')
-                .select('id, part_id, quantity, unit_price, gst_rate, discount_amount, line_total, part:parts(id, name, part_number, unit), refurbishment:scrap_refurbishments(id)')
+                .select('id, part_id, quantity, unit_price, gst_rate, discount_amount, line_total, part:parts(id, name, part_number, unit)')
                 .eq('invoice_id', invoiceId)
             if (error) throw error
             return data || []

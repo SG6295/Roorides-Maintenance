@@ -71,3 +71,17 @@ export function approvedAmountError(lines, approvedAmount) {
     if (parts === approved) return null
     return `The parts add up to ₹${(parts / 100).toFixed(2)}; the approved amount is ₹${(approved / 100).toFixed(2)}.`
 }
+
+/**
+ * Where a refurbishment line's part came from (MAIN-130), from its scrap_refurbishments
+ * row: the scrap row's job card or stock audit, or a part that was never in the scrap
+ * list. The audit is named as auditRef names it.
+ */
+export function refurbishmentSource(refurbishment) {
+    if (!refurbishment?.scrap_inventory_id) return { kind: 'not_in_scrap', label: 'Not in scrap list' }
+    const jobCardNumber = refurbishment.scrap?.job_card?.job_card_number
+    if (jobCardNumber != null) return { kind: 'job_card', label: `Job card #${jobCardNumber}`, jobCardNumber }
+    const audit = refurbishment.scrap?.audit_line?.audit_item?.audit
+    if (audit) return { kind: 'audit', label: `Stock audit AUD-${audit.audit_number ?? '?'}` }
+    return { kind: 'unknown', label: '—' }
+}

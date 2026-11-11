@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { refurbishedName, refurbishmentLinesError, toRefurbishmentLine, approvedAmountError } from '../refurbishment'
+import { refurbishedName, refurbishmentLinesError, toRefurbishmentLine, approvedAmountError, refurbishmentSource } from '../refurbishment'
 
 const scrapById = {
     s1: { quantity_snapshot: 4, unit_snapshot: 'pcs', part_name_snapshot: 'Alternator' },
@@ -88,5 +88,27 @@ describe('approvedAmountError', () => {
     it('leaves a blank or malformed amount to the invoice form', () => {
         expect(approvedAmountError(lines, '')).toBeNull()
         expect(approvedAmountError(lines, '12.345')).toBeNull()
+    })
+})
+
+describe('refurbishmentSource', () => {
+    it('names the job card a scrap row came from', () => {
+        expect(refurbishmentSource({ scrap_inventory_id: 's1', scrap: { job_card: { job_card_number: 3101 } } }))
+            .toEqual({ kind: 'job_card', label: 'Job card #3101', jobCardNumber: 3101 })
+    })
+
+    it('names the stock audit a scrap row came from', () => {
+        const scrap = { job_card: null, audit_line: { audit_item: { audit: { audit_number: 7 } } } }
+        expect(refurbishmentSource({ scrap_inventory_id: 's1', scrap }))
+            .toEqual({ kind: 'audit', label: 'Stock audit AUD-7' })
+    })
+
+    it('says when the part was never in the scrap list', () => {
+        expect(refurbishmentSource({ scrap_inventory_id: null, comment: 'found in the yard' }).kind).toBe('not_in_scrap')
+        expect(refurbishmentSource(undefined).kind).toBe('not_in_scrap')
+    })
+
+    it('falls back when the scrap row cannot be read', () => {
+        expect(refurbishmentSource({ scrap_inventory_id: 's1', scrap: null }).kind).toBe('unknown')
     })
 })

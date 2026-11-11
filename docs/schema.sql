@@ -1180,7 +1180,8 @@ CREATE FUNCTION public.advance_ledger_lines() RETURNS TABLE(person text, entry_a
          jsonb_build_object(
              'supplier', s.entity_name, 'supplier_id', s.id,
              'approved', oi.approved_amount, 'to_supplier', oi.approved_amount - oi.advance_amount,
-             'purchase_invoice_id', oi.purchase_invoice_id)
+             'purchase_invoice_id', oi.purchase_invoice_id,
+             'purchase_invoice_kind', pi.kind)
   from   public.outsource_invoices oi
   left join public.job_cards         jc on jc.id = oi.job_card_id
   left join public.batch_services    bs on bs.id = oi.batch_service_id
@@ -3184,6 +3185,32 @@ $$;
 ALTER FUNCTION public.guard_outsource_invoice_status_owners() OWNER TO postgres;
 
 --
+-- Name: guard_purchase_invoice_kind(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_purchase_invoice_kind() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.kind IS DISTINCT FROM OLD.kind THEN
+            RAISE EXCEPTION 'An invoice''s kind cannot be changed once it is recorded.';
+        END IF;
+    ELSIF NEW.kind = 'refurbishment'
+          AND auth.uid() IS NOT NULL
+          AND current_setting('app.recording_refurbishment', true) IS DISTINCT FROM 'on' THEN
+        RAISE EXCEPTION 'A refurbishment is recorded from the Scrap page.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_purchase_invoice_kind() OWNER TO postgres;
+
+--
 -- Name: guard_refurbishment_invoice_header(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3192,12 +3219,7 @@ CREATE FUNCTION public.guard_refurbishment_invoice_header() RETURNS trigger
     SET search_path TO 'public'
     AS $$
 BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM   public.purchase_invoice_items pii
-        JOIN   public.scrap_refurbishments sr ON sr.purchase_invoice_item_id = pii.id
-        WHERE  pii.invoice_id = NEW.id
-    ) THEN
+    IF OLD.kind = 'refurbishment' THEN
         RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so its workshop cannot be changed.';
     END IF;
 
@@ -3236,6 +3258,29 @@ $$;
 
 
 ALTER FUNCTION public.guard_refurbishment_invoice_line() OWNER TO postgres;
+
+--
+-- Name: guard_refurbishment_invoice_new_line(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_refurbishment_invoice_new_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NOT NULL
+       AND current_setting('app.recording_refurbishment', true) IS DISTINCT FROM 'on'
+       AND EXISTS (SELECT 1 FROM public.purchase_invoices
+                   WHERE id = NEW.invoice_id AND kind = 'refurbishment') THEN
+        RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so lines cannot be added to it.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_refurbishment_invoice_new_line() OWNER TO postgres;
 
 --
 -- Name: has_labour_on_job_card(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3894,9 +3939,13 @@ BEGIN
     ORDER   BY id
     FOR UPDATE;
 
+    -- Only this function may mark an invoice a refurbishment or add lines to one.
+    PERFORM set_config('app.recording_refurbishment', 'on', true);
+
     INSERT INTO public.purchase_invoices
-        (invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
+        (kind, invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
     VALUES (
+        'refurbishment',
         btrim(p_invoice->>'invoice_number'),
         v_supplier_id,
         v_supplier,
@@ -4061,6 +4110,8 @@ BEGIN
             v_item_id, v_final_scrap, v_part_id, v_refurb_id, v_quantity, v_comment, auth.uid()
         );
     END LOOP;
+
+    PERFORM set_config('app.recording_refurbishment', 'off', true);
 
     SELECT COALESCE(sum(line_total), 0) INTO v_total
     FROM   public.purchase_invoice_items
@@ -5931,7 +5982,8 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
              public.invoice_submitted_day(oi)               as submitted_day,
              coalesce(oi.accepted_at, oi.updated_at)        as entered_at,
              oi.paid_by in ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN') as by_person,
-             jc.job_card_number, bs.batch_number
+             jc.job_card_number, bs.batch_number,
+             pi.kind as purchase_invoice_kind
       from   public.outsource_invoices oi
       left join public.job_cards         jc on jc.id = oi.job_card_id
       left join public.batch_services    bs on bs.id = oi.batch_service_id
@@ -5950,7 +6002,8 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
              'advance',         inv.advance_amount,
              'to_supplier',     inv.approved_amount - inv.advance_amount,
              'advance_by_person', inv.by_person,
-             'purchase_invoice_id', inv.purchase_invoice_id)
+             'purchase_invoice_id', inv.purchase_invoice_id,
+             'purchase_invoice_kind', inv.purchase_invoice_kind)
   from   inv join public.suppliers s on s.id = inv.sup_id
 
   union all
@@ -5959,7 +6012,8 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
          -inv.advance_amount, true, null,
          inv.id, inv.invoice_no, inv.job_card_number, inv.batch_number,
          jsonb_build_object('paid_by', inv.paid_by, 'advance_by_person', inv.by_person,
-                            'purchase_invoice_id', inv.purchase_invoice_id)
+                            'purchase_invoice_id', inv.purchase_invoice_id,
+                            'purchase_invoice_kind', inv.purchase_invoice_kind)
   from   inv
   where  inv.advance_amount > 0
 
@@ -10288,7 +10342,9 @@ CREATE TABLE public.purchase_invoices (
     created_at timestamp without time zone DEFAULT now(),
     invoice_file_url text,
     location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
-    supplier_id uuid
+    supplier_id uuid,
+    kind text DEFAULT 'purchase'::text NOT NULL,
+    CONSTRAINT purchase_invoices_kind_check CHECK ((kind = ANY (ARRAY['purchase'::text, 'refurbishment'::text])))
 );
 
 
@@ -13602,6 +13658,13 @@ CREATE TRIGGER trigger_guard_job_card_type_change BEFORE UPDATE OF type ON publi
 
 
 --
+-- Name: purchase_invoices trigger_guard_purchase_invoice_kind; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_purchase_invoice_kind BEFORE INSERT OR UPDATE OF kind ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.guard_purchase_invoice_kind();
+
+
+--
 -- Name: purchase_invoices trigger_guard_refurbishment_invoice_header; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -13613,6 +13676,13 @@ CREATE TRIGGER trigger_guard_refurbishment_invoice_header BEFORE UPDATE ON publi
 --
 
 CREATE TRIGGER trigger_guard_refurbishment_invoice_line BEFORE DELETE OR UPDATE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.guard_refurbishment_invoice_line();
+
+
+--
+-- Name: purchase_invoice_items trigger_guard_refurbishment_invoice_new_line; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_refurbishment_invoice_new_line BEFORE INSERT ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.guard_refurbishment_invoice_new_line();
 
 
 --
@@ -17015,6 +17085,15 @@ GRANT ALL ON FUNCTION public.guard_outsource_invoice_status_owners() TO service_
 
 
 --
+-- Name: FUNCTION guard_purchase_invoice_kind(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_purchase_invoice_kind() TO anon;
+GRANT ALL ON FUNCTION public.guard_purchase_invoice_kind() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_purchase_invoice_kind() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_refurbishment_invoice_header(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17030,6 +17109,15 @@ GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_header() TO service_rol
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO anon;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_refurbishment_invoice_new_line(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO anon;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO service_role;
 
 
 --
