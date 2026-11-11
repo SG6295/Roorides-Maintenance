@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { MagnifyingGlassIcon, CheckIcon } from '@heroicons/react/24/outline'
+import { MagnifyingGlassIcon, CheckIcon, MinusIcon } from '@heroicons/react/24/outline'
 
 /**
  * MultiFilterSelect — the multi-choice sibling of FilterSelect, for filter bars.
@@ -21,10 +21,14 @@ import { MagnifyingGlassIcon, CheckIcon } from '@heroicons/react/24/outline'
  *   noun        — plural for the summary, e.g. 'sites' → "3 sites"
  *   minWidth    — tailwind min-w class, default 'min-w-[140px]'
  *   searchable  — override the automatic threshold (true/false)
+ *   groups      — optional shortcut rows above the options, each { key, label, values }.
+ *                 Ticking one ticks all its values, unticking unticks them; it shows
+ *                 ticked when all are ticked and partly ticked when some are. Groups are
+ *                 never a value themselves and a search never hides them (MAIN-131).
  */
 const SEARCH_THRESHOLD = 10
 
-export default function MultiFilterSelect({ options = [], value = [], onChange, placeholder = 'All', noun = 'selected', minWidth = 'min-w-[140px]', searchable }) {
+export default function MultiFilterSelect({ options = [], value = [], onChange, placeholder = 'All', noun = 'selected', minWidth = 'min-w-[140px]', searchable, groups = [] }) {
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
   const ref = useRef(null)
@@ -60,19 +64,41 @@ export default function MultiFilterSelect({ options = [], value = [], onChange, 
   }, [options, query])
 
   // Rebuilt from `options` so the emitted order is stable and a value can never repeat.
+  const emit = (next) => onChange(options.filter(o => next.has(o.value)).map(o => o.value))
+
   const toggle = (optionValue) => {
     const next = new Set(selectedSet)
     if (next.has(optionValue)) next.delete(optionValue)
     else next.add(optionValue)
-    onChange(options.filter(o => next.has(o.value)).map(o => o.value))
+    emit(next)
+  }
+
+  // A group can only tick values that are actually options.
+  const shownGroups = useMemo(() => {
+    const optionValues = new Set(options.map(o => o.value))
+    return groups.map(g => {
+      const values = g.values.filter(v => optionValues.has(v))
+      const ticked = values.filter(v => selectedSet.has(v)).length
+      return { ...g, values, state: ticked === 0 ? 'none' : ticked === values.length ? 'all' : 'some' }
+    })
+  }, [groups, options, selectedSet])
+
+  const toggleGroup = (group) => {
+    const next = new Set(selectedSet)
+    if (group.state === 'all') group.values.forEach(v => next.delete(v))
+    else group.values.forEach(v => next.add(v))
+    emit(next)
   }
 
   const selectedOptions = options.filter(o => selectedSet.has(o.value))
+  const exactGroup = shownGroups.find(g => g.values.length > 0 && g.state === 'all' && g.values.length === selectedOptions.length)
   const displayText = selectedOptions.length === 0
     ? placeholder
     : selectedOptions.length === 1
       ? selectedOptions[0].label
-      : `${selectedOptions.length} ${noun}`
+      : exactGroup
+        ? exactGroup.label
+        : `${selectedOptions.length} ${noun}`
 
   return (
     <div className={`relative ${minWidth}`} ref={ref}>
@@ -117,6 +143,34 @@ export default function MultiFilterSelect({ options = [], value = [], onChange, 
             >
               {placeholder}
             </button>
+            {shownGroups.map(group => {
+              const empty = group.values.length === 0
+              return (
+                <button
+                  key={group.key}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={group.state === 'all' ? true : group.state === 'some' ? 'mixed' : false}
+                  disabled={empty}
+                  onClick={() => toggleGroup(group)}
+                  className={`w-full flex items-center gap-3 text-left px-3 py-2.5 text-sm rounded transition-colors ${
+                    empty ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-100'
+                  } ${group.state !== 'none' ? 'text-blue-700 font-medium' : empty ? '' : 'text-gray-700'}`}
+                >
+                  <span className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
+                    group.state !== 'none' ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
+                  }`}>
+                    {group.state === 'all' && <CheckIcon className="h-3 w-3 text-white" strokeWidth={3} />}
+                    {group.state === 'some' && <MinusIcon className="h-3 w-3 text-white" strokeWidth={3} />}
+                  </span>
+                  <span>{group.label}</span>
+                  <span className="text-xs text-gray-500">
+                    {empty ? `no ${noun}` : `${group.values.length} ${noun}`}
+                  </span>
+                </button>
+              )
+            })}
+            {shownGroups.length > 0 && <div className="my-1 border-t border-gray-200" />}
             {filtered.length === 0 && (
               <p className="px-3 py-2.5 text-sm text-gray-500">No matches.</p>
             )}

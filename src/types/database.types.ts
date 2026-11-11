@@ -1460,6 +1460,39 @@ export type Database = {
           },
         ]
       }
+      site_workshops: {
+        Row: {
+          location_id: string
+          site_id: string
+          updated_at: string
+        }
+        Insert: {
+          location_id: string
+          site_id: string
+          updated_at?: string
+        }
+        Update: {
+          location_id?: string
+          site_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_workshops_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "workshop_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_workshops_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: true
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sites: {
         Row: {
           corp_id: number | null
