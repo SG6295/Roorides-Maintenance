@@ -80,8 +80,11 @@ describe('invoiceOwner', () => {
         expect(invoiceOwner({})).toBeNull()
     })
 
-    it('names a refurbishment by its purchase invoice', () => {
-        expect(invoiceOwner({ detail: { purchase_invoice_id: 'pi1' } })).toEqual({ label: 'Purchase', purchaseInvoiceId: 'pi1' })
+    it('names a purchase invoice by its kind', () => {
+        expect(invoiceOwner({ detail: { purchase_invoice_id: 'pi1', purchase_invoice_kind: 'purchase' } }))
+            .toEqual({ label: 'Purchase', purchaseInvoiceId: 'pi1' })
+        expect(invoiceOwner({ detail: { purchase_invoice_id: 'pi2', purchase_invoice_kind: 'refurbishment' } }))
+            .toEqual({ label: 'Refurbishment', purchaseInvoiceId: 'pi2' })
     })
 })
 

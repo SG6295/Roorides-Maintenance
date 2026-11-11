@@ -9,7 +9,7 @@ import PurchaseModal from '../components/inventory/PurchaseModal'
 import BulkUploadModal from '../components/inventory/BulkUploadModal'
 import EditPartModal from '../components/inventory/EditPartModal'
 import ScrapDefaultCell from '../components/inventory/ScrapDefaultCell'
-import EditPurchaseModal from '../components/inventory/EditPurchaseModal'
+import PurchaseInvoiceEditor from '../components/inventory/PurchaseInvoiceEditor'
 import MoveStockModal from '../components/inventory/MoveStockModal'
 import StockAuditTab from '../components/inventory/audit/StockAuditTab'
 import {
@@ -552,7 +552,7 @@ function PurchaseHistory() {
     const [exporting, setExporting] = useState(false)
 
     // ?invoice=<id> opens that invoice — Outsource Invoices and the supplier ledger link
-    // to a refurbishment's purchase invoice this way (MAIN-123).
+    // to a purchase or refurbishment this way (MAIN-123, MAIN-130).
     const [searchParams, setSearchParams] = useSearchParams()
     const linkedId = searchParams.get('invoice')
     const { data: linkedInvoice } = usePurchaseInvoice(linkedId)
@@ -693,7 +693,7 @@ function PurchaseHistory() {
             )}
 
             {openInvoice && (
-                <EditPurchaseModal
+                <PurchaseInvoiceEditor
                     key={openInvoice.id}
                     invoice={openInvoice}
                     onClose={closeInvoice}

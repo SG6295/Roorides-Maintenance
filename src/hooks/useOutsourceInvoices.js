@@ -92,9 +92,8 @@ export function useOutsourceInvoices(filters = {}) {
                         )
                     ),
                     purchase_invoice:purchase_invoices!purchase_invoice_id(
-                        id, invoice_number, invoice_file_url,
-                        supplier:suppliers!supplier_id(id, entity_name),
-                        lines:purchase_invoice_items(refurbishment:scrap_refurbishments(id))
+                        id, kind, invoice_number, invoice_file_url,
+                        supplier:suppliers!supplier_id(id, entity_name)
                     )`,
                     isPaginated ? { count: 'exact' } : undefined,
                 )

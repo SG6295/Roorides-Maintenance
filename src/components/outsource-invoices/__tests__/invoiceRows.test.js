@@ -18,4 +18,10 @@ describe('enrichInvoice', () => {
         expect(enrichInvoice({ ...invoice, batch_service: { status: 'Cancelled' } }).cancelled).toBe(true)
         expect(enrichInvoice(invoice).cancelled).toBe(false)
     })
+
+    it('marks a refurbishment by its purchase invoice\'s kind', () => {
+        expect(enrichInvoice({ ...invoice, purchase_invoice: { kind: 'refurbishment' } }).refurbishment).toBe(true)
+        expect(enrichInvoice({ ...invoice, purchase_invoice: { kind: 'purchase' } }).refurbishment).toBe(false)
+        expect(enrichInvoice(invoice).refurbishment).toBe(false)
+    })
 })
