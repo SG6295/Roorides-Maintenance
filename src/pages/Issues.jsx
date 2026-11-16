@@ -5,6 +5,7 @@ import { useIssues } from '../hooks/useIssues'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
+import { ALL_ISSUE_CATEGORIES } from '../constants/issueCategories'
 
 export default function Issues() {
     const [filters, setFilters] = useState({
@@ -47,7 +48,7 @@ export default function Issues() {
                         value={filters.category}
                         onChange={v => setFilters({ ...filters, category: v })}
                         placeholder="All Categories"
-                        options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other'].map(c => ({ value: c, label: c }))}
+                        options={ALL_ISSUE_CATEGORIES.map(c => ({ value: c, label: c }))}
                     />
                 </div>
 

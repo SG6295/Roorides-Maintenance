@@ -8,11 +8,16 @@ import {
     DAY_NAMES, draftErrors, draftFromVersion, hasChanges, versionTimeline,
 } from '../utils/slaDraft'
 import { formatDate, formatDateTime, todayLocal } from '../utils/datetime'
+import { ISSUE_CATEGORIES } from '../constants/issueCategories'
+
+// A new version carries a Turnaround Time for the current categories only.
+const currentTurnaround = (version) => version.turnaround.filter(r => ISSUE_CATEGORIES.includes(r.category))
 
 /**
  * SLA Configuration (MAIN-136). Edits are a draft until Review changes → reason → Confirm;
  * nothing saves on its own. Acceptance SLA Threshold, Weekly Offs and Turnaround Time are
- * saved together as a new version; holidays are not versioned. Only super admins can save.
+ * saved together as a new version; only super admins can change them. Holidays are not
+ * versioned, and maintenance execs can change them too.
  */
 export default function SLASettings({ embedded = false }) {
     const { userProfile } = useAuth()
@@ -25,8 +30,10 @@ export default function SLASettings({ embedded = false }) {
 
     const canEdit = userProfile?.role === 'super_admin'
     const canView = canEdit || userProfile?.role === 'maintenance_exec'
+    const canEditHolidays = canView
 
     const latest = config?.latest
+    const latestTurnaround = useMemo(() => (latest ? currentTurnaround(latest) : []), [latest])
     const timeline = useMemo(() => (config ? versionTimeline(config.versions) : []), [config])
     const active = timeline.find(v => v.state === 'active')
     const scheduled = timeline.find(v => v.state === 'scheduled')
@@ -35,7 +42,7 @@ export default function SLASettings({ embedded = false }) {
     const [draftBase, setDraftBase] = useState(null)
     if (latest && latest !== draftBase) {
         setDraftBase(latest)
-        setDraft(draftFromVersion(latest, latest.turnaround))
+        setDraft(draftFromVersion(latest, currentTurnaround(latest)))
     }
 
     if (!canView) {
@@ -50,8 +57,8 @@ export default function SLASettings({ embedded = false }) {
     // While a version is scheduled, only holidays can change: the versioned settings show
     // the active version, read-only.
     const versionEditable = canEdit && !scheduled
-    const shown = versionEditable ? draft : active && draftFromVersion(active, active.turnaround)
-    const dirty = !!(draft && latest && hasChanges(latest, latest.turnaround, draft))
+    const shown = versionEditable ? draft : active && draftFromVersion(active, currentTurnaround(active))
+    const dirty = !!(draft && latest && hasChanges(latest, latestTurnaround, draft))
     const errors = draft ? draftErrors(draft) : []
 
     const update = (patch) => setDraft(d => ({ ...d, ...patch }))
@@ -88,7 +95,7 @@ export default function SLASettings({ embedded = false }) {
         setReviewing(false)
         // A new version also resets the draft when it loads; a holiday-only save doesn't
         // change the version, so start clean here.
-        setDraft(draftFromVersion(latest, latest.turnaround))
+        setDraft(draftFromVersion(latest, latestTurnaround))
         setMessage(result?.version_number
             ? `Saved as Version ${result.version_number}.`
             : 'Saved.')
@@ -109,7 +116,7 @@ export default function SLASettings({ embedded = false }) {
                     <h1 className="text-2xl font-bold text-gray-900">SLA Configuration</h1>
                     {!canEdit && (
                         <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                            View only — contact Super Admin to make changes
+                            You can change holidays — contact Super Admin for the other settings
                         </span>
                     )}
                 </div>
@@ -195,7 +202,7 @@ export default function SLASettings({ embedded = false }) {
                                     issue whose deadline window covers the date. Only today or later can be added or removed.
                                 </p>
 
-                                {canEdit && (
+                                {canEditHolidays && (
                                     <form onSubmit={addHoliday} className="flex flex-wrap gap-2 mb-4 max-w-lg">
                                         <input
                                             type="date"
@@ -233,10 +240,10 @@ export default function SLASettings({ embedded = false }) {
                                                             {h.adding && <span className="ml-2 text-xs text-green-700">Not saved</span>}
                                                         </td>
                                                         <td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium">
-                                                            {canEdit && h.adding && (
+                                                            {canEditHolidays && h.adding && (
                                                                 <button type="button" onClick={() => dropNewHoliday(h.date)} className="text-gray-600 hover:text-gray-900">Undo</button>
                                                             )}
-                                                            {canEdit && !h.adding && h.date >= today && (
+                                                            {canEditHolidays && !h.adding && h.date >= today && (
                                                                 <button type="button" onClick={() => toggleRemoveHoliday(h.date)} className={h.removing ? 'text-gray-600 hover:text-gray-900' : 'text-red-600 hover:text-red-900'}>
                                                                     {h.removing ? 'Undo' : 'Remove'}
                                                                 </button>
@@ -261,7 +268,7 @@ export default function SLASettings({ embedded = false }) {
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {(versionEditable ? latest : active).turnaround.map((rule) => {
+                                    {currentTurnaround(versionEditable ? latest : active).map((rule) => {
                                         const key = `${rule.severity}|${rule.category}`
                                         return (
                                             <tr key={key}>
@@ -299,7 +306,7 @@ export default function SLASettings({ embedded = false }) {
                 )}
             </div>
 
-            {canEdit && dirty && (
+            {canEditHolidays && dirty && (
                 <div className="fixed inset-x-0 bottom-0 z-40 bg-white border-t shadow-lg">
                     <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                         <div className="text-sm">
@@ -309,7 +316,7 @@ export default function SLASettings({ embedded = false }) {
                         <div className="flex gap-3">
                             <button
                                 type="button"
-                                onClick={() => setDraft(draftFromVersion(latest, latest.turnaround))}
+                                onClick={() => setDraft(draftFromVersion(latest, latestTurnaround))}
                                 className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
                             >
                                 Discard
@@ -330,7 +337,7 @@ export default function SLASettings({ embedded = false }) {
             {reviewing && (
                 <ReviewSLAChangesModal
                     version={latest}
-                    turnaround={latest.turnaround}
+                    turnaround={latestTurnaround}
                     holidays={config.holidays}
                     draft={draft}
                     onClose={() => setReviewing(false)}
