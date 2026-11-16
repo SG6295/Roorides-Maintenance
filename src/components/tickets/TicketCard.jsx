@@ -81,6 +81,14 @@ function SLABadge({ ticket, currentDate, acceptanceDeadline }) {
         return <SLATimer targetDate={acceptanceDeadline} currentDate={currentDate} />
     }
 
+    // A finished ticket has nothing left to count down to. Counting on past the deadline
+    // made work finished on time read as overdue (MAIN-134), so show the stored verdict
+    // instead. Rejected shows nothing: MAIN-135 changes how it is judged.
+    if (ticket.status === 'Resolved' || ticket.status === 'Closed') {
+        return <SLAVerdict status={ticket.overall_sla_status} />
+    }
+    if (ticket.status === 'Rejected') return null
+
     // Tickets from before the timestamptz migration carry no deadline and a verdict of NA
     // (MAIN-45): there is nothing to count down to, so show nothing rather than a zero.
     if (ticket.final_sla_end_date) {
@@ -88,4 +96,19 @@ function SLABadge({ ticket, currentDate, acceptanceDeadline }) {
     }
 
     return null
+}
+
+// Only a judged ticket gets a chip; Pending and NA show nothing.
+function SLAVerdict({ status }) {
+    if (status !== 'Adhered' && status !== 'Violated') return null
+
+    const adhered = status === 'Adhered'
+    return (
+        <span className={`text-xs font-medium px-2 py-0.5 rounded border ${adhered
+            ? 'bg-green-50 text-green-700 border-green-200'
+            : 'bg-red-50 text-red-700 border-red-200'}`}
+        >
+            SLA {status}
+        </span>
+    )
 }
