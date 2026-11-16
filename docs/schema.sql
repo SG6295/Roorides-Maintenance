@@ -1320,8 +1320,8 @@ CREATE FUNCTION public.calculate_issue_sla_dynamic() RETURNS trigger
     AS $$
 DECLARE
     rule_days INTEGER;
+    v_raised  timestamp;
 BEGIN
-    -- Recalculate on INSERT, or on UPDATE when category/severity actually changed.
     IF TG_OP = 'INSERT'
        OR (TG_OP = 'UPDATE' AND (
            NEW.category  IS DISTINCT FROM OLD.category OR
@@ -1334,10 +1334,14 @@ BEGIN
 
         IF rule_days IS NULL THEN rule_days := 3; END IF;
 
+        SELECT created_at INTO v_raised FROM tickets WHERE id = NEW.ticket_id;
+
         NEW.sla_days := rule_days;
-        -- created_at is `timestamp without time zone` holding UTC; name the zone rather
-        -- than relying on the session default.
-        NEW.sla_end_date := add_working_days(NEW.created_at AT TIME ZONE 'UTC', rule_days);
+        -- created_at is `timestamp without time zone` holding UTC. A pre-tracking ticket's
+        -- issues have no deadline (MAIN-45).
+        NEW.sla_end_date := CASE WHEN is_sla_tracked(v_raised)
+                                 THEN add_working_days(v_raised AT TIME ZONE 'UTC', rule_days)
+                            END;
     END IF;
 
     RETURN NEW;
@@ -1355,37 +1359,14 @@ CREATE FUNCTION public.calculate_ticket_overall_sla() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
-DECLARE
-    v_final_sla   timestamptz;
-    v_status      text;
-    v_resolved_at timestamptz;
 BEGIN
-    UPDATE tickets
-    SET final_sla_end_date = (
-        SELECT MAX(sla_end_date) FROM issues WHERE ticket_id = NEW.ticket_id
-    )
-    WHERE id = NEW.ticket_id
-    RETURNING final_sla_end_date, status::text, resolved_at
-    INTO v_final_sla, v_status, v_resolved_at;
-
-    UPDATE tickets
-    SET overall_sla_status =
-        CASE
-            WHEN v_final_sla IS NULL
-                THEN 'Pending'::sla_status_enum
-            WHEN v_status IN ('Resolved', 'Closed') AND v_resolved_at IS NULL
-                THEN overall_sla_status
-            WHEN v_status IN ('Resolved', 'Closed') AND v_final_sla >= v_resolved_at
-                THEN 'Adhered'::sla_status_enum
-            WHEN v_status IN ('Resolved', 'Closed')
-                THEN 'Violated'::sla_status_enum
-            WHEN v_final_sla < now()
-                THEN 'Violated'::sla_status_enum
-            ELSE 'Pending'::sla_status_enum
-        END
-    WHERE id = NEW.ticket_id;
-
-    RETURN NEW;
+    IF TG_OP <> 'INSERT' THEN
+        PERFORM refresh_ticket_sla(OLD.ticket_id);
+    END IF;
+    IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.ticket_id IS DISTINCT FROM OLD.ticket_id) THEN
+        PERFORM refresh_ticket_sla(NEW.ticket_id);
+    END IF;
+    RETURN NULL;
 END;
 $$;
 
@@ -3010,6 +2991,32 @@ $$;
 ALTER FUNCTION public.guard_issue_labour() OWNER TO postgres;
 
 --
+-- Name: guard_issue_on_finished_ticket(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_issue_on_finished_ticket() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_status text;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT status::text INTO v_status FROM tickets WHERE id = NEW.ticket_id;
+    IF v_status IN ('Closed', 'Rejected') THEN
+        RAISE EXCEPTION 'This ticket is %, so issues can''t be added to it.', v_status;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_issue_on_finished_ticket() OWNER TO postgres;
+
+--
 -- Name: guard_job_card_location_change(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3212,6 +3219,27 @@ $$;
 ALTER FUNCTION public.guard_purchase_invoice_kind() OWNER TO postgres;
 
 --
+-- Name: guard_rated_issue_reopen(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_rated_issue_reopen() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NOT NULL
+       AND OLD.status = 'Done' AND NEW.status IS DISTINCT FROM 'Done'
+       AND OLD.rating IS NOT NULL THEN
+        RAISE EXCEPTION 'Issue % has been rated by the supervisor, so it can''t be reopened.', OLD.issue_number;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_rated_issue_reopen() OWNER TO postgres;
+
+--
 -- Name: guard_refurbishment_invoice_header(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3282,6 +3310,27 @@ $$;
 
 
 ALTER FUNCTION public.guard_refurbishment_invoice_new_line() OWNER TO postgres;
+
+--
+-- Name: guard_ticket_reject_with_issues(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_ticket_reject_with_issues() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NOT NULL
+       AND NEW.status = 'Rejected' AND OLD.status IS DISTINCT FROM 'Rejected'
+       AND EXISTS (SELECT 1 FROM issues WHERE ticket_id = NEW.id) THEN
+        RAISE EXCEPTION 'This ticket has issues, so it can''t be rejected. Delete its issues first.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_ticket_reject_with_issues() OWNER TO postgres;
 
 --
 -- Name: has_labour_on_job_card(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3386,6 +3435,19 @@ $$;
 
 
 ALTER FUNCTION public.is_maintenance_exec() OWNER TO postgres;
+
+--
+-- Name: is_sla_tracked(timestamp without time zone); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.is_sla_tracked(p_raised_at timestamp without time zone) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT p_raised_at >= timestamp '2026-08-13 18:30:00';
+$$;
+
+
+ALTER FUNCTION public.is_sla_tracked(p_raised_at timestamp without time zone) OWNER TO postgres;
 
 --
 -- Name: is_super_admin(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3498,6 +3560,35 @@ $$;
 
 
 ALTER FUNCTION public.log_batch_service_change() OWNER TO postgres;
+
+--
+-- Name: log_issue_completed_at_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.log_issue_completed_at_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF NEW.completed_at IS NOT DISTINCT FROM OLD.completed_at THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
+    VALUES ('issues', NEW.ticket_id, 'UPDATE',
+            jsonb_build_object('issue_number', NEW.issue_number, 'description', NEW.description,
+                               'activity_complete_time', to_char(OLD.completed_at AT TIME ZONE 'Asia/Kolkata', 'DD Mon YYYY HH24:MI')),
+            jsonb_build_object('issue_number', NEW.issue_number, 'description', NEW.description,
+                               'activity_complete_time', to_char(NEW.completed_at AT TIME ZONE 'Asia/Kolkata', 'DD Mon YYYY HH24:MI')),
+            array['activity_complete_time'],
+            auth.uid());
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.log_issue_completed_at_change() OWNER TO postgres;
 
 --
 -- Name: log_issue_labour_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3659,34 +3750,26 @@ CREATE FUNCTION public.recalculate_open_slas() RETURNS void
     SET search_path TO 'public'
     AS $$
 BEGIN
-    -- Issue deadlines. Scoped by BOTH the issue and its ticket: production carries a
-    -- handful of issues left Open on tickets that were long since Resolved or Rejected,
-    -- and a rule edit should not resurrect deadlines on work nobody is doing.
-    --
-    -- Every open issue is recomputed, not just those matching the rule that changed.
-    -- Recomputation reads each issue's own current rule, so rows the edit did not touch
-    -- come out unchanged - it is idempotent, and far simpler than working out which rows
-    -- a given configuration change could have affected.
+    -- Scoped by both the issue and its ticket, as before: finished work is not retouched.
+    -- trg_update_ticket_sla_agg re-judges each ticket whose deadlines change.
     UPDATE issues i
     SET sla_days     = r.sla_days,
-        sla_end_date = add_working_days(i.created_at AT TIME ZONE 'UTC', r.sla_days)
+        sla_end_date = add_working_days(t.created_at AT TIME ZONE 'UTC', r.sla_days)
     FROM tickets t, sla_rules_config r
     WHERE i.ticket_id = t.id
       AND r.category  = i.category
       AND r.severity  = i.severity
       AND i.status <> 'Done'
-      AND t.status NOT IN ('Resolved', 'Closed', 'Rejected');
+      AND t.status NOT IN ('Resolved', 'Closed', 'Rejected')
+      AND is_sla_tracked(t.created_at)
+      AND (i.sla_days IS DISTINCT FROM r.sla_days
+           OR i.sla_end_date IS DISTINCT FROM add_working_days(t.created_at AT TIME ZONE 'UTC', r.sla_days));
 
-    -- Acceptance deadlines, for tickets still waiting to be accepted. Once acceptance has
-    -- been judged Adhered or Violated the measurement stands.
+    -- Acceptance deadlines, for tickets still waiting to be accepted.
     UPDATE tickets t
     SET acceptance_sla_end_date = acceptance_deadline(t.created_at AT TIME ZONE 'UTC')
     WHERE t.acceptance_sla_status = 'Pending'
       AND t.status NOT IN ('Resolved', 'Closed', 'Rejected');
-
-    -- The issue UPDATE above fires trg_update_ticket_sla_agg, which rolls each changed
-    -- sla_end_date up into tickets.final_sla_end_date and re-derives overall_sla_status.
-    -- Nothing further is needed here.
 END;
 $$;
 
@@ -3701,31 +3784,8 @@ CREATE FUNCTION public.recalculate_ticket_sla_on_status_change() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
-DECLARE
-    v_final_sla   timestamptz;
-    v_resolved_at timestamptz;
 BEGIN
-    SELECT final_sla_end_date, resolved_at
-    INTO v_final_sla, v_resolved_at
-    FROM tickets WHERE id = NEW.id;
-
-    UPDATE tickets
-    SET overall_sla_status =
-        CASE
-            WHEN v_final_sla IS NULL
-                THEN 'Pending'::sla_status_enum
-            WHEN NEW.status::text IN ('Resolved', 'Closed') AND v_resolved_at IS NULL
-                THEN overall_sla_status
-            WHEN NEW.status::text IN ('Resolved', 'Closed') AND v_final_sla >= v_resolved_at
-                THEN 'Adhered'::sla_status_enum
-            WHEN NEW.status::text IN ('Resolved', 'Closed')
-                THEN 'Violated'::sla_status_enum
-            WHEN v_final_sla < now()
-                THEN 'Violated'::sla_status_enum
-            ELSE 'Pending'::sla_status_enum
-        END
-    WHERE id = NEW.id;
-
+    PERFORM refresh_ticket_sla(NEW.id);
     RETURN NEW;
 END;
 $$;
@@ -4608,6 +4668,99 @@ $$;
 ALTER FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) OWNER TO postgres;
 
 --
+-- Name: refresh_overdue_slas(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.refresh_overdue_slas() RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    PERFORM refresh_ticket_sla(t.id)
+    FROM tickets t
+    WHERE (t.overall_sla_status = 'Pending' AND t.final_sla_end_date < now())
+       OR EXISTS (SELECT 1 FROM issues i
+                  WHERE i.ticket_id = t.id
+                    AND i.sla_status = 'Pending'
+                    AND i.sla_end_date < now());
+
+    UPDATE tickets t
+    SET acceptance_sla_status = 'Violated'
+    WHERE t.acceptance_sla_status = 'Pending'
+      AND t.acceptance_sla_end_date < now()
+      AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.ticket_id = t.id);
+END;
+$$;
+
+
+ALTER FUNCTION public.refresh_overdue_slas() OWNER TO postgres;
+
+--
+-- Name: refresh_ticket_sla(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.refresh_ticket_sla(p_ticket_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_ticket   tickets%ROWTYPE;
+    v_tracked  boolean;
+    v_issues   int;
+    v_all_done boolean;
+    v_deadline timestamptz;
+    v_finish   timestamptz;
+    v_status   sla_status_enum;
+BEGIN
+    SELECT * INTO v_ticket FROM tickets WHERE id = p_ticket_id;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    v_tracked := is_sla_tracked(v_ticket.created_at);
+
+    UPDATE issues i
+    SET sla_status = v.verdict
+    FROM (
+        SELECT id,
+               CASE WHEN NOT v_tracked THEN 'NA'::sla_status_enum
+                    ELSE sla_verdict(sla_end_date,
+                                     CASE WHEN v_ticket.status = 'Rejected' THEN v_ticket.rejected_at
+                                          WHEN status = 'Done' THEN completed_at
+                                     END)
+               END AS verdict
+        FROM issues
+        WHERE ticket_id = p_ticket_id
+    ) v
+    WHERE i.id = v.id
+      AND i.sla_status IS DISTINCT FROM v.verdict;
+
+    SELECT count(*), bool_and(status = 'Done'), max(sla_end_date), max(completed_at)
+    INTO v_issues, v_all_done, v_deadline, v_finish
+    FROM issues
+    WHERE ticket_id = p_ticket_id;
+
+    IF NOT v_tracked OR v_issues = 0 THEN
+        v_status := 'NA';
+    ELSE
+        v_status := sla_verdict(v_deadline,
+                                CASE WHEN v_ticket.status = 'Rejected' THEN v_ticket.rejected_at
+                                     WHEN v_all_done THEN v_finish
+                                END);
+    END IF;
+
+    UPDATE tickets
+    SET final_sla_end_date = v_deadline,
+        overall_sla_status = v_status
+    WHERE id = p_ticket_id
+      AND (final_sla_end_date IS DISTINCT FROM v_deadline
+           OR overall_sla_status IS DISTINCT FROM v_status);
+END;
+$$;
+
+
+ALTER FUNCTION public.refresh_ticket_sla(p_ticket_id uuid) OWNER TO postgres;
+
+--
 -- Name: restore_batch_service_invoice(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5375,24 +5528,31 @@ CREATE FUNCTION public.set_issue_completed_on() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
-DECLARE
-    v_today date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
 BEGIN
     IF NEW.status::text <> 'Done' THEN
+        NEW.completed_at := NULL;
         NEW.completed_on := NULL;
         RETURN NEW;
     END IF;
 
-    -- On reaching Done the row carries the NULL it was cleared to, so this stamps today
-    -- unless the caller sent a date of its own.
-    IF NEW.completed_on IS NULL THEN
-        NEW.completed_on := v_today;
+    IF TG_OP = 'UPDATE'
+       AND NEW.completed_on IS DISTINCT FROM OLD.completed_on
+       AND NEW.completed_at IS NOT DISTINCT FROM OLD.completed_at
+       AND NEW.completed_on IS NOT NULL THEN
+        NEW.completed_at := NEW.completed_on::timestamp AT TIME ZONE 'Asia/Kolkata';
     END IF;
 
-    IF NEW.completed_on > v_today THEN
-        RAISE EXCEPTION 'The completion date cannot be in the future.';
+    -- On reaching Done the row carries the NULL it was cleared to, so this stamps now
+    -- unless the caller sent a time or a date of its own.
+    IF NEW.completed_at IS NULL THEN
+        NEW.completed_at := COALESCE(NEW.completed_on::timestamp AT TIME ZONE 'Asia/Kolkata', now());
     END IF;
 
+    IF NEW.completed_at > now() THEN
+        RAISE EXCEPTION 'The activity complete time cannot be in the future.';
+    END IF;
+
+    NEW.completed_on := (NEW.completed_at AT TIME ZONE 'Asia/Kolkata')::date;
     RETURN NEW;
 END;
 $$;
@@ -5578,6 +5738,24 @@ $$;
 ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
 
 --
+-- Name: sla_verdict(timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) RETURNS public.sla_status_enum
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT CASE
+        WHEN p_deadline IS NULL         THEN 'NA'
+        WHEN p_finished_at IS NOT NULL  THEN CASE WHEN p_finished_at <= p_deadline THEN 'Adhered' ELSE 'Violated' END
+        WHEN p_deadline < now()         THEN 'Violated'
+        ELSE 'Pending'
+    END::sla_status_enum;
+$$;
+
+
+ALTER FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) OWNER TO postgres;
+
+--
 -- Name: stamp_outsource_invoice_accepted_at(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5675,6 +5853,11 @@ BEGIN
         NEW.closed_at := now();
         -- Closed is only reached through Resolved, so this is a safety net.
         NEW.resolved_at := COALESCE(NEW.resolved_at, now());
+    END IF;
+
+    IF NEW.status::text NOT IN ('Resolved', 'Closed') AND OLD.status::text IN ('Resolved', 'Closed') THEN
+        NEW.resolved_at := NULL;
+        NEW.closed_at   := NULL;
     END IF;
 
     RETURN NEW;
@@ -6291,39 +6474,44 @@ DECLARE
   has_job_cards BOOLEAN;
 BEGIN
   SELECT status INTO ticket_status FROM tickets WHERE id = COALESCE(NEW.ticket_id, OLD.ticket_id);
-  
-  SELECT COUNT(*), 
+
+  SELECT COUNT(*),
          COUNT(*) FILTER (WHERE status = 'Done'),
          COUNT(*) FILTER (WHERE rating IS NOT NULL)
   INTO total_issues, done_issues, rated_issues
   FROM issues WHERE ticket_id = COALESCE(NEW.ticket_id, OLD.ticket_id);
-  
+
   SELECT EXISTS(
-    SELECT 1 FROM issues i 
-    WHERE i.ticket_id = COALESCE(NEW.ticket_id, OLD.ticket_id) 
+    SELECT 1 FROM issues i
+    WHERE i.ticket_id = COALESCE(NEW.ticket_id, OLD.ticket_id)
     AND i.job_card_id IS NOT NULL
   ) INTO has_job_cards;
-  
+
   -- New → Accepted (on issue creation)
   IF ticket_status = 'New' AND total_issues > 0 AND TG_OP = 'INSERT' THEN
     UPDATE tickets SET status = 'Accepted' WHERE id = NEW.ticket_id;
   END IF;
-  
+
   -- Accepted → Work In Progress (on job card assignment)
   IF ticket_status = 'Accepted' AND has_job_cards THEN
     UPDATE tickets SET status = 'Work In Progress' WHERE id = COALESCE(NEW.ticket_id, OLD.ticket_id);
   END IF;
-  
+
   -- Work In Progress → Resolved (all issues done)
   IF ticket_status = 'Work In Progress' AND total_issues > 0 AND done_issues = total_issues THEN
     UPDATE tickets SET status = 'Resolved' WHERE id = COALESCE(NEW.ticket_id, OLD.ticket_id);
   END IF;
-  
+
+  -- Resolved → Work In Progress (an issue added, or an unrated issue reopened; MAIN-135)
+  IF ticket_status = 'Resolved' AND done_issues < total_issues THEN
+    UPDATE tickets SET status = 'Work In Progress' WHERE id = COALESCE(NEW.ticket_id, OLD.ticket_id);
+  END IF;
+
   -- Resolved → Closed (all issues have rating/feedback)
   IF ticket_status = 'Resolved' AND total_issues > 0 AND rated_issues = total_issues THEN
     UPDATE tickets SET status = 'Closed' WHERE id = COALESCE(NEW.ticket_id, OLD.ticket_id);
   END IF;
-  
+
   RETURN COALESCE(NEW, OLD);
 END;
 $$;
@@ -10129,6 +10317,7 @@ CREATE TABLE public.issues (
     rated_at timestamp without time zone,
     labour_hours numeric(5,2),
     completed_on date,
+    completed_at timestamp with time zone,
     CONSTRAINT check_rated_at_after_created CHECK (((rated_at IS NULL) OR (rated_at >= created_at)))
 );
 
@@ -10136,10 +10325,24 @@ CREATE TABLE public.issues (
 ALTER TABLE public.issues OWNER TO postgres;
 
 --
+-- Name: COLUMN issues.sla_status; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.issues.sla_status IS 'The issue''s own SLA status, written by refresh_ticket_sla (MAIN-135).';
+
+
+--
 -- Name: COLUMN issues.completed_on; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.issues.completed_on IS 'Day the work item was completed (IST). Set when status becomes Done, cleared when it leaves Done; the exec may change it. Labour analytics place hours by this date.';
+COMMENT ON COLUMN public.issues.completed_on IS 'IST date of completed_at, kept in step by set_issue_completed_on. Labour analytics place hours by this date.';
+
+
+--
+-- Name: COLUMN issues.completed_at; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.issues.completed_at IS 'Activity complete time: when the issue was finished. Stamped when it is marked Done, cleared when it leaves Done; the exec may correct it, never into the future. Every change is logged on the ticket timeline. The issue''s SLA is judged against it (MAIN-135).';
 
 
 --
@@ -13533,6 +13736,13 @@ CREATE TRIGGER batch_services_set_updated_at BEFORE UPDATE ON public.batch_servi
 
 
 --
+-- Name: issues issue_completed_at_audit; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER issue_completed_at_audit AFTER UPDATE OF status, completed_on, completed_at ON public.issues FOR EACH ROW EXECUTE FUNCTION public.log_issue_completed_at_change();
+
+
+--
 -- Name: issue_labour issue_labour_audit; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -13617,6 +13827,27 @@ CREATE TRIGGER trg_guard_issue_labour BEFORE INSERT OR UPDATE ON public.issue_la
 
 
 --
+-- Name: issues trg_guard_issue_on_finished_ticket; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_issue_on_finished_ticket BEFORE INSERT ON public.issues FOR EACH ROW EXECUTE FUNCTION public.guard_issue_on_finished_ticket();
+
+
+--
+-- Name: issues trg_guard_rated_issue_reopen; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_rated_issue_reopen BEFORE UPDATE OF status ON public.issues FOR EACH ROW EXECUTE FUNCTION public.guard_rated_issue_reopen();
+
+
+--
+-- Name: tickets trg_guard_ticket_reject_with_issues; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_ticket_reject_with_issues BEFORE UPDATE OF status ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.guard_ticket_reject_with_issues();
+
+
+--
 -- Name: holidays trg_holidays_recalc; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -13634,7 +13865,7 @@ CREATE TRIGGER trg_issue_sla_dynamic BEFORE INSERT OR UPDATE ON public.issues FO
 -- Name: issues trg_set_issue_completed_on; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trg_set_issue_completed_on BEFORE INSERT OR UPDATE OF status, completed_on ON public.issues FOR EACH ROW EXECUTE FUNCTION public.set_issue_completed_on();
+CREATE TRIGGER trg_set_issue_completed_on BEFORE INSERT OR UPDATE OF status, completed_on, completed_at ON public.issues FOR EACH ROW EXECUTE FUNCTION public.set_issue_completed_on();
 
 
 --
@@ -13697,7 +13928,7 @@ CREATE TRIGGER trg_ticket_sla_on_status_change AFTER UPDATE OF status ON public.
 -- Name: issues trg_update_ticket_sla_agg; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trg_update_ticket_sla_agg AFTER INSERT OR UPDATE OF sla_end_date, status, category, severity ON public.issues FOR EACH ROW EXECUTE FUNCTION public.calculate_ticket_overall_sla();
+CREATE TRIGGER trg_update_ticket_sla_agg AFTER INSERT OR DELETE OR UPDATE OF status, completed_at, completed_on, sla_end_date, category, severity, ticket_id ON public.issues FOR EACH ROW EXECUTE FUNCTION public.calculate_ticket_overall_sla();
 
 
 --
@@ -13795,7 +14026,7 @@ CREATE TRIGGER trigger_reverse_part_inventory_on_delete AFTER DELETE ON public.p
 -- Name: issues trigger_update_ticket_status; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trigger_update_ticket_status AFTER INSERT OR UPDATE ON public.issues FOR EACH ROW EXECUTE FUNCTION public.update_ticket_status_on_issue_change();
+CREATE TRIGGER trigger_update_ticket_status AFTER INSERT OR DELETE OR UPDATE OF status, rating, job_card_id, ticket_id ON public.issues FOR EACH ROW EXECUTE FUNCTION public.update_ticket_status_on_issue_change();
 
 
 --
@@ -17193,6 +17424,15 @@ GRANT ALL ON FUNCTION public.guard_issue_labour() TO service_role;
 
 
 --
+-- Name: FUNCTION guard_issue_on_finished_ticket(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_issue_on_finished_ticket() TO anon;
+GRANT ALL ON FUNCTION public.guard_issue_on_finished_ticket() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_issue_on_finished_ticket() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_job_card_location_change(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17229,6 +17469,15 @@ GRANT ALL ON FUNCTION public.guard_purchase_invoice_kind() TO service_role;
 
 
 --
+-- Name: FUNCTION guard_rated_issue_reopen(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_rated_issue_reopen() TO anon;
+GRANT ALL ON FUNCTION public.guard_rated_issue_reopen() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_rated_issue_reopen() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_refurbishment_invoice_header(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17253,6 +17502,15 @@ GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_line() TO service_role;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO anon;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_ticket_reject_with_issues(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO anon;
+GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO service_role;
 
 
 --
@@ -17301,6 +17559,15 @@ GRANT ALL ON FUNCTION public.is_maintenance_exec() TO service_role;
 
 
 --
+-- Name: FUNCTION is_sla_tracked(p_raised_at timestamp without time zone); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.is_sla_tracked(p_raised_at timestamp without time zone) TO anon;
+GRANT ALL ON FUNCTION public.is_sla_tracked(p_raised_at timestamp without time zone) TO authenticated;
+GRANT ALL ON FUNCTION public.is_sla_tracked(p_raised_at timestamp without time zone) TO service_role;
+
+
+--
 -- Name: FUNCTION is_super_admin(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17325,6 +17592,15 @@ GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid
 GRANT ALL ON FUNCTION public.log_batch_service_change() TO anon;
 GRANT ALL ON FUNCTION public.log_batch_service_change() TO authenticated;
 GRANT ALL ON FUNCTION public.log_batch_service_change() TO service_role;
+
+
+--
+-- Name: FUNCTION log_issue_completed_at_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.log_issue_completed_at_change() TO anon;
+GRANT ALL ON FUNCTION public.log_issue_completed_at_change() TO authenticated;
+GRANT ALL ON FUNCTION public.log_issue_completed_at_change() TO service_role;
 
 
 --
@@ -17442,6 +17718,24 @@ GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb
 GRANT ALL ON FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) TO anon;
 GRANT ALL ON FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION refresh_overdue_slas(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.refresh_overdue_slas() TO anon;
+GRANT ALL ON FUNCTION public.refresh_overdue_slas() TO authenticated;
+GRANT ALL ON FUNCTION public.refresh_overdue_slas() TO service_role;
+
+
+--
+-- Name: FUNCTION refresh_ticket_sla(p_ticket_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.refresh_ticket_sla(p_ticket_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.refresh_ticket_sla(p_ticket_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.refresh_ticket_sla(p_ticket_id uuid) TO service_role;
 
 
 --
@@ -17577,6 +17871,15 @@ GRANT ALL ON FUNCTION public.set_supplier_credit_days(p_supplier_id uuid, p_days
 GRANT ALL ON FUNCTION public.set_updated_at() TO anon;
 GRANT ALL ON FUNCTION public.set_updated_at() TO authenticated;
 GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
+
+
+--
+-- Name: FUNCTION sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) TO anon;
+GRANT ALL ON FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) TO service_role;
 
 
 --

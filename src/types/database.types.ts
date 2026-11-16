@@ -480,6 +480,7 @@ export type Database = {
       issues: {
         Row: {
           category: Database["public"]["Enums"]["issue_category"]
+          completed_at: string | null
           completed_on: string | null
           created_at: string | null
           description: string
@@ -500,6 +501,7 @@ export type Database = {
         }
         Insert: {
           category: Database["public"]["Enums"]["issue_category"]
+          completed_at?: string | null
           completed_on?: string | null
           created_at?: string | null
           description: string
@@ -520,6 +522,7 @@ export type Database = {
         }
         Update: {
           category?: Database["public"]["Enums"]["issue_category"]
+          completed_at?: string | null
           completed_on?: string | null
           created_at?: string | null
           description?: string
@@ -2906,6 +2909,7 @@ export type Database = {
       }
       is_finance: { Args: never; Returns: boolean }
       is_maintenance_exec: { Args: never; Returns: boolean }
+      is_sla_tracked: { Args: { p_raised_at: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
       job_card_site_accessible_to_user: {
         Args: { p_job_card_id: string }
@@ -2947,6 +2951,8 @@ export type Database = {
         Args: { p_payment: Json; p_supplier_id: string }
         Returns: string
       }
+      refresh_overdue_slas: { Args: never; Returns: undefined }
+      refresh_ticket_sla: { Args: { p_ticket_id: string }; Returns: undefined }
       restore_batch_service_invoice: {
         Args: { p_batch_id: string; p_links: Json }
         Returns: undefined
@@ -2994,6 +3000,10 @@ export type Database = {
       set_supplier_credit_days: {
         Args: { p_days: number; p_supplier_id: string }
         Returns: undefined
+      }
+      sla_verdict: {
+        Args: { p_deadline: string; p_finished_at: string }
+        Returns: Database["public"]["Enums"]["sla_status_enum"]
       }
       start_stock_audit: {
         Args: { p_location_id: string; p_notes?: string }

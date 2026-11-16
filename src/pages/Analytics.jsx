@@ -152,10 +152,10 @@ export default function Analytics({ embedded = false }) {
         const acceptTotal = aggregates.accept_adhered + aggregates.accept_violated
         const acceptRate = acceptTotal > 0 ? Math.round((aggregates.accept_adhered / acceptTotal) * 100) : null
 
-        // Tickets raised before the timestamptz migration were never measured under the
-        // current rules and carry a verdict of NA (MAIN-45). They are excluded from every
-        // rate above, and counted separately here so the figures still reconcile against
-        // the ticket total instead of silently swelling "awaiting issue".
+        // Not applicable: tickets raised before SLA tracking (MAIN-45), and for completion
+        // also tickets with no issues (MAIN-135). They are excluded from every rate above,
+        // and counted separately here so the figures still reconcile against the ticket
+        // total instead of silently swelling "awaiting issue".
         const completionNA = aggregates.comp_in_na + aggregates.comp_out_na
         const acceptNA = aggregates.accept_na
         const acceptAwaiting = aggregates.total_tickets - acceptTotal - acceptNA
@@ -182,11 +182,11 @@ export default function Analytics({ embedded = false }) {
             // 4. In House / Outsource
             'In House', 'Outsource',
             // 5. Acceptance SLA
-            'Accept (Pending)', 'Accept (Adhered)', 'Accept (Violated)', 'Accept (Not Tracked)', 'Acceptance SLA % (Sharan KPI)',
+            'Accept (Pending)', 'Accept (Adhered)', 'Accept (Violated)', 'Accept (Not Applicable)', 'Acceptance SLA % (Sharan KPI)',
             // 6. Completion SLA (In House)
-            'Comp In (WIP Within)', 'Comp In (Adhered)', 'Comp In (Violated)', 'Comp In (Not Tracked)', 'Comp In SLA % (Sharan KPI)',
+            'Comp In (WIP Within)', 'Comp In (Adhered)', 'Comp In (Violated)', 'Comp In (Not Applicable)', 'Comp In SLA % (Sharan KPI)',
             // 7. Completion SLA (Outsourced)
-            'Comp Out (WIP Within)', 'Comp Out (Adhered)', 'Comp Out (Violated)', 'Comp Out (Not Tracked)', 'Comp Out SLA % (Manjunath KPI)',
+            'Comp Out (WIP Within)', 'Comp Out (Adhered)', 'Comp Out (Violated)', 'Comp Out (Not Applicable)', 'Comp Out SLA % (Manjunath KPI)',
             // 8. Ratings
             'Rating Pending', 'Ratings Collected', 'Collection % (Sharan KPI)',
             'Good', 'Ok', 'Bad', 'CSAT % (Manjunath KPI)'
@@ -293,14 +293,14 @@ export default function Analytics({ embedded = false }) {
                             title="Overall SLA Adherence"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
                             rate={slaMetrics?.adherenceRate}
-                            detail={slaMetrics ? `${slaMetrics.totalAdhered} adhered · ${slaMetrics.totalResolved - slaMetrics.totalAdhered} violated${slaMetrics.completionNA ? ` · ${slaMetrics.completionNA} not tracked` : ''} (of ${aggregates?.total_tickets} total tickets)` : null}
+                            detail={slaMetrics ? `${slaMetrics.totalAdhered} adhered · ${slaMetrics.totalResolved - slaMetrics.totalAdhered} violated${slaMetrics.completionNA ? ` · ${slaMetrics.completionNA} not applicable` : ''} (of ${aggregates?.total_tickets} total tickets)` : null}
                             icon={<CheckCircleIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
                             title="Acceptance SLA Compliance"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
                             rate={slaMetrics?.acceptRate}
-                            detail={slaMetrics ? `${slaMetrics.acceptAdhered} on time · ${slaMetrics.acceptTotal - slaMetrics.acceptAdhered} late${slaMetrics.acceptNA ? ` · ${slaMetrics.acceptNA} not tracked` : ''} · ${slaMetrics.acceptAwaiting} awaiting issue` : null}
+                            detail={slaMetrics ? `${slaMetrics.acceptAdhered} on time · ${slaMetrics.acceptTotal - slaMetrics.acceptAdhered} late${slaMetrics.acceptNA ? ` · ${slaMetrics.acceptNA} not applicable` : ''} · ${slaMetrics.acceptAwaiting} awaiting issue` : null}
                             icon={<ClockIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
@@ -356,7 +356,7 @@ export default function Analytics({ embedded = false }) {
                             <Row label="Adhered" value={aggregates.comp_in_adhered} color="text-green-600" />
                             <Row label="Violated" value={aggregates.comp_in_violated} color="text-red-600" />
                             {aggregates.comp_in_na > 0 && (
-                                <Row label="Not tracked (pre-migration)" value={aggregates.comp_in_na} color="text-gray-500" />
+                                <Row label="Not applicable" value={aggregates.comp_in_na} color="text-gray-500" />
                             )}
                             <Row label="SLA %" value={aggregates.comp_in_sla_perc} bold />
                         </VerticalTable>

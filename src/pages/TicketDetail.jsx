@@ -10,8 +10,10 @@ import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import { getDriveThumbnailUrl } from '../lib/googleDrive'
 import Navigation from '../components/shared/Navigation'
 import SLATimer from '../components/shared/SLATimer'
+import SLAStatusBadge from '../components/shared/SLAStatusBadge'
 import { toDate } from '../utils/datetime'
 import { labourTechnicianNames } from '../utils/labour'
+import { notApplicableReason, ticketFinishedAt } from '../utils/slaStatus'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import PhotoUpload from '../components/tickets/PhotoUpload'
 import TicketTimeline from '../components/tickets/TicketTimeline'
@@ -129,14 +131,21 @@ export default function TicketDetail() {
                   >
                     <MenuItems anchor="bottom end" className="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
                       <div className="py-1">
-                        <MenuItem>
-                          {({ active }) => (
+                        {/* A ticket with issues can't be rejected; the database refuses it too (MAIN-135). */}
+                        <MenuItem disabled={issues?.length > 0}>
+                          {({ active, disabled }) => (
                             <button
                               onClick={() => setIsRejectModalOpen(true)}
-                              className={`${active ? 'bg-red-50 text-red-700' : 'text-red-600'} flex items-center gap-2 w-full px-4 py-2 text-left text-sm`}
+                              disabled={disabled}
+                              className={`${disabled ? 'text-gray-400 cursor-not-allowed' : active ? 'bg-red-50 text-red-700' : 'text-red-600'} flex items-start gap-2 w-full px-4 py-2 text-left text-sm`}
                             >
-                              <NoSymbolIcon className="w-4 h-4" />
-                              Reject Ticket
+                              <NoSymbolIcon className="w-4 h-4 mt-0.5 shrink-0" />
+                              <span>
+                                Reject Ticket
+                                {disabled && (
+                                  <span className="block text-xs text-gray-500">Delete its issues first</span>
+                                )}
+                              </span>
                             </button>
                           )}
                         </MenuItem>
@@ -149,7 +158,7 @@ export default function TicketDetail() {
           </div>
 
           {/* SLA Warning Banner */}
-          <SLAWarning ticket={ticket} />
+          <SLAWarning ticket={ticket} issues={issues} />
         </div>
       </header>
 
@@ -342,7 +351,7 @@ function FeedbackSmileys({ issue, ticket, userProfile, onUpdateFeedback, isUpdat
   )
 }
 
-function SLAWarning({ ticket }) {
+function SLAWarning({ ticket, issues }) {
   const [now, setNow] = useState(new Date())
 
   useEffect(() => {
@@ -350,16 +359,15 @@ function SLAWarning({ ticket }) {
     return () => clearInterval(t)
   }, [])
 
-  // Tickets raised before the timestamptz migration carry no deadline and a verdict of NA
-  // (MAIN-45). Say so rather than showing nothing, so an empty panel is not mistaken for
-  // an SLA that was met.
+  // Not applicable: raised before SLA tracking, or no issues (MAIN-135). Say why rather
+  // than showing nothing, so an empty panel is not mistaken for an SLA that was met.
   if (ticket.overall_sla_status === 'NA') {
     return (
       <div className="mt-4 flex items-center gap-3 px-4 py-3 rounded-lg border bg-gray-50 border-gray-200">
         <span className="text-base">—</span>
         <div>
-          <p className="text-sm font-semibold text-gray-700">SLA not available</p>
-          <p className="text-xs text-gray-500">Raised before SLA deadlines were tracked to the minute</p>
+          <p className="text-sm font-semibold text-gray-700">SLA not applicable</p>
+          <p className="text-xs text-gray-500">{notApplicableReason(ticket)}</p>
         </div>
       </div>
     )
@@ -368,18 +376,16 @@ function SLAWarning({ ticket }) {
   const deadline = toDate(ticket.final_sla_end_date)
   if (!deadline) return null
 
-  // A rejected ticket has no work left to count down to (MAIN-134); MAIN-135 changes how
-  // it is judged, so show nothing for now.
-  if (ticket.status === 'Rejected') return null
-
-  const isTerminal = ticket.status === 'Resolved' || ticket.status === 'Closed'
+  // A finished ticket shows its stored verdict. Resolved/Closed are judged at the latest
+  // activity complete time among the issues; a past Rejected ticket that had issues at its
+  // rejection time (MAIN-135).
+  const isTerminal = ['Resolved', 'Closed', 'Rejected'].includes(ticket.status)
 
   if (isTerminal) {
     const status = ticket.overall_sla_status
     if (!status || status === 'Pending') return null
     const adhered = status === 'Adhered'
-    // The verdict is judged at resolved_at, so show it beside the deadline.
-    const resolvedAt = toDate(ticket.resolved_at)
+    const finishedAt = ticket.status === 'Rejected' ? toDate(ticket.rejected_at) : ticketFinishedAt(issues)
     return (
       <div className={`mt-4 flex items-center gap-3 px-4 py-3 rounded-lg border ${adhered ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
         <span className="text-base">{adhered ? '✅' : '⚠️'}</span>
@@ -387,7 +393,7 @@ function SLAWarning({ ticket }) {
           <p className={`text-sm font-semibold ${adhered ? 'text-green-700' : 'text-red-700'}`}>SLA {adhered ? 'Adhered' : 'Violated'}</p>
           <p className="text-xs text-gray-500">
             Deadline was {format(deadline, 'MMM d, yyyy, h:mm a')}
-            {resolvedAt && <> · Resolved {format(resolvedAt, 'MMM d, yyyy, h:mm a')}</>}
+            {finishedAt && <> · {ticket.status === 'Rejected' ? 'Rejected' : 'Finished'} {format(finishedAt, 'MMM d, yyyy, h:mm a')}</>}
           </p>
         </div>
       </div>
@@ -801,6 +807,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Category</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Severity</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">SLA</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Feedback</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Job Card</th>
                 {canEdit && <th className="px-4 py-3 text-right text-xs font-medium text-gray-600 uppercase tracking-wider w-24">Actions</th>}
@@ -864,6 +871,9 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         {issue.status}
                       </span>
                     </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm">
+                      <SLAStatusBadge status={issue.sla_status} deadline={issue.sla_end_date} />
+                    </td>
                     {/* Feedback Column */}
                     <td className="px-4 py-4 whitespace-nowrap text-sm">
                       <FeedbackSmileys
@@ -900,7 +910,8 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                           <Link to={`/job-cards/${issue.job_card.job_card_number}`} className="text-blue-600 hover:underline font-medium">
                             #{issue.job_card.job_card_number}
                           </Link>
-                          {canEdit && editingIssueId === issue.id && (
+                          {/* Removing sends the issue back to Open, which a rated issue can't do (MAIN-135). */}
+                          {canEdit && editingIssueId === issue.id && !(issue.status === 'Done' && issue.rating) && (
                             <button
                               onClick={() => handleUnassignInEditMode(issue)}
                               className="text-gray-500 hover:text-red-500 transition-colors p-1"
@@ -952,8 +963,9 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                 )
               })}
 
-              {/* INLINE CREATE ROW */}
-              {canEdit && (
+              {/* INLINE CREATE ROW. Closed and Rejected tickets take no new issues; the database
+                  refuses them too (MAIN-135). Adding one to a Resolved ticket reopens it. */}
+              {canEdit && !['Closed', 'Rejected'].includes(ticket.status) && (
                 <tr className="bg-blue-50/30">
                   <td className="px-4 py-4"></td>
                   <td className="px-4 py-4 font-mono text-xs text-gray-500">NEW</td>
@@ -981,7 +993,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                       placeholder="Select"
                     />
                   </td>
-                  <td className="px-4 py-2" colSpan={3}>
+                  <td className="px-4 py-2" colSpan={4}>
                     <button
                       onClick={handleCreate}
                       disabled={!newIssue.description || !newIssue.category || !newIssue.severity || createIssue.isPending}
@@ -995,7 +1007,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
 
               {allIssues.length === 0 && !canEdit && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-gray-600 italic">No issues recorded.</td>
+                  <td colSpan={9} className="px-6 py-8 text-center text-gray-600 italic">No issues recorded.</td>
                 </tr>
               )}
             </tbody>
