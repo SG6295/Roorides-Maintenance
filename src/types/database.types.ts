@@ -495,6 +495,7 @@ export type Database = {
           sla_days: number | null
           sla_end_date: string | null
           sla_status: Database["public"]["Enums"]["sla_status_enum"] | null
+          sla_version_id: string | null
           status: Database["public"]["Enums"]["issue_status"] | null
           ticket_id: string
           work_type: Database["public"]["Enums"]["work_type_enum"] | null
@@ -516,6 +517,7 @@ export type Database = {
           sla_days?: number | null
           sla_end_date?: string | null
           sla_status?: Database["public"]["Enums"]["sla_status_enum"] | null
+          sla_version_id?: string | null
           status?: Database["public"]["Enums"]["issue_status"] | null
           ticket_id: string
           work_type?: Database["public"]["Enums"]["work_type_enum"] | null
@@ -537,6 +539,7 @@ export type Database = {
           sla_days?: number | null
           sla_end_date?: string | null
           sla_status?: Database["public"]["Enums"]["sla_status_enum"] | null
+          sla_version_id?: string | null
           status?: Database["public"]["Enums"]["issue_status"] | null
           ticket_id?: string
           work_type?: Database["public"]["Enums"]["work_type_enum"] | null
@@ -547,6 +550,13 @@ export type Database = {
             columns: ["job_card_id"]
             isOneToOne: false
             referencedRelation: "job_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issues_sla_version_id_fkey"
+            columns: ["sla_version_id"]
+            isOneToOne: false
+            referencedRelation: "sla_versions"
             referencedColumns: ["id"]
           },
           {
@@ -1565,24 +1575,113 @@ export type Database = {
           },
         ]
       }
-      sla_rules_config: {
+      sla_holiday_changes: {
+        Row: {
+          action: string
+          description: string | null
+          holiday_date: string
+          id: string
+          performed_at: string
+          performed_by: string | null
+          performed_by_name: string | null
+          reason: string
+        }
+        Insert: {
+          action?: string
+          description?: string | null
+          holiday_date: string
+          id?: string
+          performed_at?: string
+          performed_by?: string | null
+          performed_by_name?: string | null
+          reason?: string
+        }
+        Update: {
+          action?: string
+          description?: string | null
+          holiday_date?: string
+          id?: string
+          performed_at?: string
+          performed_by?: string | null
+          performed_by_name?: string | null
+          reason?: string
+        }
+        Relationships: []
+      }
+      sla_version_turnaround: {
         Row: {
           category: Database["public"]["Enums"]["issue_category"]
-          id: string
           severity: Database["public"]["Enums"]["issue_severity"]
           sla_days: number
+          version_id: string
         }
         Insert: {
           category: Database["public"]["Enums"]["issue_category"]
-          id?: string
           severity: Database["public"]["Enums"]["issue_severity"]
-          sla_days: number
+          sla_days?: number
+          version_id: string
         }
         Update: {
           category?: Database["public"]["Enums"]["issue_category"]
-          id?: string
           severity?: Database["public"]["Enums"]["issue_severity"]
           sla_days?: number
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sla_version_turnaround_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: false
+            referencedRelation: "sla_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sla_versions: {
+        Row: {
+          acceptance_days: number
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancelled_by_name: string | null
+          created_at: string
+          created_by: string | null
+          created_by_name: string | null
+          id: string
+          reason: string
+          starts_at: string
+          version_number: number
+          weekly_offs: number[]
+        }
+        Insert: {
+          acceptance_days?: number
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancelled_by_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          created_by_name?: string | null
+          id?: string
+          reason?: string
+          starts_at?: string
+          version_number: number
+          weekly_offs?: number[]
+        }
+        Update: {
+          acceptance_days?: number
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancelled_by_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          created_by_name?: string | null
+          id?: string
+          reason?: string
+          starts_at?: string
+          version_number?: number
+          weekly_offs?: number[]
         }
         Relationships: []
       }
@@ -2249,6 +2348,7 @@ export type Database = {
           rejection_reason: string | null
           resolved_at: string | null
           site: string
+          sla_version_id: string | null
           status: Database["public"]["Enums"]["ticket_status_new"] | null
           supervisor_contact: string | null
           supervisor_id: string
@@ -2282,6 +2382,7 @@ export type Database = {
           rejection_reason?: string | null
           resolved_at?: string | null
           site: string
+          sla_version_id?: string | null
           status?: Database["public"]["Enums"]["ticket_status_new"] | null
           supervisor_contact?: string | null
           supervisor_id: string
@@ -2315,6 +2416,7 @@ export type Database = {
           rejection_reason?: string | null
           resolved_at?: string | null
           site?: string
+          sla_version_id?: string | null
           status?: Database["public"]["Enums"]["ticket_status_new"] | null
           supervisor_contact?: string | null
           supervisor_id?: string
@@ -2344,6 +2446,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "sites"
             referencedColumns: ["name"]
+          },
+          {
+            foreignKeyName: "tickets_sla_version_id_fkey"
+            columns: ["sla_version_id"]
+            isOneToOne: false
+            referencedRelation: "sla_versions"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -2621,9 +2730,13 @@ export type Database = {
       }
     }
     Functions: {
-      acceptance_deadline: { Args: { p_created_at: string }; Returns: string }
       add_working_days: {
-        Args: { n_days: number; start_ts: string }
+        Args: {
+          n_days: number
+          p_holidays: string[]
+          p_weekly_offs: number[]
+          start_ts: string
+        }
         Returns: string
       }
       advance_ledger_lines: {
@@ -2663,6 +2776,7 @@ export type Database = {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
         Returns: undefined
       }
+      apply_sla_change: { Args: { p_change: Json }; Returns: Json }
       assert_ledger_writer: { Args: never; Returns: undefined }
       cancel_advance_repayment: {
         Args: { p_reason: string; p_repayment_id: string }
@@ -2916,11 +3030,11 @@ export type Database = {
         Returns: boolean
       }
       payment_run_for: { Args: { p_date: string }; Returns: string }
+      preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
       purchase_invoice_file_missing: {
         Args: { p_purchase_invoice_id: string }
         Returns: boolean
       }
-      recalculate_open_slas: { Args: never; Returns: undefined }
       reconcile_supplier_balance: {
         Args: {
           p_as_of: string
@@ -3001,10 +3115,61 @@ export type Database = {
         Args: { p_days: number; p_supplier_id: string }
         Returns: undefined
       }
+      sla_change_error: {
+        Args: { p_code: string; p_message: string }
+        Returns: undefined
+      }
+      sla_holiday_dates: { Args: never; Returns: string[] }
+      sla_holiday_effects: {
+        Args: { p_holidays: string[] }
+        Returns: {
+          issue_id: string
+          kind: string
+          new_deadline: string
+          new_status: Database["public"]["Enums"]["sla_status_enum"]
+          old_deadline: string
+          old_status: Database["public"]["Enums"]["sla_status_enum"]
+          ticket_id: string
+        }[]
+      }
+      sla_on_time_whatif: {
+        Args: {
+          p_acceptance_days: number
+          p_holidays: string[]
+          p_turnaround: Json
+          p_weekly_offs: number[]
+        }
+        Returns: {
+          as_is_adhered: number
+          as_is_judged: number
+          sla: string
+          window_days: number
+          would_be_adhered: number
+          would_be_judged: number
+        }[]
+      }
+      sla_ticket_facts: {
+        Args: never
+        Returns: {
+          acceptance_sla_end_date: string
+          acceptance_sla_status: Database["public"]["Enums"]["sla_status_enum"]
+          accepted_at: string
+          final_sla_end_date: string
+          finished_at: string
+          issue_count: number
+          overall_sla_status: Database["public"]["Enums"]["sla_status_enum"]
+          raised_at: string
+          sla_version_id: string
+          ticket_id: string
+          ticket_status: string
+        }[]
+      }
+      sla_validate_change: { Args: { p_change: Json }; Returns: string[] }
       sla_verdict: {
         Args: { p_deadline: string; p_finished_at: string }
         Returns: Database["public"]["Enums"]["sla_status_enum"]
       }
+      sla_version_at: { Args: { p_at: string }; Returns: string }
       start_stock_audit: {
         Args: { p_location_id: string; p_notes?: string }
         Returns: string
