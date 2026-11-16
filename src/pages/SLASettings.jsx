@@ -1,132 +1,42 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { useMemo, useState } from 'react'
 import Navigation from '../components/shared/Navigation'
+import ReviewSLAChangesModal from '../components/sla/ReviewSLAChangesModal'
+import SLAVersionHistory from '../components/sla/SLAVersionHistory'
 import { useAuth } from '../hooks/useAuth'
+import { useSLAConfig, useSLAHolidayChanges } from '../hooks/useSLASettings'
+import {
+    DAY_NAMES, draftErrors, draftFromVersion, hasChanges, versionTimeline,
+} from '../utils/slaDraft'
+import { formatDate, formatDateTime, todayLocal } from '../utils/datetime'
 
+/**
+ * SLA Configuration (MAIN-136). Edits are a draft until Review changes → reason → Confirm;
+ * nothing saves on its own. Acceptance SLA Threshold, Weekly Offs and Turnaround Time are
+ * saved together as a new version; holidays are not versioned. Only super admins can save.
+ */
 export default function SLASettings({ embedded = false }) {
     const { userProfile } = useAuth()
-    const [rules, setRules] = useState([])
-    const [acceptanceSLA, setAssignmentSLA] = useState(1)
-    const [weeklyOffs, setWeeklyOffs] = useState([])
-    const [holidays, setHolidays] = useState([])
+    const { data: config, isLoading, error } = useSLAConfig()
+    const [draft, setDraft] = useState(null)
     const [newHolidayDate, setNewHolidayDate] = useState('')
     const [newHolidayDesc, setNewHolidayDesc] = useState('')
-    const [loading, setLoading] = useState(true)
+    const [reviewing, setReviewing] = useState(false)
     const [message, setMessage] = useState(null)
-
-    useEffect(() => {
-        fetchData()
-    }, [])
-
-    const fetchData = async () => {
-        setLoading(true)
-        try {
-            const [rulesRes, settingsRes, offsRes, holidaysRes] = await Promise.all([
-                supabase.from('sla_rules_config').select('*').order('severity', { ascending: false }).order('category'),
-                supabase.from('system_settings').select('value').eq('key', 'acceptance_sla_days').single(),
-                supabase.from('system_settings').select('value').eq('key', 'sla_weekly_offs').single(),
-                supabase.from('holidays').select('*').order('date')
-            ])
-
-            if (rulesRes.error) throw rulesRes.error
-            setRules(rulesRes.data)
-
-            if (settingsRes.data) setAssignmentSLA(parseInt(settingsRes.data.value))
-            if (offsRes.data) setWeeklyOffs(JSON.parse(offsRes.data.value))
-            if (holidaysRes.data) setHolidays(holidaysRes.data)
-
-        } catch (err) {
-            console.error('Error fetching data:', err)
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    const handleSettingChange = async (newVal) => {
-        setAssignmentSLA(newVal)
-        try {
-            const { error } = await supabase
-                .from('system_settings')
-                .update({ value: newVal.toString() })
-                .eq('key', 'acceptance_sla_days')
-
-            if (error) throw error
-            setMessage({ type: 'success', text: 'Setting saved!' })
-            setTimeout(() => setMessage(null), 2000)
-        } catch (err) {
-            console.error('Error updating setting:', err)
-            setMessage({ type: 'error', text: 'Failed to save setting' })
-        }
-    }
-
-    const toggleWeeklyOff = async (dayIndex) => {
-        const newOffs = weeklyOffs.includes(dayIndex)
-            ? weeklyOffs.filter(d => d !== dayIndex)
-            : [...weeklyOffs, dayIndex].sort()
-
-        setWeeklyOffs(newOffs)
-        try {
-            await supabase.from('system_settings').upsert({ key: 'sla_weekly_offs', value: JSON.stringify(newOffs) })
-            // Silent success or optional toast
-        } catch (err) {
-            console.error('Error saving weekly offs', err)
-        }
-    }
-
-    const addHoliday = async (e) => {
-        e.preventDefault()
-        if (!newHolidayDate) return
-
-        try {
-            const { data, error } = await supabase
-                .from('holidays')
-                .insert({ date: newHolidayDate, description: newHolidayDesc })
-                .select()
-                .single()
-
-            if (error) throw error
-            setHolidays([...holidays, data].sort((a, b) => new Date(a.date) - new Date(b.date)))
-            setNewHolidayDate('')
-            setNewHolidayDesc('')
-            setMessage({ type: 'success', text: 'Holiday added!' })
-            setTimeout(() => setMessage(null), 2000)
-        } catch (err) {
-            console.error(err)
-            setMessage({ type: 'error', text: 'Failed to add holiday' })
-        }
-    }
-
-    const deleteHoliday = async (id) => {
-        try {
-            await supabase.from('holidays').delete().eq('id', id)
-            setHolidays(holidays.filter(h => h.id !== id))
-        } catch (err) {
-            console.error(err)
-        }
-    }
-
-    const handleDayChange = async (id, newDays) => {
-        // Optimistic update
-        setRules(rules.map(r => r.id === id ? { ...r, sla_days: parseInt(newDays) } : r))
-
-        try {
-            const { error } = await supabase
-                .from('sla_rules_config')
-                .update({ sla_days: parseInt(newDays) })
-                .eq('id', id)
-
-            if (error) throw error
-            setMessage({ type: 'success', text: 'Saved!' })
-            setTimeout(() => setMessage(null), 2000)
-        } catch (err) {
-            console.error('Error updating rule:', err)
-            setMessage({ type: 'error', text: 'Failed to save' })
-            // Revert on error would go here
-        }
-    }
 
     const canEdit = userProfile?.role === 'super_admin'
     const canView = canEdit || userProfile?.role === 'maintenance_exec'
+
+    const latest = config?.latest
+    const timeline = useMemo(() => (config ? versionTimeline(config.versions) : []), [config])
+    const active = timeline.find(v => v.state === 'active')
+    const scheduled = timeline.find(v => v.state === 'scheduled')
+
+    // A fresh draft whenever the saved version changes (after a save or a cancel).
+    const [draftBase, setDraftBase] = useState(null)
+    if (latest && latest !== draftBase) {
+        setDraftBase(latest)
+        setDraft(draftFromVersion(latest, latest.turnaround))
+    }
 
     if (!canView) {
         return (
@@ -136,14 +46,66 @@ export default function SLASettings({ embedded = false }) {
         )
     }
 
+    const today = todayLocal()
+    // While a version is scheduled, only holidays can change: the versioned settings show
+    // the active version, read-only.
+    const versionEditable = canEdit && !scheduled
+    const shown = versionEditable ? draft : active && draftFromVersion(active, active.turnaround)
+    const dirty = !!(draft && latest && hasChanges(latest, latest.turnaround, draft))
+    const errors = draft ? draftErrors(draft) : []
+
+    const update = (patch) => setDraft(d => ({ ...d, ...patch }))
+    const toggleWeeklyOff = (day) => update({
+        weeklyOffs: draft.weeklyOffs.includes(day) ? draft.weeklyOffs.filter(d => d !== day) : [...draft.weeklyOffs, day].sort(),
+    })
+    const setTurnaround = (key, value) => update({ turnaround: { ...draft.turnaround, [key]: value } })
+
+    const holidayTaken = (date) => config.holidays.some(h => h.date === date) || draft.holidaysAdd.some(h => h.date === date)
+    const addHoliday = (e) => {
+        e.preventDefault()
+        if (!newHolidayDate || newHolidayDate < today) return
+        if (draft.holidaysRemove.includes(newHolidayDate)) {
+            update({ holidaysRemove: draft.holidaysRemove.filter(d => d !== newHolidayDate) })
+        } else if (!holidayTaken(newHolidayDate)) {
+            update({ holidaysAdd: [...draft.holidaysAdd, { date: newHolidayDate, description: newHolidayDesc.trim() }] })
+        }
+        setNewHolidayDate('')
+        setNewHolidayDesc('')
+    }
+    const toggleRemoveHoliday = (date) => update({
+        holidaysRemove: draft.holidaysRemove.includes(date)
+            ? draft.holidaysRemove.filter(d => d !== date)
+            : [...draft.holidaysRemove, date],
+    })
+    const dropNewHoliday = (date) => update({ holidaysAdd: draft.holidaysAdd.filter(h => h.date !== date) })
+
+    const holidayRows = config && draft ? [
+        ...config.holidays.map(h => ({ ...h, removing: draft.holidaysRemove.includes(h.date) })),
+        ...draft.holidaysAdd.map(h => ({ ...h, id: `new-${h.date}`, adding: true })),
+    ].sort((a, b) => a.date.localeCompare(b.date)) : []
+
+    const onSaved = (result) => {
+        setReviewing(false)
+        // A new version also resets the draft when it loads; a holiday-only save doesn't
+        // change the version, so start clean here.
+        setDraft(draftFromVersion(latest, latest.turnaround))
+        setMessage(result?.version_number
+            ? `Saved as Version ${result.version_number}.`
+            : 'Saved.')
+        setTimeout(() => setMessage(null), 3000)
+    }
+
+    const inputClass = (editable) =>
+        `w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm sm:text-sm ${editable ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`
+
     return (
         <div className={embedded ? "" : "min-h-screen bg-gray-50"}>
             {!embedded && (
                 <Navigation breadcrumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'SLA Settings' }]} />
             )}
 
-            <div className={embedded ? "" : "max-w-4xl mx-auto px-4 py-8"}>
-                <div className="flex items-center justify-between mb-6">
+            <div className={`${embedded ? "" : "max-w-4xl mx-auto px-4 py-8"} ${dirty ? 'pb-24' : ''}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
                     <h1 className="text-2xl font-bold text-gray-900">SLA Configuration</h1>
                     {!canEdit && (
                         <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
@@ -153,156 +115,253 @@ export default function SLASettings({ embedded = false }) {
                 </div>
 
                 {message && (
-                    <div className={`fixed bottom-4 right-4 px-6 py-3 rounded shadow-lg z-50 transition-opacity duration-300 ${message.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-100 text-red-800 border border-red-200'
-                        }`}>
-                        {message.text}
+                    <div className="fixed bottom-4 right-4 px-6 py-3 rounded shadow-lg z-50 bg-green-100 text-green-800 border border-green-200">
+                        {message}
                     </div>
                 )}
 
-                {/* Global Settings Section */}
-                <div className="bg-white rounded-lg shadow p-6 mb-8 space-y-8">
-                    <h2 className="text-lg font-medium text-gray-900 border-b pb-2">Global Settings</h2>
+                {error && <p className="text-sm text-red-600 mb-4">Couldn't load the SLA settings: {error.message}</p>}
 
-                    {/* Acceptance SLA */}
-                    <div className="flex items-center justify-between max-w-lg">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Acceptance SLA Threshold</label>
-                            <p className="text-xs text-gray-600">Max working days to assign a ticket before violation</p>
-                        </div>
-                        <div className="flex items-center">
-                            <input
-                                type="number"
-                                min="1"
-                                value={acceptanceSLA}
-                                onChange={(e) => canEdit && handleSettingChange(e.target.value)}
-                                readOnly={!canEdit}
-                                className={`w-20 px-3 py-2 border border-gray-300 rounded-md shadow-sm sm:text-sm ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}
-                            />
-                            <span className="ml-2 text-sm text-gray-600">working days</span>
-                        </div>
-                    </div>
+                {isLoading || !shown ? (
+                    <p className="text-sm text-gray-600">Loading...</p>
+                ) : (
+                    <>
+                        <div className="bg-white rounded-lg shadow p-6 mb-8 space-y-8">
+                            <div className="border-b pb-2">
+                                <h2 className="text-lg font-medium text-gray-900">
+                                    {versionEditable ? 'Settings' : `Version ${active.version_number} (active)`}
+                                </h2>
+                                {active && (
+                                    <p className="text-xs text-gray-600 mt-0.5">
+                                        Version {active.version_number} is active since {formatDateTime(active.starts_at)}.
+                                        Changing these settings saves a new version; existing tickets and issues keep theirs.
+                                    </p>
+                                )}
+                            </div>
 
-                    {/* Weekly Offs */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Weekly Offs</label>
-                        <p className="text-xs text-gray-600 mb-3">All SLA deadlines skip these days.</p>
-                        <div className="flex gap-4 flex-wrap">
-                            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
-                                <label key={day} className={`inline-flex items-center ${!canEdit ? 'cursor-default' : ''}`}>
-                                    <input
-                                        type="checkbox"
-                                        checked={weeklyOffs.includes(index)}
-                                        onChange={() => canEdit && toggleWeeklyOff(index)}
-                                        disabled={!canEdit}
-                                        className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 disabled:opacity-60"
-                                    />
-                                    <span className="ml-2 text-sm text-gray-700">{day}</span>
-                                </label>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Holidays */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Holidays</label>
-                        <p className="text-xs text-gray-600 mb-3">Add specific dates to exclude from SLA. Editing these recalculates deadlines on tickets still open.</p>
-
-                        <form onSubmit={canEdit ? addHoliday : (e) => e.preventDefault()} className="flex gap-2 mb-4 max-w-lg">
-                            <input
-                                type="date"
-                                required
-                                disabled={!canEdit}
-                                value={newHolidayDate}
-                                onChange={e => setNewHolidayDate(e.target.value)}
-                                className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-50 disabled:opacity-60"
-                            />
-                            <input
-                                type="text"
-                                placeholder="Description (e.g. Republic Day)"
-                                disabled={!canEdit}
-                                value={newHolidayDesc}
-                                onChange={e => setNewHolidayDesc(e.target.value)}
-                                className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-50 disabled:opacity-60"
-                            />
-                            {canEdit && (
-                                <button
-                                    type="submit"
-                                    className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 text-sm"
-                                >
-                                    Add
-                                </button>
+                            {scheduled && (
+                                <p className="text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                    Version {scheduled.version_number} is scheduled to start {formatDateTime(scheduled.starts_at)}.
+                                    {canEdit && ' To change the settings, cancel it in the version history and save a new version. Holidays can still be changed.'}
+                                </p>
                             )}
-                        </form>
 
-                        <div className="bg-gray-50 rounded border border-gray-300 max-h-48 overflow-y-auto max-w-lg">
-                            {holidays.length === 0 ? (
-                                <p className="text-sm text-gray-600 p-4 text-center">No holidays added.</p>
-                            ) : (
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {holidays.map(h => (
-                                            <tr key={h.id}>
-                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{h.date}</td>
-                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-600">{h.description}</td>
-                                                <td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium">
-                                                    {canEdit && (
-                                                        <button onClick={() => deleteHoliday(h.id)} className="text-red-600 hover:text-red-900">Delete</button>
-                                                    )}
+                            {/* Acceptance SLA */}
+                            <div className="flex items-center justify-between max-w-lg">
+                                <div>
+                                    <label htmlFor="acceptance-sla" className="block text-sm font-medium text-gray-700">Acceptance SLA Threshold</label>
+                                    <p className="text-xs text-gray-600">Max working days to assign a ticket before violation</p>
+                                </div>
+                                <div className="flex items-center">
+                                    <input
+                                        id="acceptance-sla"
+                                        type="number"
+                                        min="1"
+                                        max="365"
+                                        value={shown.acceptanceDays}
+                                        onChange={(e) => versionEditable && update({ acceptanceDays: e.target.value })}
+                                        readOnly={!versionEditable}
+                                        className={inputClass(versionEditable)}
+                                    />
+                                    <span className="ml-2 text-sm text-gray-600">working days</span>
+                                </div>
+                            </div>
+
+                            {/* Weekly Offs */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Weekly Offs</label>
+                                <p className="text-xs text-gray-600 mb-3">All SLA deadlines skip these days.</p>
+                                <div className="flex gap-4 flex-wrap">
+                                    {DAY_NAMES.map((day, index) => (
+                                        <label key={day} className={`inline-flex items-center ${!versionEditable ? 'cursor-default' : ''}`}>
+                                            <input
+                                                type="checkbox"
+                                                checked={shown.weeklyOffs.includes(index)}
+                                                onChange={() => versionEditable && toggleWeeklyOff(index)}
+                                                disabled={!versionEditable}
+                                                className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 disabled:opacity-60"
+                                            />
+                                            <span className="ml-2 text-sm text-gray-700">{day}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Holidays */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Holidays</label>
+                                <p className="text-xs text-gray-600 mb-3">
+                                    Dates excluded from every SLA. Not versioned: a change moves the deadline of every ticket and
+                                    issue whose deadline window covers the date. Only today or later can be added or removed.
+                                </p>
+
+                                {canEdit && (
+                                    <form onSubmit={addHoliday} className="flex flex-wrap gap-2 mb-4 max-w-lg">
+                                        <input
+                                            type="date"
+                                            required
+                                            min={today}
+                                            aria-label="Holiday date"
+                                            value={newHolidayDate}
+                                            onChange={e => setNewHolidayDate(e.target.value)}
+                                            className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="Description (e.g. Republic Day)"
+                                            value={newHolidayDesc}
+                                            onChange={e => setNewHolidayDesc(e.target.value)}
+                                            className="flex-1 min-w-0 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                        />
+                                        <button type="submit" className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 text-sm">
+                                            Add
+                                        </button>
+                                    </form>
+                                )}
+
+                                <div className="bg-gray-50 rounded border border-gray-300 max-h-48 overflow-y-auto max-w-lg">
+                                    {holidayRows.length === 0 ? (
+                                        <p className="text-sm text-gray-600 p-4 text-center">No holidays added.</p>
+                                    ) : (
+                                        <table className="min-w-full divide-y divide-gray-200">
+                                            <tbody className="bg-white divide-y divide-gray-200">
+                                                {holidayRows.map(h => (
+                                                    <tr key={h.id} className={h.removing ? 'bg-red-50' : h.adding ? 'bg-green-50' : ''}>
+                                                        <td className={`px-4 py-2 whitespace-nowrap text-sm text-gray-900 ${h.removing ? 'line-through' : ''}`}>{formatDate(h.date)}</td>
+                                                        <td className={`px-4 py-2 text-sm text-gray-600 ${h.removing ? 'line-through' : ''}`}>
+                                                            {h.description}
+                                                            {h.adding && <span className="ml-2 text-xs text-green-700">Not saved</span>}
+                                                        </td>
+                                                        <td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium">
+                                                            {canEdit && h.adding && (
+                                                                <button type="button" onClick={() => dropNewHoliday(h.date)} className="text-gray-600 hover:text-gray-900">Undo</button>
+                                                            )}
+                                                            {canEdit && !h.adding && h.date >= today && (
+                                                                <button type="button" onClick={() => toggleRemoveHoliday(h.date)} className={h.removing ? 'text-gray-600 hover:text-gray-900' : 'text-red-600 hover:text-red-900'}>
+                                                                    {h.removing ? 'Undo' : 'Remove'}
+                                                                </button>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow overflow-hidden mb-8">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Severity</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Category</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Turnaround Time (working days)</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {(versionEditable ? latest : active).turnaround.map((rule) => {
+                                        const key = `${rule.severity}|${rule.category}`
+                                        return (
+                                            <tr key={key}>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${rule.severity === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'}`}>
+                                                        {rule.severity}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{rule.category}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        max="365"
+                                                        aria-label={`Turnaround Time, ${rule.severity} ${rule.category}`}
+                                                        readOnly={!versionEditable}
+                                                        className={inputClass(versionEditable)}
+                                                        value={shown.turnaround[key]}
+                                                        onChange={(e) => versionEditable && setTurnaround(key, e.target.value)}
+                                                    />
                                                 </td>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            )}
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="mb-8">
+                            <SLAVersionHistory versions={config.versions} canEdit={canEdit} />
+                        </div>
+
+                        <HolidayChangeLog />
+                    </>
+                )}
+            </div>
+
+            {canEdit && dirty && (
+                <div className="fixed inset-x-0 bottom-0 z-40 bg-white border-t shadow-lg">
+                    <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-sm">
+                            <p className="font-medium text-gray-900">Unsaved changes</p>
+                            {errors.map(e => <p key={e} className="text-red-600">{e}</p>)}
+                        </div>
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setDraft(draftFromVersion(latest, latest.turnaround))}
+                                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                            >
+                                Discard
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setReviewing(true)}
+                                disabled={errors.length > 0}
+                                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Review changes
+                            </button>
                         </div>
                     </div>
                 </div>
+            )}
 
-                <div className="bg-white rounded-lg shadow overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Severity
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Category
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    SLA Working Days
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {loading ? (
-                                <tr><td colSpan="3" className="px-6 py-4 text-center">Loading...</td></tr>
-                            ) : rules.map((rule) => (
-                                <tr key={rule.id}>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${rule.severity === 'Major' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'
-                                            }`}>
-                                            {rule.severity}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {rule.category}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            readOnly={!canEdit}
-                                            className={`w-20 px-2 py-1 border border-gray-300 rounded ${canEdit ? 'focus:ring-blue-500 focus:border-blue-500' : 'bg-gray-50 cursor-default'}`}
-                                            value={rule.sla_days}
-                                            onChange={(e) => canEdit && handleDayChange(rule.id, e.target.value)}
-                                        />
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            {reviewing && (
+                <ReviewSLAChangesModal
+                    version={latest}
+                    turnaround={latest.turnaround}
+                    holidays={config.holidays}
+                    draft={draft}
+                    onClose={() => setReviewing(false)}
+                    onSaved={onSaved}
+                />
+            )}
+        </div>
+    )
+}
+
+function HolidayChangeLog() {
+    const { data: changes = [] } = useSLAHolidayChanges()
+    if (changes.length === 0) return null
+    return (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+            <h2 className="text-lg font-medium text-gray-900 px-6 pt-5 pb-3">Holiday changes</h2>
+            <ul className="divide-y divide-gray-200 border-t border-gray-200">
+                {changes.map(c => (
+                    <li key={c.id} className="px-6 py-3 text-sm">
+                        <p className="text-gray-900">
+                            <span className={c.action === 'add' ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>
+                                {c.action === 'add' ? 'Added' : 'Removed'}
+                            </span>{' '}
+                            {formatDate(c.holiday_date)}{c.description ? ` (${c.description})` : ''}
+                        </p>
+                        <p className="text-xs text-gray-600">
+                            {c.performed_by_name ?? 'System'} on {formatDateTime(c.performed_at)}: {c.reason}
+                        </p>
+                    </li>
+                ))}
+            </ul>
         </div>
     )
 }

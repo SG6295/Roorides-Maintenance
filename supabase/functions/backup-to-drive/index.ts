@@ -10,8 +10,10 @@ const TABLES = [
   'vehicles', 'vehicle_sites',
   'tickets', 'issues', 'job_cards', 'issue_parts', 'issue_labour',
   'parts', 'part_units', 'purchase_invoices', 'purchase_invoice_items',
-  'finance_entries', 'sla_rules_config', 'sla_events',
+  'finance_entries', 'sla_events',
   'holidays', 'system_settings', 'suppliers', 'audit_logs',
+  // SLA versions and holiday changes (MAIN-136; sla_versions replaced sla_rules_config)
+  'sla_versions', 'sla_version_turnaround', 'sla_holiday_changes',
   // Scrap / salvage
   'scrap_inventory', 'scrap_disposal', 'scrap_disposal_items',
   'scrap_writeoff', 'scrap_writeoff_items', 'scrap_excluded_parts',
@@ -31,6 +33,7 @@ const PRIMARY_KEYS: Record<string, string[]> = {
   part_stock: ['part_id', 'location_id'],
   refurbished_part_links: ['refurbished_part_id'],
   site_workshops: ['site_id'],
+  sla_version_turnaround: ['version_id', 'category', 'severity'],
   system_settings: ['key'],
   user_settings: ['user_id'],
   vehicle_sites: ['vehicle_id', 'site_name'],

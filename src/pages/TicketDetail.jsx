@@ -14,6 +14,7 @@ import SLAStatusBadge from '../components/shared/SLAStatusBadge'
 import { toDate } from '../utils/datetime'
 import { labourTechnicianNames } from '../utils/labour'
 import { notApplicableReason, ticketFinishedAt } from '../utils/slaStatus'
+import { useSLAVersionNumbers } from '../hooks/useSLASettings'
 import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import PhotoUpload from '../components/tickets/PhotoUpload'
 import TicketTimeline from '../components/tickets/TicketTimeline'
@@ -368,6 +369,7 @@ function SLAWarning({ ticket, issues }) {
         <div>
           <p className="text-sm font-semibold text-gray-700">SLA not applicable</p>
           <p className="text-xs text-gray-500">{notApplicableReason(ticket)}</p>
+          <VersionTag versionId={ticket.sla_version_id} />
         </div>
       </div>
     )
@@ -395,6 +397,7 @@ function SLAWarning({ ticket, issues }) {
             Deadline was {format(deadline, 'MMM d, yyyy, h:mm a')}
             {finishedAt && <> · {ticket.status === 'Rejected' ? 'Rejected' : 'Finished'} {format(finishedAt, 'MMM d, yyyy, h:mm a')}</>}
           </p>
+          <VersionTag versionId={ticket.sla_version_id} />
         </div>
       </div>
     )
@@ -419,11 +422,21 @@ function SLAWarning({ ticket, issues }) {
             {isOverdue ? 'SLA Violated' : isWarning ? 'SLA Due Soon' : 'SLA On Track'}
           </p>
           <p className="text-xs text-gray-500">{styles.sub} {format(deadline, 'MMM d, yyyy, h:mm a')}</p>
+          <VersionTag versionId={ticket.sla_version_id} />
         </div>
       </div>
       <SLATimer targetDate={deadline} currentDate={now} />
     </div>
   )
+}
+
+// The SLA version a ticket (Acceptance SLA Threshold, Weekly Offs) or an issue (Turnaround
+// Time) was recorded under (MAIN-136). Nothing for pre-tracking work, which has none.
+function VersionTag({ versionId }) {
+  const { data: numbers } = useSLAVersionNumbers()
+  const number = versionId && numbers?.[versionId]
+  if (!number) return null
+  return <p className="text-xs text-gray-500 mt-0.5">SLA Version {number}</p>
 }
 
 function OverviewTab({ ticket }) {
@@ -873,6 +886,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm">
                       <SLAStatusBadge status={issue.sla_status} deadline={issue.sla_end_date} />
+                      <VersionTag versionId={issue.sla_version_id} />
                     </td>
                     {/* Feedback Column */}
                     <td className="px-4 py-4 whitespace-nowrap text-sm">

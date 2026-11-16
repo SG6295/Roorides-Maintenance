@@ -1033,28 +1033,6 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
 ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO supabase_admin;
 
 --
--- Name: acceptance_deadline(timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.acceptance_deadline(p_created_at timestamp with time zone) RETURNS timestamp with time zone
-    LANGUAGE plpgsql STABLE
-    SET search_path TO 'public'
-    AS $$
-DECLARE
-    v_sla_days INT;
-BEGIN
-    SELECT COALESCE(value::int, 2) INTO v_sla_days
-      FROM system_settings WHERE key = 'acceptance_sla_days';
-    IF v_sla_days IS NULL THEN v_sla_days := 2; END IF;
-
-    RETURN add_working_days(p_created_at, v_sla_days);
-END;
-$$;
-
-
-ALTER FUNCTION public.acceptance_deadline(p_created_at timestamp with time zone) OWNER TO postgres;
-
---
 -- Name: add_part_to_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1078,55 +1056,34 @@ $$;
 ALTER FUNCTION public.add_part_to_inventory() OWNER TO postgres;
 
 --
--- Name: add_working_days(timestamp with time zone, integer); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: add_working_days(timestamp with time zone, integer, integer[], date[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer) RETURNS timestamp with time zone
-    LANGUAGE plpgsql STABLE
+CREATE FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]) RETURNS timestamp with time zone
+    LANGUAGE plpgsql IMMUTABLE
     SET search_path TO 'public'
     AS $$
 DECLARE
-    v_local      timestamp;
-    v_date       date;
-    v_time       time;
-    days_added   int := 0;
-    iterations   int := 0;
-    weekly_offs  jsonb;
-    dow          int;
-    is_holiday   boolean;
+    v_date     date;
+    v_time     time;
+    days_added int := 0;
 BEGIN
-    IF start_ts IS NULL OR n_days IS NULL THEN
+    IF start_ts IS NULL OR n_days IS NULL OR p_weekly_offs IS NULL THEN
         RETURN NULL;
     END IF;
+    IF cardinality(p_weekly_offs) >= 7 THEN
+        RAISE EXCEPTION 'add_working_days: every day of the week is a weekly off.';
+    END IF;
 
-    v_local := start_ts AT TIME ZONE 'Asia/Kolkata';
-    v_date  := v_local::date;
-    v_time  := v_local::time;
-
-    SELECT value::jsonb INTO weekly_offs
-      FROM system_settings WHERE key = 'sla_weekly_offs';
-    IF weekly_offs IS NULL THEN weekly_offs := '[0,6]'::jsonb; END IF;
+    v_date := (start_ts AT TIME ZONE 'Asia/Kolkata')::date;
+    v_time := (start_ts AT TIME ZONE 'Asia/Kolkata')::time;
 
     WHILE days_added < n_days LOOP
-        -- Guard against a configuration that marks every day an off-day: without this the
-        -- loop never terminates and the trigger hangs whatever transaction called it.
-        iterations := iterations + 1;
-        IF iterations > 3650 THEN
-            RAISE EXCEPTION
-                'add_working_days: no working day found within 10 years of %. Check system_settings.sla_weekly_offs (currently %) - every weekday may be marked an off-day.',
-                start_ts, weekly_offs;
-        END IF;
-
         v_date := v_date + 1;
-        dow := EXTRACT(DOW FROM v_date)::int;
-
-        -- Skip weekly offs (day-of-week integers: 0=Sun ... 6=Sat)
-        IF weekly_offs @> to_jsonb(dow) THEN CONTINUE; END IF;
-
-        -- Skip holidays
-        SELECT EXISTS (SELECT 1 FROM holidays WHERE date = v_date) INTO is_holiday;
-        IF is_holiday THEN CONTINUE; END IF;
-
+        IF EXTRACT(DOW FROM v_date)::int = ANY (p_weekly_offs)
+           OR v_date = ANY (COALESCE(p_holidays, '{}')) THEN
+            CONTINUE;
+        END IF;
         days_added := days_added + 1;
     END LOOP;
 
@@ -1135,7 +1092,7 @@ END;
 $$;
 
 
-ALTER FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer) OWNER TO postgres;
+ALTER FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]) OWNER TO postgres;
 
 --
 -- Name: adjust_part_inventory_on_update(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -1292,6 +1249,104 @@ $$;
 ALTER FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) OWNER TO postgres;
 
 --
+-- Name: apply_sla_change(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.apply_sla_change(p_change jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_uid      uuid := auth.uid();
+    v_name     text;
+    v_reason   text := NULLIF(btrim(p_change->>'reason'), '');
+    v_version  jsonb := NULLIF(p_change->'version', 'null'::jsonb);
+    v_holidays date[];
+    v_target   sla_versions%ROWTYPE;
+    v_new_id   uuid;
+    v_number   int;
+    v_moved    int := 0;
+BEGIN
+    IF NOT is_super_admin() THEN
+        PERFORM sla_change_error('UNAUTHORIZED', 'Only super admins can change SLA settings.');
+    END IF;
+    IF v_reason IS NULL THEN
+        PERFORM sla_change_error('REASON_REQUIRED', 'Give a reason for the change.');
+    END IF;
+    SELECT name INTO v_name FROM users WHERE id = v_uid;
+
+    -- One change at a time.
+    LOCK TABLE sla_versions, holidays IN SHARE ROW EXCLUSIVE MODE;
+
+    IF p_change->>'action' = 'cancel_version' THEN
+        SELECT * INTO v_target FROM sla_versions WHERE id = (p_change->>'version_id')::uuid;
+        IF NOT FOUND OR v_target.cancelled_at IS NOT NULL THEN
+            PERFORM sla_change_error('VERSION_NOT_SCHEDULED', 'This version is already cancelled.');
+        END IF;
+        IF v_target.starts_at <= now() THEN
+            PERFORM sla_change_error('VERSION_STARTED', format(
+                'Version %s has already started, so it can''t be cancelled.', v_target.version_number));
+        END IF;
+        UPDATE sla_versions
+        SET cancelled_at = now(), cancelled_by = v_uid, cancelled_by_name = v_name, cancel_reason = v_reason
+        WHERE id = v_target.id;
+        RETURN jsonb_build_object('cancelled_version', v_target.version_number);
+    END IF;
+
+    v_holidays := sla_validate_change(p_change);
+
+    IF v_version IS NOT NULL THEN
+        SELECT COALESCE(max(version_number), 0) + 1 INTO v_number FROM sla_versions;
+        INSERT INTO sla_versions (version_number, acceptance_days, weekly_offs, starts_at, reason,
+                                  created_by, created_by_name)
+        VALUES (v_number,
+                (v_version->>'acceptance_days')::int,
+                ARRAY(SELECT DISTINCT d::int FROM jsonb_array_elements_text(v_version->'weekly_offs') d ORDER BY 1),
+                COALESCE((p_change->>'starts_at')::timestamptz, now()),
+                v_reason, v_uid, v_name)
+        RETURNING id INTO v_new_id;
+
+        INSERT INTO sla_version_turnaround (version_id, category, severity, sla_days)
+        SELECT v_new_id, (e->>'category')::issue_category, (e->>'severity')::issue_severity, (e->>'sla_days')::int
+        FROM jsonb_array_elements(v_version->'turnaround') e;
+    END IF;
+
+    IF v_holidays IS DISTINCT FROM sla_holiday_dates() THEN
+        INSERT INTO sla_holiday_changes (holiday_date, description, action, reason, performed_by, performed_by_name)
+        SELECT h.date, h.description, 'remove', v_reason, v_uid, v_name
+        FROM holidays h WHERE NOT h.date = ANY (v_holidays);
+        DELETE FROM holidays WHERE NOT date = ANY (v_holidays);
+
+        INSERT INTO holidays (date, description)
+        SELECT (e->>'date')::date, NULLIF(btrim(e->>'description'), '')
+        FROM jsonb_array_elements(COALESCE(p_change->'holidays_add', '[]')) e;
+        INSERT INTO sla_holiday_changes (holiday_date, description, action, reason, performed_by, performed_by_name)
+        SELECT (e->>'date')::date, NULLIF(btrim(e->>'description'), ''), 'add', v_reason, v_uid, v_name
+        FROM jsonb_array_elements(COALESCE(p_change->'holidays_add', '[]')) e;
+
+        -- Move the deadlines. trg_update_ticket_sla_agg re-judges each ticket whose issue
+        -- deadlines move; acceptance has no such trigger, so its status is written here.
+        CREATE TEMP TABLE _sla_effects ON COMMIT DROP AS
+            SELECT * FROM sla_holiday_effects(sla_holiday_dates());
+
+        UPDATE issues i SET sla_end_date = e.new_deadline
+        FROM _sla_effects e WHERE e.kind = 'issue' AND e.issue_id = i.id;
+
+        UPDATE tickets t SET acceptance_sla_end_date = e.new_deadline, acceptance_sla_status = e.new_status
+        FROM _sla_effects e WHERE e.kind = 'acceptance' AND e.ticket_id = t.id;
+
+        SELECT count(DISTINCT ticket_id) INTO v_moved FROM _sla_effects;
+        DROP TABLE _sla_effects;
+    END IF;
+
+    RETURN jsonb_build_object('version_number', v_number, 'tickets_moved', v_moved);
+END;
+$$;
+
+
+ALTER FUNCTION public.apply_sla_change(p_change jsonb) OWNER TO postgres;
+
+--
 -- Name: assert_ledger_writer(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -1319,30 +1374,37 @@ CREATE FUNCTION public.calculate_issue_sla_dynamic() RETURNS trigger
     SET search_path TO 'public'
     AS $$
 DECLARE
-    rule_days INTEGER;
-    v_raised  timestamp;
+    v_raised       timestamp;
+    v_ticket_offs  integer[];
+    v_days         integer;
 BEGIN
-    IF TG_OP = 'INSERT'
-       OR (TG_OP = 'UPDATE' AND (
-           NEW.category  IS DISTINCT FROM OLD.category OR
-           NEW.severity  IS DISTINCT FROM OLD.severity
-       ))
-    THEN
-        SELECT sla_days INTO rule_days
-        FROM sla_rules_config
-        WHERE category = NEW.category AND severity = NEW.severity;
-
-        IF rule_days IS NULL THEN rule_days := 3; END IF;
-
-        SELECT created_at INTO v_raised FROM tickets WHERE id = NEW.ticket_id;
-
-        NEW.sla_days := rule_days;
-        -- created_at is `timestamp without time zone` holding UTC. A pre-tracking ticket's
-        -- issues have no deadline (MAIN-45).
-        NEW.sla_end_date := CASE WHEN is_sla_tracked(v_raised)
-                                 THEN add_working_days(v_raised AT TIME ZONE 'UTC', rule_days)
-                            END;
+    IF TG_OP = 'UPDATE'
+       AND NEW.category IS NOT DISTINCT FROM OLD.category
+       AND NEW.severity IS NOT DISTINCT FROM OLD.severity THEN
+        RETURN NEW;
     END IF;
+
+    SELECT t.created_at, v.weekly_offs INTO v_raised, v_ticket_offs
+    FROM tickets t LEFT JOIN sla_versions v ON v.id = t.sla_version_id
+    WHERE t.id = NEW.ticket_id;
+
+    IF TG_OP = 'INSERT' THEN
+        IF auth.uid() IS NOT NULL OR NEW.sla_version_id IS NULL THEN
+            NEW.sla_version_id := CASE WHEN is_sla_tracked(v_raised)
+                                       THEN sla_version_at(NEW.created_at AT TIME ZONE 'UTC') END;
+        END IF;
+        IF auth.uid() IS NULL AND NEW.sla_end_date IS NOT NULL THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+
+    SELECT sla_days INTO v_days
+    FROM sla_version_turnaround
+    WHERE version_id = NEW.sla_version_id AND category = NEW.category AND severity = NEW.severity;
+
+    -- A pre-tracking ticket's issues have no version and no deadline (MAIN-45).
+    NEW.sla_days := COALESCE(v_days, NEW.sla_days);
+    NEW.sla_end_date := add_working_days(v_raised AT TIME ZONE 'UTC', v_days, v_ticket_offs, sla_holiday_dates());
 
     RETURN NEW;
 END;
@@ -2328,15 +2390,8 @@ CREATE FUNCTION public.evaluate_acceptance_sla(p_ticket_id uuid, p_first_issue_c
 DECLARE
     v_deadline timestamptz;
 BEGIN
-    SELECT COALESCE(acceptance_sla_end_date, acceptance_deadline(created_at AT TIME ZONE 'UTC'))
-      INTO v_deadline
-      FROM tickets WHERE id = p_ticket_id;
-
-    IF p_first_issue_created <= v_deadline THEN
-        RETURN 'Adhered'::sla_status_enum;
-    ELSE
-        RETURN 'Violated'::sla_status_enum;
-    END IF;
+    SELECT acceptance_sla_end_date INTO v_deadline FROM tickets WHERE id = p_ticket_id;
+    RETURN sla_verdict(v_deadline, p_first_issue_created);
 END;
 $$;
 
@@ -3312,6 +3367,25 @@ $$;
 ALTER FUNCTION public.guard_refurbishment_invoice_new_line() OWNER TO postgres;
 
 --
+-- Name: guard_sla_version_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_sla_version_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NOT NULL AND NEW.sla_version_id IS DISTINCT FROM OLD.sla_version_id THEN
+        RAISE EXCEPTION 'The SLA version a ticket or issue was recorded under can''t be changed.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_sla_version_change() OWNER TO postgres;
+
+--
 -- Name: guard_ticket_reject_with_issues(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3726,6 +3800,56 @@ $$;
 ALTER FUNCTION public.payment_run_for(p_date date) OWNER TO postgres;
 
 --
+-- Name: preview_sla_changes(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.preview_sla_changes(p_change jsonb) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_holidays date[];
+    v_version  jsonb := NULLIF(p_change->'version', 'null'::jsonb);
+    v_offs     integer[];
+    v_result   jsonb := '{}';
+BEGIN
+    IF NOT is_super_admin() THEN
+        PERFORM sla_change_error('UNAUTHORIZED', 'Only super admins can change SLA settings.');
+    END IF;
+
+    v_holidays := sla_validate_change(p_change);
+
+    IF v_version IS NOT NULL THEN
+        v_offs := ARRAY(SELECT jsonb_array_elements_text(v_version->'weekly_offs')::int);
+        v_result := v_result || jsonb_build_object('on_time', (
+            SELECT jsonb_agg(to_jsonb(w))
+            FROM sla_on_time_whatif((v_version->>'acceptance_days')::int, v_offs,
+                                    v_version->'turnaround', sla_holiday_dates()) w));
+    END IF;
+
+    IF v_holidays IS DISTINCT FROM sla_holiday_dates() THEN
+        v_result := v_result || jsonb_build_object('holidays', (
+            SELECT jsonb_build_object(
+                'tickets_moved',  count(DISTINCT e.ticket_id),
+                'issues_moved',   count(*) FILTER (WHERE e.kind = 'issue'),
+                'status_changes', COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('kind', kind, 'from', old_status, 'to', new_status, 'count', n)
+                                     ORDER BY kind, old_status, new_status)
+                    FROM (SELECT kind, old_status, new_status, count(*) n
+                          FROM sla_holiday_effects(v_holidays)
+                          WHERE old_status IS DISTINCT FROM new_status
+                          GROUP BY 1, 2, 3) s), '[]'))
+            FROM sla_holiday_effects(v_holidays) e));
+    END IF;
+
+    RETURN v_result;
+END;
+$$;
+
+
+ALTER FUNCTION public.preview_sla_changes(p_change jsonb) OWNER TO postgres;
+
+--
 -- Name: purchase_invoice_file_missing(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3740,41 +3864,6 @@ $$;
 
 
 ALTER FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) OWNER TO postgres;
-
---
--- Name: recalculate_open_slas(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.recalculate_open_slas() RETURNS void
-    LANGUAGE plpgsql
-    SET search_path TO 'public'
-    AS $$
-BEGIN
-    -- Scoped by both the issue and its ticket, as before: finished work is not retouched.
-    -- trg_update_ticket_sla_agg re-judges each ticket whose deadlines change.
-    UPDATE issues i
-    SET sla_days     = r.sla_days,
-        sla_end_date = add_working_days(t.created_at AT TIME ZONE 'UTC', r.sla_days)
-    FROM tickets t, sla_rules_config r
-    WHERE i.ticket_id = t.id
-      AND r.category  = i.category
-      AND r.severity  = i.severity
-      AND i.status <> 'Done'
-      AND t.status NOT IN ('Resolved', 'Closed', 'Rejected')
-      AND is_sla_tracked(t.created_at)
-      AND (i.sla_days IS DISTINCT FROM r.sla_days
-           OR i.sla_end_date IS DISTINCT FROM add_working_days(t.created_at AT TIME ZONE 'UTC', r.sla_days));
-
-    -- Acceptance deadlines, for tickets still waiting to be accepted.
-    UPDATE tickets t
-    SET acceptance_sla_end_date = acceptance_deadline(t.created_at AT TIME ZONE 'UTC')
-    WHERE t.acceptance_sla_status = 'Pending'
-      AND t.status NOT IN ('Resolved', 'Closed', 'Rejected');
-END;
-$$;
-
-
-ALTER FUNCTION public.recalculate_open_slas() OWNER TO postgres;
 
 --
 -- Name: recalculate_ticket_sla_on_status_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -5738,6 +5827,253 @@ $$;
 ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
 
 --
+-- Name: sla_change_error(text, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_change_error(p_code text, p_message text) RETURNS void
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    RAISE EXCEPTION '%', json_build_object('error_code', p_code, 'error_message', p_message)::text;
+END;
+$$;
+
+
+ALTER FUNCTION public.sla_change_error(p_code text, p_message text) OWNER TO postgres;
+
+--
+-- Name: sla_holiday_dates(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_holiday_dates() RETURNS date[]
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT COALESCE(array_agg(date ORDER BY date), '{}') FROM holidays;
+$$;
+
+
+ALTER FUNCTION public.sla_holiday_dates() OWNER TO postgres;
+
+--
+-- Name: sla_holiday_effects(date[]); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_holiday_effects(p_holidays date[]) RETURNS TABLE(kind text, ticket_id uuid, issue_id uuid, old_deadline timestamp with time zone, new_deadline timestamp with time zone, old_status public.sla_status_enum, new_status public.sla_status_enum)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    WITH today AS (
+        SELECT ((now() AT TIME ZONE 'Asia/Kolkata')::date)::timestamp AT TIME ZONE 'Asia/Kolkata' AS starts
+    ),
+    f AS (SELECT * FROM sla_ticket_facts()),
+    iss AS (
+        SELECT i.id, i.ticket_id, i.sla_end_date AS old_deadline, i.sla_status AS old_status,
+               add_working_days(f.raised_at, i.sla_days, v.weekly_offs, p_holidays) AS new_deadline,
+               CASE WHEN f.ticket_status = 'Rejected' THEN f.finished_at
+                    WHEN i.status = 'Done' THEN i.completed_at END AS finish
+        FROM issues i
+        JOIN f ON f.ticket_id = i.ticket_id
+        JOIN sla_versions v ON v.id = f.sla_version_id
+        WHERE i.sla_end_date >= (SELECT starts FROM today)
+    ),
+    moved_issues AS (
+        SELECT *, sla_verdict(new_deadline, finish) AS new_status
+        FROM iss WHERE new_deadline IS DISTINCT FROM old_deadline
+    ),
+    moved_tickets AS (
+        SELECT f.*, d.new_deadline
+        FROM f
+        JOIN LATERAL (
+            SELECT max(COALESCE(m.new_deadline, i.sla_end_date)) AS new_deadline
+            FROM issues i LEFT JOIN moved_issues m ON m.id = i.id
+            WHERE i.ticket_id = f.ticket_id
+        ) d ON true
+        WHERE f.ticket_id IN (SELECT ticket_id FROM moved_issues)
+    ),
+    acc AS (
+        SELECT f.*, add_working_days(f.raised_at, v.acceptance_days, v.weekly_offs, p_holidays) AS new_deadline
+        FROM f JOIN sla_versions v ON v.id = f.sla_version_id
+        WHERE f.acceptance_sla_end_date >= (SELECT starts FROM today)
+    )
+    SELECT 'issue', ticket_id, id, old_deadline, new_deadline, old_status, new_status
+    FROM moved_issues
+    UNION ALL
+    SELECT 'ticket', ticket_id, NULL, final_sla_end_date, new_deadline, overall_sla_status,
+           sla_verdict(new_deadline, finished_at)
+    FROM moved_tickets
+    WHERE new_deadline IS DISTINCT FROM final_sla_end_date
+    UNION ALL
+    SELECT 'acceptance', ticket_id, NULL, acceptance_sla_end_date, new_deadline, acceptance_sla_status,
+           sla_verdict(new_deadline, accepted_at)
+    FROM acc
+    WHERE new_deadline IS DISTINCT FROM acceptance_sla_end_date;
+$$;
+
+
+ALTER FUNCTION public.sla_holiday_effects(p_holidays date[]) OWNER TO postgres;
+
+--
+-- Name: sla_on_time_whatif(integer, integer[], jsonb, date[]); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_on_time_whatif(p_acceptance_days integer, p_weekly_offs integer[], p_turnaround jsonb, p_holidays date[]) RETURNS TABLE(window_days integer, sla text, as_is_adhered integer, as_is_judged integer, would_be_adhered integer, would_be_judged integer)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    WITH cand AS (
+        SELECT (e->>'category')::issue_category AS category, (e->>'severity')::issue_severity AS severity,
+               (e->>'sla_days')::int AS sla_days
+        FROM jsonb_array_elements(p_turnaround) e
+    ),
+    f AS (SELECT * FROM sla_ticket_facts()),
+    tk AS (
+        SELECT f.*,
+               (SELECT max(add_working_days(f.raised_at, c.sla_days, p_weekly_offs, p_holidays))
+                FROM issues i JOIN cand c ON c.category = i.category AND c.severity = i.severity
+                WHERE i.ticket_id = f.ticket_id) AS cand_deadline,
+               add_working_days(f.raised_at, p_acceptance_days, p_weekly_offs, p_holidays) AS cand_acc_deadline
+        FROM f
+    ),
+    verdicts AS (
+        -- Turnaround: tickets with issues only (no issues is NA).
+        SELECT 'Turnaround' AS sla,
+               overall_sla_status AS as_is,
+               COALESCE(finished_at, final_sla_end_date) AS as_is_at,
+               sla_verdict(cand_deadline, finished_at) AS would_be,
+               COALESCE(finished_at, cand_deadline) AS would_be_at
+        FROM tk WHERE issue_count > 0
+        UNION ALL
+        SELECT 'Acceptance',
+               acceptance_sla_status,
+               COALESCE(accepted_at, acceptance_sla_end_date),
+               sla_verdict(cand_acc_deadline, accepted_at),
+               COALESCE(accepted_at, cand_acc_deadline)
+        FROM tk
+    )
+    SELECT w.days, v.sla,
+           count(*) FILTER (WHERE v.as_is = 'Adhered' AND v.as_is_at >= now() - make_interval(days => w.days))::int,
+           count(*) FILTER (WHERE v.as_is IN ('Adhered', 'Violated') AND v.as_is_at >= now() - make_interval(days => w.days))::int,
+           count(*) FILTER (WHERE v.would_be = 'Adhered' AND v.would_be_at >= now() - make_interval(days => w.days))::int,
+           count(*) FILTER (WHERE v.would_be IN ('Adhered', 'Violated') AND v.would_be_at >= now() - make_interval(days => w.days))::int
+    FROM verdicts v, (VALUES (30), (90)) w(days)
+    GROUP BY w.days, v.sla
+    ORDER BY v.sla DESC, w.days;
+$$;
+
+
+ALTER FUNCTION public.sla_on_time_whatif(p_acceptance_days integer, p_weekly_offs integer[], p_turnaround jsonb, p_holidays date[]) OWNER TO postgres;
+
+--
+-- Name: sla_ticket_facts(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_ticket_facts() RETURNS TABLE(ticket_id uuid, raised_at timestamp with time zone, ticket_status text, sla_version_id uuid, issue_count integer, finished_at timestamp with time zone, accepted_at timestamp with time zone, final_sla_end_date timestamp with time zone, overall_sla_status public.sla_status_enum, acceptance_sla_end_date timestamp with time zone, acceptance_sla_status public.sla_status_enum)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT t.id,
+           t.created_at AT TIME ZONE 'UTC',
+           t.status::text,
+           t.sla_version_id,
+           COALESCE(i.n, 0)::int,
+           CASE WHEN t.status = 'Rejected' THEN t.rejected_at
+                WHEN i.all_done THEN i.last_done END,
+           COALESCE(i.first_added, CASE WHEN t.status = 'Rejected' THEN t.rejected_at END),
+           t.final_sla_end_date, t.overall_sla_status,
+           t.acceptance_sla_end_date, t.acceptance_sla_status
+    FROM tickets t
+    LEFT JOIN (
+        SELECT ticket_id, count(*) n, bool_and(status = 'Done') all_done,
+               max(completed_at) last_done, min(created_at) AT TIME ZONE 'UTC' first_added
+        FROM issues GROUP BY ticket_id
+    ) i ON i.ticket_id = t.id
+    WHERE t.sla_version_id IS NOT NULL;
+$$;
+
+
+ALTER FUNCTION public.sla_ticket_facts() OWNER TO postgres;
+
+--
+-- Name: sla_validate_change(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_validate_change(p_change jsonb) RETURNS date[]
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_today   date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+    v_version jsonb := NULLIF(p_change->'version', 'null'::jsonb);
+    v_add     date[];
+    v_remove  date[];
+    v_latest  sla_versions%ROWTYPE;
+    v_pairs   int;
+    -- One Turnaround Time per category and severity.
+    v_expected int := cardinality(enum_range(NULL::issue_category)) * cardinality(enum_range(NULL::issue_severity));
+BEGIN
+    SELECT COALESCE(array_agg((e->>'date')::date), '{}') INTO v_add
+    FROM jsonb_array_elements(COALESCE(p_change->'holidays_add', '[]')) e;
+    SELECT COALESCE(array_agg(e::date), '{}') INTO v_remove
+    FROM jsonb_array_elements_text(COALESCE(p_change->'holidays_remove', '[]')) e;
+
+    IF v_version IS NULL AND cardinality(v_add) = 0 AND cardinality(v_remove) = 0 THEN
+        PERFORM sla_change_error('NOTHING_TO_SAVE', 'There are no changes to save.');
+    END IF;
+
+    SELECT * INTO v_latest FROM sla_versions WHERE cancelled_at IS NULL ORDER BY version_number DESC LIMIT 1;
+    IF (p_change->>'base_version_id')::uuid IS DISTINCT FROM v_latest.id THEN
+        PERFORM sla_change_error('STALE_DRAFT',
+            'The SLA settings were changed by someone else since you opened this page. Reload and make your changes again.');
+    END IF;
+
+    IF v_version IS NOT NULL THEN
+        IF v_latest.starts_at > now() THEN
+            PERFORM sla_change_error('VERSION_SCHEDULED', format(
+                'Version %s is scheduled to start on %s. Cancel it before saving a new version.',
+                v_latest.version_number, to_char(v_latest.starts_at AT TIME ZONE 'Asia/Kolkata', 'DD Mon YYYY HH24:MI')));
+        END IF;
+        IF (p_change->>'starts_at') IS NOT NULL AND (p_change->>'starts_at')::timestamptz <= now() THEN
+            PERFORM sla_change_error('START_IN_PAST', 'A scheduled start must be in the future.');
+        END IF;
+        IF COALESCE((v_version->>'acceptance_days')::int, 0) NOT BETWEEN 1 AND 365 THEN
+            PERFORM sla_change_error('INVALID_ACCEPTANCE', 'Acceptance SLA Threshold must be between 1 and 365 working days.');
+        END IF;
+        IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(v_version->'weekly_offs', '[]')) d
+                   WHERE d::int NOT BETWEEN 0 AND 6)
+           OR jsonb_array_length(COALESCE(v_version->'weekly_offs', '[]')) >= 7 THEN
+            PERFORM sla_change_error('INVALID_WEEKLY_OFFS', 'Weekly Offs must leave at least one working day.');
+        END IF;
+        SELECT count(DISTINCT (e->>'category', e->>'severity')) INTO v_pairs
+        FROM jsonb_array_elements(COALESCE(v_version->'turnaround', '[]')) e
+        WHERE (e->>'sla_days')::int BETWEEN 1 AND 365;
+        IF v_pairs <> v_expected OR jsonb_array_length(v_version->'turnaround') <> v_expected THEN
+            PERFORM sla_change_error('INVALID_TURNAROUND',
+                'Every category and severity needs a Turnaround Time between 1 and 365 working days.');
+        END IF;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM unnest(v_add || v_remove) d WHERE d < v_today) THEN
+        PERFORM sla_change_error('HOLIDAY_IN_PAST', 'Holidays before today can''t be added or removed.');
+    END IF;
+    IF EXISTS (SELECT 1 FROM unnest(v_add) d WHERE d = ANY (sla_holiday_dates()))
+       OR cardinality(v_add) <> (SELECT count(DISTINCT d) FROM unnest(v_add) d) THEN
+        PERFORM sla_change_error('HOLIDAY_EXISTS', 'That date is already a holiday.');
+    END IF;
+    IF EXISTS (SELECT 1 FROM unnest(v_remove) d WHERE NOT d = ANY (sla_holiday_dates())) THEN
+        PERFORM sla_change_error('HOLIDAY_NOT_FOUND', 'That holiday has already been removed.');
+    END IF;
+
+    RETURN ARRAY(SELECT d FROM unnest(sla_holiday_dates()) d WHERE NOT d = ANY (v_remove)
+                 UNION SELECT unnest(v_add) ORDER BY 1);
+END;
+$$;
+
+
+ALTER FUNCTION public.sla_validate_change(p_change jsonb) OWNER TO postgres;
+
+--
 -- Name: sla_verdict(timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5754,6 +6090,23 @@ $$;
 
 
 ALTER FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) OWNER TO postgres;
+
+--
+-- Name: sla_version_at(timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_version_at(p_at timestamp with time zone) RETURNS uuid
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT id FROM sla_versions
+    WHERE cancelled_at IS NULL AND starts_at <= p_at
+    ORDER BY starts_at DESC
+    LIMIT 1;
+$$;
+
+
+ALTER FUNCTION public.sla_version_at(p_at timestamp with time zone) OWNER TO postgres;
 
 --
 -- Name: stamp_outsource_invoice_accepted_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -5789,43 +6142,19 @@ CREATE FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() RETURNS t
     SET search_path TO 'public'
     AS $$
 DECLARE
-  v_deadline    timestamptz;
   v_first_issue timestamptz;
 BEGIN
-  -- Only act when status transitions TO Rejected
   IF NEW.status = 'Rejected' AND (OLD.status IS DISTINCT FROM 'Rejected') THEN
-
     NEW.rejected_at := NOW();
 
-    -- Only evaluate if still Pending (not already resolved by the first-issue trigger)
+    -- Only if not already judged by the first-issue trigger
     IF NEW.acceptance_sla_status = 'Pending' THEN
+      SELECT MIN(created_at) AT TIME ZONE 'UTC' INTO v_first_issue
+        FROM issues WHERE ticket_id = NEW.id;
 
-      v_deadline := COALESCE(
-          NEW.acceptance_sla_end_date,
-          acceptance_deadline(NEW.created_at AT TIME ZONE 'UTC')
-      );
-
-      SELECT MIN(created_at) AT TIME ZONE 'UTC'
-        INTO v_first_issue
-        FROM issues
-       WHERE ticket_id = NEW.id;
-
-      IF v_first_issue IS NOT NULL THEN
-        -- First issue exists; evaluate against its creation time
-        IF v_first_issue <= v_deadline THEN
-          NEW.acceptance_sla_status := 'Adhered';
-        ELSE
-          NEW.acceptance_sla_status := 'Violated';
-        END IF;
-      ELSE
-        -- No issues ever created; evaluate against rejection time
-        IF NOW() <= v_deadline THEN
-          NEW.acceptance_sla_status := 'Adhered';
-        ELSE
-          NEW.acceptance_sla_status := 'Violated';
-        END IF;
-      END IF;
-
+      -- Against the first issue if there is one, otherwise the rejection
+      NEW.acceptance_sla_status := sla_verdict(NEW.acceptance_sla_end_date,
+                                               COALESCE(v_first_issue, NEW.rejected_at));
     END IF;
   END IF;
 
@@ -6398,23 +6727,6 @@ $$;
 ALTER FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) OWNER TO postgres;
 
 --
--- Name: trg_recalculate_open_slas(); Type: FUNCTION; Schema: public; Owner: postgres
---
-
-CREATE FUNCTION public.trg_recalculate_open_slas() RETURNS trigger
-    LANGUAGE plpgsql
-    SET search_path TO 'public'
-    AS $$
-BEGIN
-    PERFORM recalculate_open_slas();
-    RETURN NULL;
-END;
-$$;
-
-
-ALTER FUNCTION public.trg_recalculate_open_slas() OWNER TO postgres;
-
---
 -- Name: trg_set_acceptance_sla_on_first_issue(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -6450,8 +6762,21 @@ CREATE FUNCTION public.trg_stamp_acceptance_deadline() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
+DECLARE
+    v_version sla_versions%ROWTYPE;
 BEGIN
-    NEW.acceptance_sla_end_date := acceptance_deadline(NEW.created_at AT TIME ZONE 'UTC');
+    IF auth.uid() IS NOT NULL OR NEW.sla_version_id IS NULL THEN
+        NEW.sla_version_id := CASE WHEN is_sla_tracked(NEW.created_at)
+                                   THEN sla_version_at(NEW.created_at AT TIME ZONE 'UTC') END;
+    END IF;
+
+    IF auth.uid() IS NOT NULL OR NEW.acceptance_sla_end_date IS NULL THEN
+        SELECT * INTO v_version FROM sla_versions WHERE id = NEW.sla_version_id;
+        NEW.acceptance_sla_end_date := CASE WHEN FOUND THEN
+            add_working_days(NEW.created_at AT TIME ZONE 'UTC', v_version.acceptance_days,
+                             v_version.weekly_offs, sla_holiday_dates()) END;
+    END IF;
+
     RETURN NEW;
 END;
 $$;
@@ -10318,6 +10643,7 @@ CREATE TABLE public.issues (
     labour_hours numeric(5,2),
     completed_on date,
     completed_at timestamp with time zone,
+    sla_version_id uuid,
     CONSTRAINT check_rated_at_after_created CHECK (((rated_at IS NULL) OR (rated_at >= created_at)))
 );
 
@@ -10343,6 +10669,13 @@ COMMENT ON COLUMN public.issues.completed_on IS 'IST date of completed_at, kept 
 --
 
 COMMENT ON COLUMN public.issues.completed_at IS 'Activity complete time: when the issue was finished. Stamped when it is marked Done, cleared when it leaves Done; the exec may correct it, never into the future. Every change is logged on the ticket timeline. The issue''s SLA is judged against it (MAIN-135).';
+
+
+--
+-- Name: COLUMN issues.sla_version_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.issues.sla_version_id IS 'SLA version active when the issue was added: its Turnaround Time. Working days follow the ticket''s version. NULL on tickets raised before SLA tracking (MAIN-136).';
 
 
 --
@@ -10424,6 +10757,7 @@ CREATE TABLE public.tickets (
     acceptance_sla_status public.sla_status_enum DEFAULT 'Pending'::public.sla_status_enum,
     rejected_at timestamp with time zone,
     acceptance_sla_end_date timestamp with time zone,
+    sla_version_id uuid,
     CONSTRAINT check_closed_after_resolved CHECK (((closed_at IS NULL) OR (resolved_at IS NULL) OR (closed_at >= resolved_at))),
     CONSTRAINT check_resolved_after_created CHECK (((resolved_at IS NULL) OR (resolved_at >= created_at)))
 );
@@ -10450,6 +10784,13 @@ COMMENT ON COLUMN public.tickets.closed_at IS 'When the ticket entered Closed (i
 --
 
 COMMENT ON COLUMN public.tickets.acceptance_sla_end_date IS 'When acceptance is due, in working days from creation. Stamped on insert; recomputed if acceptance_sla_days changes while the ticket is still awaiting acceptance.';
+
+
+--
+-- Name: COLUMN tickets.sla_version_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.tickets.sla_version_id IS 'SLA version active when the ticket was raised: its Acceptance SLA Threshold and Weekly Offs. NULL for tickets raised before SLA tracking (MAIN-136).';
 
 
 --
@@ -10883,18 +11224,92 @@ CREATE TABLE public.sla_events (
 ALTER TABLE public.sla_events OWNER TO postgres;
 
 --
--- Name: sla_rules_config; Type: TABLE; Schema: public; Owner: postgres
+-- Name: sla_holiday_changes; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE TABLE public.sla_rules_config (
-    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    category public.issue_category NOT NULL,
-    severity public.issue_severity NOT NULL,
-    sla_days integer NOT NULL
+CREATE TABLE public.sla_holiday_changes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    holiday_date date NOT NULL,
+    description text,
+    action text DEFAULT 'add'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    performed_by uuid,
+    performed_by_name text,
+    performed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sla_holiday_changes_action_check CHECK ((action = ANY (ARRAY['add'::text, 'remove'::text])))
 );
 
 
-ALTER TABLE public.sla_rules_config OWNER TO postgres;
+ALTER TABLE public.sla_holiday_changes OWNER TO postgres;
+
+--
+-- Name: TABLE sla_holiday_changes; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.sla_holiday_changes IS 'Every holiday added or removed, with the reason (MAIN-136). Written only by apply_sla_change; survives the holiday row being deleted.';
+
+
+--
+-- Name: sla_version_turnaround; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.sla_version_turnaround (
+    version_id uuid NOT NULL,
+    category public.issue_category NOT NULL,
+    severity public.issue_severity NOT NULL,
+    sla_days integer DEFAULT 3 NOT NULL,
+    CONSTRAINT sla_version_turnaround_days_check CHECK (((sla_days >= 1) AND (sla_days <= 365)))
+);
+
+
+ALTER TABLE public.sla_version_turnaround OWNER TO postgres;
+
+--
+-- Name: TABLE sla_version_turnaround; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.sla_version_turnaround IS 'Turnaround Time (working days) per category and severity, one row per pair for every version (MAIN-136). Replaces sla_rules_config.';
+
+
+--
+-- Name: sla_versions; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.sla_versions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    version_number integer NOT NULL,
+    acceptance_days integer DEFAULT 2 NOT NULL,
+    weekly_offs integer[] DEFAULT '{0,6}'::integer[] NOT NULL,
+    starts_at timestamp with time zone DEFAULT now() NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    created_by uuid,
+    created_by_name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    cancelled_at timestamp with time zone,
+    cancelled_by uuid,
+    cancelled_by_name text,
+    cancel_reason text,
+    CONSTRAINT sla_versions_acceptance_days_check CHECK (((acceptance_days >= 1) AND (acceptance_days <= 365))),
+    CONSTRAINT sla_versions_cancel_check CHECK (((cancelled_at IS NULL) = (cancel_reason IS NULL))),
+    CONSTRAINT sla_versions_weekly_offs_check CHECK (((weekly_offs <@ '{0,1,2,3,4,5,6}'::integer[]) AND (cardinality(weekly_offs) < 7)))
+);
+
+
+ALTER TABLE public.sla_versions OWNER TO postgres;
+
+--
+-- Name: TABLE sla_versions; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.sla_versions IS 'Numbered SLA settings (MAIN-136): Acceptance SLA Threshold, Weekly Offs, and Turnaround Time in sla_version_turnaround. A version is active from starts_at until the next non-cancelled version starts. Written only by apply_sla_change. created_by/cancelled_by are not foreign keys and the names are snapshots, so history survives a user being deleted or renamed.';
+
+
+--
+-- Name: COLUMN sla_versions.weekly_offs; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.sla_versions.weekly_offs IS 'Days of the week that are not working days, 0 = Sunday ... 6 = Saturday.';
+
 
 --
 -- Name: stock_audit_item_reasons; Type: TABLE; Schema: public; Owner: postgres
@@ -12304,19 +12719,35 @@ ALTER TABLE ONLY public.sla_events
 
 
 --
--- Name: sla_rules_config sla_rules_config_category_severity_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_holiday_changes sla_holiday_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.sla_rules_config
-    ADD CONSTRAINT sla_rules_config_category_severity_key UNIQUE (category, severity);
+ALTER TABLE ONLY public.sla_holiday_changes
+    ADD CONSTRAINT sla_holiday_changes_pkey PRIMARY KEY (id);
 
 
 --
--- Name: sla_rules_config sla_rules_config_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: sla_version_turnaround sla_version_turnaround_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
-ALTER TABLE ONLY public.sla_rules_config
-    ADD CONSTRAINT sla_rules_config_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.sla_version_turnaround
+    ADD CONSTRAINT sla_version_turnaround_pkey PRIMARY KEY (version_id, category, severity);
+
+
+--
+-- Name: sla_versions sla_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.sla_versions
+    ADD CONSTRAINT sla_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sla_versions sla_versions_version_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.sla_versions
+    ADD CONSTRAINT sla_versions_version_number_key UNIQUE (version_number);
 
 
 --
@@ -13421,6 +13852,13 @@ CREATE INDEX idx_tickets_vehicle_number ON public.tickets USING btree (vehicle_n
 
 
 --
+-- Name: issues_sla_version_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX issues_sla_version_id_idx ON public.issues USING btree (sla_version_id);
+
+
+--
 -- Name: job_cards_location_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -13586,6 +14024,13 @@ CREATE INDEX supplier_ledger_adjustments_supplier_id_idx ON public.supplier_ledg
 --
 
 CREATE INDEX supplier_payments_supplier_id_idx ON public.supplier_payments USING btree (supplier_id, paid_on);
+
+
+--
+-- Name: tickets_sla_version_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX tickets_sla_version_id_idx ON public.tickets USING btree (sla_version_id);
 
 
 --
@@ -13834,6 +14279,13 @@ CREATE TRIGGER trg_guard_issue_on_finished_ticket BEFORE INSERT ON public.issues
 
 
 --
+-- Name: issues trg_guard_issue_sla_version; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_issue_sla_version BEFORE UPDATE OF sla_version_id ON public.issues FOR EACH ROW EXECUTE FUNCTION public.guard_sla_version_change();
+
+
+--
 -- Name: issues trg_guard_rated_issue_reopen; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -13848,10 +14300,10 @@ CREATE TRIGGER trg_guard_ticket_reject_with_issues BEFORE UPDATE OF status ON pu
 
 
 --
--- Name: holidays trg_holidays_recalc; Type: TRIGGER; Schema: public; Owner: postgres
+-- Name: tickets trg_guard_ticket_sla_version; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trg_holidays_recalc AFTER INSERT OR DELETE OR UPDATE ON public.holidays FOR EACH STATEMENT EXECUTE FUNCTION public.trg_recalculate_open_slas();
+CREATE TRIGGER trg_guard_ticket_sla_version BEFORE UPDATE OF sla_version_id ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.guard_sla_version_change();
 
 
 --
@@ -13873,13 +14325,6 @@ CREATE TRIGGER trg_set_issue_completed_on BEFORE INSERT OR UPDATE OF status, com
 --
 
 CREATE TRIGGER trg_set_scrap_location BEFORE INSERT ON public.scrap_inventory FOR EACH ROW EXECUTE FUNCTION public.set_scrap_location_from_job_card();
-
-
---
--- Name: sla_rules_config trg_sla_rules_config_recalc; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER trg_sla_rules_config_recalc AFTER INSERT OR DELETE OR UPDATE ON public.sla_rules_config FOR EACH STATEMENT EXECUTE FUNCTION public.trg_recalculate_open_slas();
 
 
 --
@@ -13908,13 +14353,6 @@ CREATE TRIGGER trg_stamp_ticket_resolved_closed_at BEFORE UPDATE OF status ON pu
 --
 
 CREATE TRIGGER trg_sync_part_total_stock AFTER INSERT OR DELETE OR UPDATE ON public.part_stock FOR EACH ROW EXECUTE FUNCTION public.sync_part_total_stock();
-
-
---
--- Name: system_settings trg_system_settings_sla_recalc; Type: TRIGGER; Schema: public; Owner: postgres
---
-
-CREATE TRIGGER trg_system_settings_sla_recalc AFTER INSERT OR UPDATE ON public.system_settings FOR EACH ROW WHEN ((new.key = ANY (ARRAY['sla_weekly_offs'::text, 'acceptance_sla_days'::text]))) EXECUTE FUNCTION public.trg_recalculate_open_slas();
 
 
 --
@@ -14406,6 +14844,14 @@ ALTER TABLE ONLY public.issues
 
 
 --
+-- Name: issues issues_sla_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_sla_version_id_fkey FOREIGN KEY (sla_version_id) REFERENCES public.sla_versions(id);
+
+
+--
 -- Name: issues issues_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -14766,6 +15212,14 @@ ALTER TABLE ONLY public.sla_events
 
 
 --
+-- Name: sla_version_turnaround sla_version_turnaround_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.sla_version_turnaround
+    ADD CONSTRAINT sla_version_turnaround_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.sla_versions(id);
+
+
+--
 -- Name: stock_audit_item_reasons stock_audit_item_reasons_audit_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -14947,6 +15401,14 @@ ALTER TABLE ONLY public.tickets
 
 ALTER TABLE ONLY public.tickets
     ADD CONSTRAINT tickets_site_fkey FOREIGN KEY (site) REFERENCES public.sites(name) ON UPDATE CASCADE;
+
+
+--
+-- Name: tickets tickets_sla_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tickets
+    ADD CONSTRAINT tickets_sla_version_id_fkey FOREIGN KEY (sla_version_id) REFERENCES public.sla_versions(id);
 
 
 --
@@ -15219,10 +15681,17 @@ CREATE POLICY "Creators can rate tickets" ON public.tickets FOR UPDATE TO authen
 
 
 --
--- Name: sla_rules_config Everyone can read SLA rules config; Type: POLICY; Schema: public; Owner: postgres
+-- Name: sla_version_turnaround Everyone can read SLA turnaround; Type: POLICY; Schema: public; Owner: postgres
 --
 
-CREATE POLICY "Everyone can read SLA rules config" ON public.sla_rules_config FOR SELECT USING (true);
+CREATE POLICY "Everyone can read SLA turnaround" ON public.sla_version_turnaround FOR SELECT USING (true);
+
+
+--
+-- Name: sla_versions Everyone can read SLA versions; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Everyone can read SLA versions" ON public.sla_versions FOR SELECT USING (true);
 
 
 --
@@ -15511,6 +15980,13 @@ CREATE POLICY "Execs manage scrap_writeoff_items" ON public.scrap_writeoff_items
 
 
 --
+-- Name: sla_holiday_changes Execs read holiday changes; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Execs read holiday changes" ON public.sla_holiday_changes FOR SELECT USING (public.is_maintenance_exec());
+
+
+--
 -- Name: purchase_invoice_items Execs update invoice items; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -15727,38 +16203,10 @@ CREATE POLICY "Mechanics view issues on assigned cards" ON public.issues FOR SEL
 
 
 --
--- Name: holidays Super admins can delete holidays; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Super admins can delete holidays" ON public.holidays FOR DELETE USING (public.is_super_admin());
-
-
---
--- Name: holidays Super admins can insert holidays; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Super admins can insert holidays" ON public.holidays FOR INSERT WITH CHECK (public.is_super_admin());
-
-
---
 -- Name: system_settings Super admins can insert settings; Type: POLICY; Schema: public; Owner: postgres
 --
 
 CREATE POLICY "Super admins can insert settings" ON public.system_settings FOR INSERT WITH CHECK (public.is_super_admin());
-
-
---
--- Name: sla_rules_config Super admins can update SLA rules config; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Super admins can update SLA rules config" ON public.sla_rules_config FOR UPDATE USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
-
-
---
--- Name: holidays Super admins can update holidays; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Super admins can update holidays" ON public.holidays FOR UPDATE USING (public.is_super_admin());
 
 
 --
@@ -16190,10 +16638,22 @@ ALTER TABLE public.sites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sla_events ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: sla_rules_config; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: sla_holiday_changes; Type: ROW SECURITY; Schema: public; Owner: postgres
 --
 
-ALTER TABLE public.sla_rules_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sla_holiday_changes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sla_version_turnaround; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.sla_version_turnaround ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sla_versions; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.sla_versions ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: stock_audit_item_reasons; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -17085,15 +17545,6 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
--- Name: FUNCTION acceptance_deadline(p_created_at timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.acceptance_deadline(p_created_at timestamp with time zone) TO anon;
-GRANT ALL ON FUNCTION public.acceptance_deadline(p_created_at timestamp with time zone) TO authenticated;
-GRANT ALL ON FUNCTION public.acceptance_deadline(p_created_at timestamp with time zone) TO service_role;
-
-
---
 -- Name: FUNCTION add_part_to_inventory(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17103,12 +17554,12 @@ GRANT ALL ON FUNCTION public.add_part_to_inventory() TO service_role;
 
 
 --
--- Name: FUNCTION add_working_days(start_ts timestamp with time zone, n_days integer); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer) TO anon;
-GRANT ALL ON FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer) TO authenticated;
-GRANT ALL ON FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer) TO service_role;
+GRANT ALL ON FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]) TO anon;
+GRANT ALL ON FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]) TO authenticated;
+GRANT ALL ON FUNCTION public.add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]) TO service_role;
 
 
 --
@@ -17143,6 +17594,15 @@ GRANT ALL ON FUNCTION public.advance_open_items(p_today date) TO service_role;
 GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO anon;
 GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO authenticated;
 GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO service_role;
+
+
+--
+-- Name: FUNCTION apply_sla_change(p_change jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.apply_sla_change(p_change jsonb) TO anon;
+GRANT ALL ON FUNCTION public.apply_sla_change(p_change jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.apply_sla_change(p_change jsonb) TO service_role;
 
 
 --
@@ -17505,6 +17965,15 @@ GRANT ALL ON FUNCTION public.guard_refurbishment_invoice_new_line() TO service_r
 
 
 --
+-- Name: FUNCTION guard_sla_version_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_sla_version_change() TO anon;
+GRANT ALL ON FUNCTION public.guard_sla_version_change() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_sla_version_change() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_ticket_reject_with_issues(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17640,21 +18109,21 @@ GRANT ALL ON FUNCTION public.payment_run_for(p_date date) TO service_role;
 
 
 --
+-- Name: FUNCTION preview_sla_changes(p_change jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.preview_sla_changes(p_change jsonb) TO anon;
+GRANT ALL ON FUNCTION public.preview_sla_changes(p_change jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.preview_sla_changes(p_change jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION purchase_invoice_file_missing(p_purchase_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO service_role;
-
-
---
--- Name: FUNCTION recalculate_open_slas(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.recalculate_open_slas() TO anon;
-GRANT ALL ON FUNCTION public.recalculate_open_slas() TO authenticated;
-GRANT ALL ON FUNCTION public.recalculate_open_slas() TO service_role;
 
 
 --
@@ -17874,12 +18343,75 @@ GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
 
 
 --
+-- Name: FUNCTION sla_change_error(p_code text, p_message text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_change_error(p_code text, p_message text) TO anon;
+GRANT ALL ON FUNCTION public.sla_change_error(p_code text, p_message text) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_change_error(p_code text, p_message text) TO service_role;
+
+
+--
+-- Name: FUNCTION sla_holiday_dates(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_holiday_dates() TO anon;
+GRANT ALL ON FUNCTION public.sla_holiday_dates() TO authenticated;
+GRANT ALL ON FUNCTION public.sla_holiday_dates() TO service_role;
+
+
+--
+-- Name: FUNCTION sla_holiday_effects(p_holidays date[]); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_holiday_effects(p_holidays date[]) TO anon;
+GRANT ALL ON FUNCTION public.sla_holiday_effects(p_holidays date[]) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_holiday_effects(p_holidays date[]) TO service_role;
+
+
+--
+-- Name: FUNCTION sla_on_time_whatif(p_acceptance_days integer, p_weekly_offs integer[], p_turnaround jsonb, p_holidays date[]); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_on_time_whatif(p_acceptance_days integer, p_weekly_offs integer[], p_turnaround jsonb, p_holidays date[]) TO anon;
+GRANT ALL ON FUNCTION public.sla_on_time_whatif(p_acceptance_days integer, p_weekly_offs integer[], p_turnaround jsonb, p_holidays date[]) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_on_time_whatif(p_acceptance_days integer, p_weekly_offs integer[], p_turnaround jsonb, p_holidays date[]) TO service_role;
+
+
+--
+-- Name: FUNCTION sla_ticket_facts(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_ticket_facts() TO anon;
+GRANT ALL ON FUNCTION public.sla_ticket_facts() TO authenticated;
+GRANT ALL ON FUNCTION public.sla_ticket_facts() TO service_role;
+
+
+--
+-- Name: FUNCTION sla_validate_change(p_change jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_validate_change(p_change jsonb) TO anon;
+GRANT ALL ON FUNCTION public.sla_validate_change(p_change jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_validate_change(p_change jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT ALL ON FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) TO anon;
 GRANT ALL ON FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) TO authenticated;
 GRANT ALL ON FUNCTION public.sla_verdict(p_deadline timestamp with time zone, p_finished_at timestamp with time zone) TO service_role;
+
+
+--
+-- Name: FUNCTION sla_version_at(p_at timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_version_at(p_at timestamp with time zone) TO anon;
+GRANT ALL ON FUNCTION public.sla_version_at(p_at timestamp with time zone) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_version_at(p_at timestamp with time zone) TO service_role;
 
 
 --
@@ -17993,15 +18525,6 @@ GRANT ALL ON FUNCTION public.sync_part_total_stock() TO service_role;
 GRANT ALL ON FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) TO anon;
 GRANT ALL ON FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) TO authenticated;
 GRANT ALL ON FUNCTION public.transfer_stock(p_from uuid, p_to uuid, p_items jsonb, p_notes text) TO service_role;
-
-
---
--- Name: FUNCTION trg_recalculate_open_slas(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.trg_recalculate_open_slas() TO anon;
-GRANT ALL ON FUNCTION public.trg_recalculate_open_slas() TO authenticated;
-GRANT ALL ON FUNCTION public.trg_recalculate_open_slas() TO service_role;
 
 
 --
@@ -18743,12 +19266,30 @@ GRANT ALL ON TABLE public.sla_events TO service_role;
 
 
 --
--- Name: TABLE sla_rules_config; Type: ACL; Schema: public; Owner: postgres
+-- Name: TABLE sla_holiday_changes; Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN,UPDATE ON TABLE public.sla_rules_config TO anon;
-GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN,UPDATE ON TABLE public.sla_rules_config TO authenticated;
-GRANT ALL ON TABLE public.sla_rules_config TO service_role;
+GRANT ALL ON TABLE public.sla_holiday_changes TO anon;
+GRANT ALL ON TABLE public.sla_holiday_changes TO authenticated;
+GRANT ALL ON TABLE public.sla_holiday_changes TO service_role;
+
+
+--
+-- Name: TABLE sla_version_turnaround; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.sla_version_turnaround TO anon;
+GRANT ALL ON TABLE public.sla_version_turnaround TO authenticated;
+GRANT ALL ON TABLE public.sla_version_turnaround TO service_role;
+
+
+--
+-- Name: TABLE sla_versions; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.sla_versions TO anon;
+GRANT ALL ON TABLE public.sla_versions TO authenticated;
+GRANT ALL ON TABLE public.sla_versions TO service_role;
 
 
 --
