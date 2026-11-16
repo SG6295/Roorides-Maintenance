@@ -62,8 +62,15 @@ describe('TicketCard SLA badge (MAIN-134)', () => {
         expect(countdownShown()).toBe(false)
     })
 
-    it('shows nothing on a Rejected ticket', () => {
+    it('shows the verdict, not a countdown, on a Rejected ticket judged at rejection (MAIN-135)', () => {
         renderCard(makeTicket({ status: 'Rejected', overall_sla_status: 'Violated' }))
+
+        expect(screen.getByText('SLA Violated')).toBeInTheDocument()
+        expect(countdownShown()).toBe(false)
+    })
+
+    it('shows nothing on a Rejected ticket without issues (Not applicable)', () => {
+        renderCard(makeTicket({ status: 'Rejected', overall_sla_status: 'NA' }))
 
         expect(screen.queryByText(/^SLA /)).not.toBeInTheDocument()
         expect(countdownShown()).toBe(false)

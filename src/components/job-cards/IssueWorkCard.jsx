@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { XMarkIcon, CalendarDaysIcon } from '@heroicons/react/24/outline'
-import { formatAs, formatDate, todayLocal } from '../../utils/datetime'
+import { formatAs, formatDateTime } from '../../utils/datetime'
 import { useUpdateIssue } from '../../hooks/useIssues'
 import { useAddIssuePart, useDeleteIssuePart, useCreatePart } from '../../hooks/useParts'
 import { usePartUnits } from '../../hooks/useInventory'
@@ -11,6 +11,7 @@ import { logAuditEvent } from '../../utils/auditLogger'
 import { issueLabourHours, formatHours, initials } from '../../utils/labour'
 import { ROLE_LABELS } from '../../constants/userRoles'
 import SearchableSelect from '../shared/SearchableSelect'
+import SLAStatusBadge from '../shared/SLAStatusBadge'
 
 /**
  * IssueWorkCard - displays a single issue within a Job Card with labour, parts, and status controls
@@ -25,6 +26,9 @@ import SearchableSelect from '../shared/SearchableSelect'
  *   userProfile  - current user profile object
  */
 const CREATE_PART_SENTINEL = '__create_part__'
+
+// <input type="datetime-local"> works in the viewer's zone, to the minute.
+const LOCAL_MINUTE = "yyyy-MM-dd'T'HH:mm"
 
 const statusBadge = (status) => {
     if (status === 'Done') return 'bg-green-100 text-green-800'
@@ -154,25 +158,31 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
         }
     }
 
-    // The database stamps completed_on when the item reaches Done; this is the exec's correction.
-    const handleCompletedOnChange = async (value) => {
+    // The database stamps completed_at when the work item reaches Done; this is the exec's
+    // correction. The database refuses a future time and logs the change (MAIN-135).
+    const handleCompletedAtChange = async (value) => {
         setEditingDate(false)
-        if (!value || value === issue.completed_on) return
-        if (value < '2020-01-01' || value > todayLocal()) {
-            alert('Please pick a date between 2020 and today.')
+        if (!value || value === formatAs(issue.completed_at, LOCAL_MINUTE, '')) return
+        // A date-time string with no zone is read as the viewer's local time.
+        const picked = new Date(value)
+        if (isNaN(picked) || picked.getFullYear() < 2020 || picked > new Date()) {
+            alert('Please pick a time between 2020 and now.')
             return
         }
         try {
             await updateIssue.mutateAsync({
                 id: issue.id,
-                updates: { completed_on: value },
+                updates: { completed_at: picked.toISOString() },
                 userId: userProfile?.id,
                 oldData: issue,
             })
         } catch (e) {
-            alert('Failed to change the completion date: ' + e.message)
+            alert('Failed to change the activity complete time: ' + e.message)
         }
     }
+
+    // A rated issue can't leave Done (MAIN-135); the database refuses it too.
+    const isRated = issue.status === 'Done' && !!issue.rating
 
     const canEdit = isMechanic && jobCardStatus === 'Open'
     // Labour is written by execs only (RLS: "Execs manage issue labour").
@@ -197,6 +207,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                         SLA: {formatAs(issue.sla_end_date, 'MMM d')}
                     </span>
                 )}
+                <SLAStatusBadge status={issue.sla_status} deadline={issue.sla_end_date} />
                 <span className="ml-auto flex items-center gap-2">
                     <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(issue.status)}`}>
                         {issue.status}
@@ -206,12 +217,12 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                             // Saved on Enter or leaving the box, not on change: typing a year digit
                             // by digit passes through dates like 0002-10-29 on the way.
                             <input
-                                type="date"
-                                aria-label="Activity complete date"
-                                defaultValue={issue.completed_on || ''}
-                                max={todayLocal()}
+                                type="datetime-local"
+                                aria-label="Activity complete time"
+                                defaultValue={formatAs(issue.completed_at, LOCAL_MINUTE, '')}
+                                max={formatAs(new Date(), LOCAL_MINUTE)}
                                 autoFocus
-                                onBlur={e => handleCompletedOnChange(e.target.dataset.cancelled ? null : e.target.value)}
+                                onBlur={e => handleCompletedAtChange(e.target.dataset.cancelled ? null : e.target.value)}
                                 onKeyDown={e => {
                                     if (e.key === 'Escape') e.currentTarget.dataset.cancelled = 'true'
                                     if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
@@ -222,16 +233,16 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                             <button
                                 type="button"
                                 onClick={() => setEditingDate(true)}
-                                title="Change the activity complete date"
+                                title="Change the activity complete time"
                                 className="inline-flex items-center gap-1 text-xs text-gray-700 border border-gray-200 rounded-md px-2 py-1 hover:border-blue-300 hover:text-blue-700 transition-colors"
                             >
                                 <CalendarDaysIcon className="w-3.5 h-3.5" />
-                                Completed {formatDate(issue.completed_on, 'date not set')}
+                                Completed {formatDateTime(issue.completed_at, 'time not set')}
                             </button>
                         ) : (
                             <span className="inline-flex items-center gap-1 text-xs text-gray-600">
                                 <CalendarDaysIcon className="w-3.5 h-3.5" />
-                                Completed {formatDate(issue.completed_on, 'date not set')}
+                                Completed {formatDateTime(issue.completed_at, 'time not set')}
                             </span>
                         )
                     )}
@@ -387,7 +398,12 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             {/* Status Actions */}
             {canEdit && (
                 <div className="flex flex-wrap gap-2 px-4 py-2 border-t border-gray-100 bg-gray-50">
-                    {issue.status !== 'Open' && (
+                    {isRated && (
+                        <span className="text-xs text-gray-500 self-center">
+                            Rated by the supervisor, so it can't be reopened.
+                        </span>
+                    )}
+                    {issue.status !== 'Open' && !isRated && (
                         <button
                             onClick={() => handleStatusChange('Open')}
                             disabled={isPending}
@@ -396,7 +412,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                             Revert to Open
                         </button>
                     )}
-                    {issue.status !== 'Blocked' && (
+                    {issue.status !== 'Blocked' && !isRated && (
                         <button
                             onClick={() => handleStatusChange('Blocked')}
                             disabled={isPending}

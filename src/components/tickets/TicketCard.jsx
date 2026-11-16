@@ -83,11 +83,11 @@ function SLABadge({ ticket, currentDate, acceptanceDeadline }) {
 
     // A finished ticket has nothing left to count down to. Counting on past the deadline
     // made work finished on time read as overdue (MAIN-134), so show the stored verdict
-    // instead. Rejected shows nothing: MAIN-135 changes how it is judged.
-    if (ticket.status === 'Resolved' || ticket.status === 'Closed') {
+    // instead. A past Rejected ticket that had issues is judged at its rejection time; one
+    // without issues is Not applicable and shows nothing (MAIN-135).
+    if (['Resolved', 'Closed', 'Rejected'].includes(ticket.status)) {
         return <SLAVerdict status={ticket.overall_sla_status} />
     }
-    if (ticket.status === 'Rejected') return null
 
     // Tickets from before the timestamptz migration carry no deadline and a verdict of NA
     // (MAIN-45): there is nothing to count down to, so show nothing rather than a zero.

@@ -106,10 +106,16 @@ export function useUpdateIssue() {
             console.log('useUpdateIssue: Supabase response', { data, error })
             if (error) throw error
 
+            // The database logs every change to the activity complete time itself
+            // (issue_completed_at_audit, MAIN-135), so an edit of only that is not logged here.
+            const dbLogged = ['completed_at', 'completed_on']
+            const onlyDbLogged = Object.keys(updates).every(key => dbLogged.includes(key))
+
             // Log audit event for issue update
-            if (userId && oldData) {
+            if (userId && oldData && !onlyDbLogged) {
                 // Determine what changed
                 const changedFields = Object.keys(updates).filter(key =>
+                    !dbLogged.includes(key) &&
                     JSON.stringify(oldData[key]) !== JSON.stringify(data[key])
                 )
 
