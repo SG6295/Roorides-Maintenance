@@ -39,6 +39,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
+import { ISSUE_CATEGORIES, categoryOptions } from '../constants/issueCategories'
 
 export default function TicketDetail() {
   const { id } = useParams()
@@ -858,7 +859,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                         <CustomSelect
                           value={editedIssue?.category}
                           onChange={val => setEditedIssue({ ...editedIssue, category: val })}
-                          options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other']}
+                          options={categoryOptions(issue.category)}
                           placeholder="Select"
                         />
                       ) : (
@@ -995,7 +996,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                     <CustomSelect
                       value={newIssue.category}
                       onChange={val => setNewIssue({ ...newIssue, category: val })}
-                      options={['Mechanical', 'Electrical', 'Body', 'Tyre', 'GPS', 'AdBlue', 'Other']}
+                      options={ISSUE_CATEGORIES}
                       placeholder="Select"
                     />
                   </td>

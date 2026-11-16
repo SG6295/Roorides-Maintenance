@@ -3022,6 +3022,10 @@ export type Database = {
         Returns: string
       }
       is_finance: { Args: never; Returns: boolean }
+      is_issue_category_retired: {
+        Args: { p_category: Database["public"]["Enums"]["issue_category"] }
+        Returns: boolean
+      }
       is_maintenance_exec: { Args: never; Returns: boolean }
       is_sla_tracked: { Args: { p_raised_at: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
@@ -3113,6 +3117,10 @@ export type Database = {
       }
       set_supplier_credit_days: {
         Args: { p_days: number; p_supplier_id: string }
+        Returns: undefined
+      }
+      sla_assert_change_allowed: {
+        Args: { p_change: Json }
         Returns: undefined
       }
       sla_change_error: {
@@ -3240,7 +3248,7 @@ export type Database = {
         | "Body"
         | "Tyre"
         | "GPS"
-        | "AdBlue"
+        | "Emission"
         | "Other"
       issue_severity: "Minor" | "Major"
       issue_status: "Open" | "Done" | "Blocked"
@@ -3412,7 +3420,7 @@ export const Constants = {
         "Body",
         "Tyre",
         "GPS",
-        "AdBlue",
+        "Emission",
         "Other",
       ],
       issue_severity: ["Minor", "Major"],

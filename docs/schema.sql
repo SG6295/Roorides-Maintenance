@@ -309,7 +309,7 @@ CREATE TYPE public.issue_category AS ENUM (
     'Body',
     'Tyre',
     'GPS',
-    'AdBlue',
+    'Emission',
     'Other'
 );
 
@@ -1267,9 +1267,7 @@ DECLARE
     v_number   int;
     v_moved    int := 0;
 BEGIN
-    IF NOT is_super_admin() THEN
-        PERFORM sla_change_error('UNAUTHORIZED', 'Only super admins can change SLA settings.');
-    END IF;
+    PERFORM sla_assert_change_allowed(p_change);
     IF v_reason IS NULL THEN
         PERFORM sla_change_error('REASON_REQUIRED', 'Give a reason for the change.');
     END IF;
@@ -3008,6 +3006,29 @@ $$;
 ALTER FUNCTION public.get_supplier_statement(p_supplier_id uuid) OWNER TO postgres;
 
 --
+-- Name: guard_issue_category(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_issue_category() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF is_issue_category_retired(NEW.category)
+       AND (TG_OP = 'INSERT' OR NEW.category IS DISTINCT FROM OLD.category) THEN
+        RAISE EXCEPTION '% is no longer an issue category. Pick another one.', NEW.category;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_issue_category() OWNER TO postgres;
+
+--
 -- Name: guard_issue_labour(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3495,6 +3516,20 @@ $$;
 ALTER FUNCTION public.is_finance() OWNER TO postgres;
 
 --
+-- Name: is_issue_category_retired(public.issue_category); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.is_issue_category_retired(p_category public.issue_category) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT p_category = 'Other';
+$$;
+
+
+ALTER FUNCTION public.is_issue_category_retired(p_category public.issue_category) OWNER TO postgres;
+
+--
 -- Name: is_maintenance_exec(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3813,9 +3848,7 @@ DECLARE
     v_offs     integer[];
     v_result   jsonb := '{}';
 BEGIN
-    IF NOT is_super_admin() THEN
-        PERFORM sla_change_error('UNAUTHORIZED', 'Only super admins can change SLA settings.');
-    END IF;
+    PERFORM sla_assert_change_allowed(p_change);
 
     v_holidays := sla_validate_change(p_change);
 
@@ -5827,6 +5860,30 @@ $$;
 ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
 
 --
+-- Name: sla_assert_change_allowed(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sla_assert_change_allowed(p_change jsonb) RETURNS void
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF is_super_admin() THEN
+        RETURN;
+    END IF;
+    IF is_maintenance_exec()
+       AND p_change->>'action' IS DISTINCT FROM 'cancel_version'
+       AND NULLIF(p_change->'version', 'null'::jsonb) IS NULL THEN
+        RETURN;
+    END IF;
+    PERFORM sla_change_error('UNAUTHORIZED', 'Only super admins can change SLA settings other than holidays.');
+END;
+$$;
+
+
+ALTER FUNCTION public.sla_assert_change_allowed(p_change jsonb) OWNER TO postgres;
+
+--
 -- Name: sla_change_error(text, text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5930,8 +5987,8 @@ CREATE FUNCTION public.sla_on_time_whatif(p_acceptance_days integer, p_weekly_of
     f AS (SELECT * FROM sla_ticket_facts()),
     tk AS (
         SELECT f.*,
-               (SELECT max(add_working_days(f.raised_at, c.sla_days, p_weekly_offs, p_holidays))
-                FROM issues i JOIN cand c ON c.category = i.category AND c.severity = i.severity
+               (SELECT max(add_working_days(f.raised_at, COALESCE(c.sla_days, i.sla_days), p_weekly_offs, p_holidays))
+                FROM issues i LEFT JOIN cand c ON c.category = i.category AND c.severity = i.severity
                 WHERE i.ticket_id = f.ticket_id) AS cand_deadline,
                add_working_days(f.raised_at, p_acceptance_days, p_weekly_offs, p_holidays) AS cand_acc_deadline
         FROM f
@@ -6010,8 +6067,10 @@ DECLARE
     v_remove  date[];
     v_latest  sla_versions%ROWTYPE;
     v_pairs   int;
-    -- One Turnaround Time per category and severity.
-    v_expected int := cardinality(enum_range(NULL::issue_category)) * cardinality(enum_range(NULL::issue_severity));
+    -- One Turnaround Time per current category and severity.
+    v_expected int := (SELECT count(*) FROM unnest(enum_range(NULL::issue_category)) c
+                       WHERE NOT is_issue_category_retired(c))
+                      * cardinality(enum_range(NULL::issue_severity));
 BEGIN
     SELECT COALESCE(array_agg((e->>'date')::date), '{}') INTO v_add
     FROM jsonb_array_elements(COALESCE(p_change->'holidays_add', '[]')) e;
@@ -6047,7 +6106,8 @@ BEGIN
         END IF;
         SELECT count(DISTINCT (e->>'category', e->>'severity')) INTO v_pairs
         FROM jsonb_array_elements(COALESCE(v_version->'turnaround', '[]')) e
-        WHERE (e->>'sla_days')::int BETWEEN 1 AND 365;
+        WHERE (e->>'sla_days')::int BETWEEN 1 AND 365
+          AND NOT is_issue_category_retired((e->>'category')::issue_category);
         IF v_pairs <> v_expected OR jsonb_array_length(v_version->'turnaround') <> v_expected THEN
             PERFORM sla_change_error('INVALID_TURNAROUND',
                 'Every category and severity needs a Turnaround Time between 1 and 365 working days.');
@@ -14265,6 +14325,13 @@ CREATE TRIGGER trg_generate_issue_number BEFORE INSERT ON public.issues FOR EACH
 
 
 --
+-- Name: issues trg_guard_issue_category; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_issue_category BEFORE INSERT OR UPDATE OF category ON public.issues FOR EACH ROW EXECUTE FUNCTION public.guard_issue_category();
+
+
+--
 -- Name: issue_labour trg_guard_issue_labour; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -17875,6 +17942,15 @@ GRANT ALL ON FUNCTION public.get_supplier_statement(p_supplier_id uuid) TO servi
 
 
 --
+-- Name: FUNCTION guard_issue_category(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_issue_category() TO anon;
+GRANT ALL ON FUNCTION public.guard_issue_category() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_issue_category() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_issue_labour(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -18016,6 +18092,15 @@ GRANT ALL ON FUNCTION public.invoice_submitted_day(p_invoice public.outsource_in
 GRANT ALL ON FUNCTION public.is_finance() TO anon;
 GRANT ALL ON FUNCTION public.is_finance() TO authenticated;
 GRANT ALL ON FUNCTION public.is_finance() TO service_role;
+
+
+--
+-- Name: FUNCTION is_issue_category_retired(p_category public.issue_category); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.is_issue_category_retired(p_category public.issue_category) TO anon;
+GRANT ALL ON FUNCTION public.is_issue_category_retired(p_category public.issue_category) TO authenticated;
+GRANT ALL ON FUNCTION public.is_issue_category_retired(p_category public.issue_category) TO service_role;
 
 
 --
@@ -18340,6 +18425,15 @@ GRANT ALL ON FUNCTION public.set_supplier_credit_days(p_supplier_id uuid, p_days
 GRANT ALL ON FUNCTION public.set_updated_at() TO anon;
 GRANT ALL ON FUNCTION public.set_updated_at() TO authenticated;
 GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
+
+
+--
+-- Name: FUNCTION sla_assert_change_allowed(p_change jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.sla_assert_change_allowed(p_change jsonb) TO anon;
+GRANT ALL ON FUNCTION public.sla_assert_change_allowed(p_change jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.sla_assert_change_allowed(p_change jsonb) TO service_role;
 
 
 --
