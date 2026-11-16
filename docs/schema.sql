@@ -1365,8 +1365,7 @@ BEGIN
         SELECT MAX(sla_end_date) FROM issues WHERE ticket_id = NEW.ticket_id
     )
     WHERE id = NEW.ticket_id
-    RETURNING final_sla_end_date, status::text,
-              COALESCE(resolved_at, closed_at) AT TIME ZONE 'UTC'
+    RETURNING final_sla_end_date, status::text, resolved_at
     INTO v_final_sla, v_status, v_resolved_at;
 
     UPDATE tickets
@@ -1374,7 +1373,9 @@ BEGIN
         CASE
             WHEN v_final_sla IS NULL
                 THEN 'Pending'::sla_status_enum
-            WHEN v_status IN ('Resolved', 'Closed') AND v_final_sla >= COALESCE(v_resolved_at, now())
+            WHEN v_status IN ('Resolved', 'Closed') AND v_resolved_at IS NULL
+                THEN overall_sla_status
+            WHEN v_status IN ('Resolved', 'Closed') AND v_final_sla >= v_resolved_at
                 THEN 'Adhered'::sla_status_enum
             WHEN v_status IN ('Resolved', 'Closed')
                 THEN 'Violated'::sla_status_enum
@@ -3704,7 +3705,7 @@ DECLARE
     v_final_sla   timestamptz;
     v_resolved_at timestamptz;
 BEGIN
-    SELECT final_sla_end_date, COALESCE(resolved_at, closed_at) AT TIME ZONE 'UTC'
+    SELECT final_sla_end_date, resolved_at
     INTO v_final_sla, v_resolved_at
     FROM tickets WHERE id = NEW.id;
 
@@ -3713,7 +3714,9 @@ BEGIN
         CASE
             WHEN v_final_sla IS NULL
                 THEN 'Pending'::sla_status_enum
-            WHEN NEW.status::text IN ('Resolved', 'Closed') AND v_final_sla >= COALESCE(v_resolved_at, now())
+            WHEN NEW.status::text IN ('Resolved', 'Closed') AND v_resolved_at IS NULL
+                THEN overall_sla_status
+            WHEN NEW.status::text IN ('Resolved', 'Closed') AND v_final_sla >= v_resolved_at
                 THEN 'Adhered'::sla_status_enum
             WHEN NEW.status::text IN ('Resolved', 'Closed')
                 THEN 'Violated'::sla_status_enum
@@ -5654,6 +5657,32 @@ $$;
 
 
 ALTER FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() OWNER TO postgres;
+
+--
+-- Name: stamp_ticket_resolved_closed_at(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stamp_ticket_resolved_closed_at() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF NEW.status = 'Resolved' AND OLD.status IS DISTINCT FROM 'Resolved' THEN
+        NEW.resolved_at := now();
+    END IF;
+
+    IF NEW.status = 'Closed' AND OLD.status IS DISTINCT FROM 'Closed' THEN
+        NEW.closed_at := now();
+        -- Closed is only reached through Resolved, so this is a safety net.
+        NEW.resolved_at := COALESCE(NEW.resolved_at, now());
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.stamp_ticket_resolved_closed_at() OWNER TO postgres;
 
 --
 -- Name: start_stock_audit(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -10183,8 +10212,8 @@ CREATE TABLE public.tickets (
     rated_at timestamp with time zone,
     initial_remarks text,
     rejected_reason text,
-    resolved_at timestamp without time zone,
-    closed_at timestamp without time zone,
+    resolved_at timestamp with time zone,
+    closed_at timestamp with time zone,
     final_sla_end_date timestamp with time zone,
     overall_sla_status public.sla_status_enum,
     rejection_reason text,
@@ -10198,6 +10227,20 @@ CREATE TABLE public.tickets (
 
 
 ALTER TABLE public.tickets OWNER TO postgres;
+
+--
+-- Name: COLUMN tickets.resolved_at; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.tickets.resolved_at IS 'When the ticket entered Resolved (its last issue marked Done). Stamped by stamp_ticket_resolved_closed_at; the completion SLA is judged against it (MAIN-134).';
+
+
+--
+-- Name: COLUMN tickets.closed_at; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.tickets.closed_at IS 'When the ticket entered Closed (its last issue rated). Stamped by stamp_ticket_resolved_closed_at (MAIN-134).';
+
 
 --
 -- Name: COLUMN tickets.acceptance_sla_end_date; Type: COMMENT; Schema: public; Owner: postgres
@@ -10222,7 +10265,7 @@ CREATE VIEW public.maintenance_dashboard_stats AS
           WHERE ((job_cards.type)::text = 'Outsource'::text)) AS outsource_count,
     COALESCE(avg(EXTRACT(day FROM (
         CASE
-            WHEN ((status)::text = 'Resolved'::text) THEN (resolved_at)::timestamp with time zone
+            WHEN ((status)::text = 'Resolved'::text) THEN resolved_at
             ELSE now()
         END - (created_at)::timestamp with time zone))), (0)::numeric) AS avg_tat_days
    FROM public.tickets;
@@ -13620,6 +13663,13 @@ CREATE TRIGGER trg_stamp_acceptance_deadline BEFORE INSERT ON public.tickets FOR
 --
 
 CREATE TRIGGER trg_stamp_rejected_at_and_acceptance_sla BEFORE UPDATE ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla();
+
+
+--
+-- Name: tickets trg_stamp_ticket_resolved_closed_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_stamp_ticket_resolved_closed_at BEFORE UPDATE OF status ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.stamp_ticket_resolved_closed_at();
 
 
 --
@@ -17545,6 +17595,15 @@ GRANT ALL ON FUNCTION public.stamp_outsource_invoice_accepted_at() TO service_ro
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO anon;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO authenticated;
 GRANT ALL ON FUNCTION public.stamp_rejected_at_and_evaluate_acceptance_sla() TO service_role;
+
+
+--
+-- Name: FUNCTION stamp_ticket_resolved_closed_at(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stamp_ticket_resolved_closed_at() TO anon;
+GRANT ALL ON FUNCTION public.stamp_ticket_resolved_closed_at() TO authenticated;
+GRANT ALL ON FUNCTION public.stamp_ticket_resolved_closed_at() TO service_role;
 
 
 --

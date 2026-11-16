@@ -368,18 +368,27 @@ function SLAWarning({ ticket }) {
   const deadline = toDate(ticket.final_sla_end_date)
   if (!deadline) return null
 
+  // A rejected ticket has no work left to count down to (MAIN-134); MAIN-135 changes how
+  // it is judged, so show nothing for now.
+  if (ticket.status === 'Rejected') return null
+
   const isTerminal = ticket.status === 'Resolved' || ticket.status === 'Closed'
 
   if (isTerminal) {
     const status = ticket.overall_sla_status
     if (!status || status === 'Pending') return null
     const adhered = status === 'Adhered'
+    // The verdict is judged at resolved_at, so show it beside the deadline.
+    const resolvedAt = toDate(ticket.resolved_at)
     return (
       <div className={`mt-4 flex items-center gap-3 px-4 py-3 rounded-lg border ${adhered ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
         <span className="text-base">{adhered ? '✅' : '⚠️'}</span>
         <div>
           <p className={`text-sm font-semibold ${adhered ? 'text-green-700' : 'text-red-700'}`}>SLA {adhered ? 'Adhered' : 'Violated'}</p>
-          <p className="text-xs text-gray-500">Deadline was {format(deadline, 'MMM d, yyyy, h:mm a')}</p>
+          <p className="text-xs text-gray-500">
+            Deadline was {format(deadline, 'MMM d, yyyy, h:mm a')}
+            {resolvedAt && <> · Resolved {format(resolvedAt, 'MMM d, yyyy, h:mm a')}</>}
+          </p>
         </div>
       </div>
     )
