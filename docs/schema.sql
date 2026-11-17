@@ -10096,6 +10096,7 @@ CREATE TABLE auth.one_time_tokens (
     created_at timestamp without time zone DEFAULT now() NOT NULL,
     updated_at timestamp without time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone,
+    link_token_hash text,
     CONSTRAINT one_time_tokens_token_hash_check CHECK ((char_length(token_hash) > 0))
 );
 
@@ -10163,6 +10164,7 @@ CREATE TABLE auth.saml_providers (
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
     name_id_format text,
+    dedicated_scope boolean,
     CONSTRAINT "entity_id not empty" CHECK ((char_length(entity_id) > 0)),
     CONSTRAINT "metadata_url not empty" CHECK (((metadata_url = NULL::text) OR (char_length(metadata_url) > 0))),
     CONSTRAINT "metadata_xml not empty" CHECK ((char_length(metadata_xml) > 0))
@@ -13307,6 +13309,13 @@ CREATE INDEX oauth_consents_active_user_client_idx ON auth.oauth_consents USING 
 --
 
 CREATE INDEX oauth_consents_user_order_idx ON auth.oauth_consents USING btree (user_id, granted_at DESC);
+
+
+--
+-- Name: one_time_tokens_link_token_hash_hash_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX one_time_tokens_link_token_hash_hash_idx ON auth.one_time_tokens USING hash (link_token_hash);
 
 
 --
@@ -17658,8 +17667,7 @@ GRANT ALL ON FUNCTION public.advance_open_items(p_today date) TO service_role;
 -- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO anon;
-GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO authenticated;
+REVOKE ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO service_role;
 
 
@@ -17909,7 +17917,7 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) TO
 -- Name: FUNCTION get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO anon;
+REVOKE ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO authenticated;
 GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO service_role;
 
@@ -18359,8 +18367,7 @@ GRANT ALL ON FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice 
 -- Name: FUNCTION seed_get_fk_deps(); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO anon;
-GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO authenticated;
+REVOKE ALL ON FUNCTION public.seed_get_fk_deps() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO service_role;
 
 
@@ -18368,8 +18375,7 @@ GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO service_role;
 -- Name: FUNCTION seed_get_table_columns(); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.seed_get_table_columns() TO anon;
-GRANT ALL ON FUNCTION public.seed_get_table_columns() TO authenticated;
+REVOKE ALL ON FUNCTION public.seed_get_table_columns() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.seed_get_table_columns() TO service_role;
 
 
@@ -18377,8 +18383,7 @@ GRANT ALL ON FUNCTION public.seed_get_table_columns() TO service_role;
 -- Name: FUNCTION seed_truncate_public_tables(); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO anon;
-GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO authenticated;
+REVOKE ALL ON FUNCTION public.seed_truncate_public_tables() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.seed_truncate_public_tables() TO service_role;
 
 
