@@ -137,6 +137,8 @@ SLA settings live in numbered versions (see **SLA versions** below), edited on t
 
 > **There is no `sla_rules` table.** Two tables once held SLA day-counts: the settings page wrote `sla_rules` while the triggers always read `sla_rules_config`, so UI edits changed a row nothing consumed and the two drifted. MAIN-47 made `sla_rules_config` the single source and dropped the decoy (MAIN-136 later replaced `sla_rules_config` itself with `sla_version_turnaround`). Don't re-add `sla_rules` to anything — it lingered in `backup-to-drive`'s table list long afterwards, logging a failed read on every hourly run.
 
+> **There is no SLA calculator in the browser.** `src/utils/slaCalculator.js` was a parked, unimported copy of the SLA rules; it was deleted under MAIN-43 (closed Won't Do) after MAIN-136 dropped every table and setting it read. A second copy of the rules in the browser is the drift behind MAIN-45, MAIN-47 and MAIN-134–136. Show the stored deadlines and statuses; an SLA figure the database doesn't store comes from a database function, as `preview_sla_changes` does for Review changes.
+
 ### Inventory Module
 `src/pages/Inventory.jsx` (accessible to `maintenance_exec` and `finance`) has three tabs managed via local state:
 1. **Parts Catalog** — stock levels, low-stock filter; `useUpdatePart` for inline edits, `useBulkUpload` for CSV import via `BulkUploadModal`
