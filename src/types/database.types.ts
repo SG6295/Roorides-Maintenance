@@ -2808,6 +2808,10 @@ export type Database = {
         }
         Returns: Json
       }
+      complete_invoice_resubmission: {
+        Args: { p_before: Json; p_invoice_id: string; p_note: string }
+        Returns: undefined
+      }
       complete_stock_audit: { Args: { p_audit_id: string }; Returns: string }
       delete_issue_part_with_scrap_check: {
         Args: { p_issue_part_id: string }
@@ -3038,6 +3042,10 @@ export type Database = {
         Args: { p_job_card_id: string }
         Returns: boolean
       }
+      outsource_invoice_snapshot: {
+        Args: { p_invoice_id: string }
+        Returns: Json
+      }
       payment_run_for: { Args: { p_date: string }; Returns: string }
       preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
       purchase_invoice_file_missing: {
@@ -3078,6 +3086,10 @@ export type Database = {
       refresh_ticket_sla: { Args: { p_ticket_id: string }; Returns: undefined }
       restore_batch_service_invoice: {
         Args: { p_batch_id: string; p_links: Json }
+        Returns: undefined
+      }
+      resubmit_outsource_invoice: {
+        Args: { p_invoice_id: string; p_resubmission: Json }
         Returns: undefined
       }
       reverse_ledger_adjustment: {

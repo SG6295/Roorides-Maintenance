@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
 import Navigation from '../components/shared/Navigation'
 import HistoryDrawer from '../components/outsource-invoices/HistoryDrawer'
+import ResubmitInvoiceModal from '../components/outsource-invoices/ResubmitInvoiceModal'
 import ColumnManager from '../components/outsource-invoices/ColumnManager'
 import InvoiceCell from '../components/outsource-invoices/InvoiceCell'
 import { COLUMNS, DEFAULT_COLUMN_KEYS } from '../components/outsource-invoices/columns'
@@ -14,17 +15,34 @@ import {
     PAID_BY_OPTIONS,
     MAINTENANCE_PAYMENT_STATUSES,
     FINANCE_STATUSES,
+    isRejectedInvoice,
 } from '../constants/outsourceInvoices'
 import { formatBatchNumber } from '../utils/batchNumber'
+
+// The summary tiles, each a shortcut to its Finance Status filter. Resubmitted invoices
+// wait for review with New (MAIN-120); Reject lists everything waiting to be fixed.
+const TILES = [
+    { label: 'New',             key: 'newCount',      statuses: ['New', 'Resubmitted'],   color: 'text-gray-900' },
+    // A purchase saved without its file (MAIN-129).
+    { label: 'Invoice pending', key: 'pendingCount',  statuses: ['New (invoice pending)'], color: 'text-orange-600' },
+    { label: 'Hold',            key: 'holdCount',     statuses: ['Hold'],                  color: 'text-amber-600' },
+    { label: 'Reject',          key: 'rejectCount',   statuses: ['Reject'],                color: 'text-red-600' },
+    { label: 'Accepted',        key: 'acceptedCount', statuses: ['Accepted'],              color: 'text-blue-600' },
+]
+
+const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x))
 
 export default function OutsourceInvoices() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { userProfile } = useAuth()
     const [openedInvoice, setOpenedInvoice] = useState(null)
+    const [resubmitting, setResubmitting] = useState(null)
     // Not saved: a reload returns everyone to the default set (MAIN-98).
     const [visibleKeys, setVisibleKeys] = useState(DEFAULT_COLUMN_KEYS)
     const canEdit = FINANCE_ROLES.includes(userProfile?.role)
     const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    // Only maintenance resubmits a rejected invoice (MAIN-120).
+    const canResubmit = canCreateBatch
     // Supervisors see their own sites' invoices (MAIN-141) but have no job card or
     // multi-vehicle invoice page to open.
     const canOpenRecords = userProfile?.role !== 'supervisor'
@@ -138,6 +156,18 @@ export default function OutsourceInvoices() {
         })
     }
 
+    // A tile sets the Finance Status filter to its statuses; clicking it again clears it.
+    const toggleTile = statuses => {
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev)
+            const active = sameSet(next.getAll('fs'), statuses)
+            next.delete('fs')
+            next.delete('p')
+            if (!active) statuses.forEach(s => next.append('fs', s))
+            return next
+        })
+    }
+
     const clearFilters = () => setSearchParams({})
     const hasFilters   = !!(search || psFilter.length || fsFilter.length || pbFilter.length || dateFrom || dateTo)
 
@@ -173,21 +203,26 @@ export default function OutsourceInvoices() {
 
                 {/* ── Summary tiles (from RPC) — counts by finance status (MAIN-118) ── */}
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-                    {[
-                        ['New', summary?.newCount, 'text-gray-900'],
-                        // A purchase saved without its file (MAIN-129).
-                        ['Invoice pending', summary?.pendingCount, 'text-orange-600'],
-                        ['Hold', summary?.holdCount, 'text-amber-600'],
-                        ['Reject', summary?.rejectCount, 'text-red-600'],
-                        ['Accepted', summary?.acceptedCount, 'text-blue-600'],
-                    ].map(([label, count, color]) => (
-                        <div key={label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-                            <p className={`text-2xl font-bold ${count > 0 ? color : 'text-gray-900'}`}>
-                                {count ?? '—'}
-                            </p>
-                        </div>
-                    ))}
+                    {TILES.map(({ label, key, statuses, color }) => {
+                        const count = summary?.[key]
+                        const active = sameSet(fsFilter, statuses)
+                        return (
+                            <button
+                                key={label}
+                                type="button"
+                                onClick={() => toggleTile(statuses)}
+                                aria-pressed={active}
+                                className={`text-left bg-white rounded-xl border shadow-sm p-4 transition-colors ${
+                                    active ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200 hover:border-gray-300'
+                                }`}
+                            >
+                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</p>
+                                <p className={`text-2xl font-bold ${count > 0 ? color : 'text-gray-900'}`}>
+                                    {count ?? '—'}
+                                </p>
+                            </button>
+                        )
+                    })}
                 </div>
 
                 {/* ── Filters ──────────────────────────────────────────────── */}
@@ -331,12 +366,22 @@ export default function OutsourceInvoices() {
                                                 </td>
                                             ))}
                                             <td className="px-3 py-3 whitespace-nowrap align-top">
-                                                <button
-                                                    onClick={() => setOpenedInvoice(inv)}
-                                                    className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
-                                                >
-                                                    View history
-                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    {canResubmit && isRejectedInvoice(inv) && !inv.cancelled && (
+                                                        <button
+                                                            onClick={() => setResubmitting(inv)}
+                                                            className="text-xs px-2.5 py-1 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                                                        >
+                                                            Resubmit
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => setOpenedInvoice(inv)}
+                                                        className="text-xs px-2.5 py-1 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                                                    >
+                                                        View history
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     )
@@ -384,6 +429,14 @@ export default function OutsourceInvoices() {
                     ) : null
                 )}
             </div>
+
+            {/* ── Resubmit popup (MAIN-120) ───────────────────────────────── */}
+            {resubmitting && (
+                <ResubmitInvoiceModal
+                    invoice={resubmitting}
+                    onClose={() => setResubmitting(null)}
+                />
+            )}
 
             {/* ── History drawer ──────────────────────────────────────────── */}
             {selectedInvoice && (

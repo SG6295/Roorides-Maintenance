@@ -16,7 +16,8 @@ import { TicketDetailSkeleton } from '../components/shared/LoadingSkeleton'
 import SearchableSelect from '../components/shared/SearchableSelect'
 import CustomSelect from '../components/shared/CustomSelect'
 import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../components/outsource-invoices/InvoiceDetailsFields'
-import { isLockedByFinance } from '../constants/outsourceInvoices'
+import ResubmitInvoiceModal from '../components/outsource-invoices/ResubmitInvoiceModal'
+import { isLockedByFinance, isRejectedInvoice } from '../constants/outsourceInvoices'
 import {
     EMPTY_INVOICE_FORM,
     invoiceFormFromRow,
@@ -87,6 +88,7 @@ export default function JobCardDetail() {
     const [showQuickAddModal, setShowQuickAddModal] = useState(false)
     const [showScrapModal, setShowScrapModal] = useState(false)
     const [invoicePendingMode, setInvoicePendingMode] = useState(false)
+    const [resubmitting, setResubmitting] = useState(false)
     const [scrapRaceError, setScrapRaceError] = useState(null)
 
     const [invoiceForm, setInvoiceForm] = useState(EMPTY_INVOICE_FORM)
@@ -299,6 +301,8 @@ export default function JobCardDetail() {
     // Once finance has accepted the invoice it is in the supplier ledger (MAIN-118);
     // finance moving it back to Hold, or on to Reject, lifts the lock.
     const lockedByFinance = isOutsource && jobCard.status === 'Completed' && isLockedByFinance(existingInvoice)
+    // A rejected invoice is locked too, until it is resubmitted (MAIN-120).
+    const rejectedByFinance = isOutsource && jobCard.status === 'Completed' && isRejectedInvoice(existingInvoice)
     const canComplete = isAllDone && hasSupplier && !invoicePartial
     const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
     const canFinalize = isInvoicePending && !invoicePartial && (hasOwnInvoice || isBatchLinked)
@@ -699,6 +703,21 @@ export default function JobCardDetail() {
                             Invoice Details
                         </h2>
 
+                        {rejectedByFinance && (
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                <p className="text-red-800">
+                                    Rejected by finance: {existingInvoice.finance_remark || '—'}
+                                </p>
+                                {isExec && (
+                                    <button
+                                        onClick={() => setResubmitting(true)}
+                                        className="text-xs px-3 py-1.5 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                                    >
+                                        Resubmit
+                                    </button>
+                                )}
+                            </div>
+                        )}
                         {invoiceReadOnly ? (
                             /* Read-only display after full closure, or for non-execs */
                             <InvoiceDetailsReadOnly invoice={existingInvoice} />
@@ -867,9 +886,14 @@ export default function JobCardDetail() {
                                 Cannot reopen — finance has accepted this invoice. Ask finance to move it back to Hold first.
                             </p>
                         )}
+                        {rejectedByFinance && (
+                            <p className="text-sm text-red-600 text-center px-4">
+                                Cannot reopen — finance has rejected this invoice. Resubmit it first.
+                            </p>
+                        )}
                         <button
                             onClick={handleReopenJobCard}
-                            disabled={updateJobCard.isPending || lockedByFinance}
+                            disabled={updateJobCard.isPending || lockedByFinance || rejectedByFinance}
                             className="w-full py-4 rounded-xl text-base font-semibold text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Reopen Job Card
@@ -878,6 +902,21 @@ export default function JobCardDetail() {
                 )}
 
             </div>
+
+            {/* ── Resubmit popup (MAIN-120), in the Invoices list's row shape ── */}
+            {resubmitting && existingInvoice && (
+                <ResubmitInvoiceModal
+                    invoice={{
+                        ...existingInvoice,
+                        job_card: {
+                            id: jobCard.id,
+                            invoice_url: jobCard.invoice_url,
+                            supplier: jobCard.supplier && { id: jobCard.supplier.id, entity_name: jobCard.supplier.entity_name },
+                        },
+                    }}
+                    onClose={() => setResubmitting(false)}
+                />
+            )}
 
             {/* ── Quick Add Supplier Modal ─────────────────────────────────── */}
             <QuickAddSupplierModal

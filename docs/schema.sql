@@ -2098,6 +2098,116 @@ $$;
 ALTER FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_remarks text, p_scrap_decisions jsonb, p_invoice_pending boolean) OWNER TO postgres;
 
 --
+-- Name: complete_invoice_resubmission(uuid, jsonb, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.complete_invoice_resubmission(p_invoice_id uuid, p_before jsonb, p_note text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_inv      public.outsource_invoices%ROWTYPE;
+    v_after    jsonb;
+    v_changed  text[];
+    v_status   text;
+    v_remark   text;
+    v_today    date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+    v_old_data jsonb;
+    v_new_data jsonb;
+BEGIN
+    -- Only the resubmission functions raise the flag; called directly this does nothing.
+    IF current_setting('app.invoice_resubmission', true) IS DISTINCT FROM 'on' THEN
+        RAISE EXCEPTION 'Resubmit the invoice from its Resubmit button or its own page.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    SELECT * INTO v_inv FROM public.outsource_invoices WHERE id = p_invoice_id FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Invoice not found.';
+    END IF;
+
+    IF v_inv.finance_payment_status IS DISTINCT FROM 'Reject' THEN
+        RAISE EXCEPTION 'Only a rejected invoice can be resubmitted.';
+    END IF;
+
+    IF v_inv.maintenance_payment_status NOT IN ('Approved', 'Hold') THEN
+        RAISE EXCEPTION 'Set the payment status reported by maintenance to Approved or Hold to resubmit.';
+    END IF;
+
+    v_after := public.outsource_invoice_snapshot(p_invoice_id);
+
+    IF nullif(btrim(v_after->>'invoice_file'), '') IS NULL THEN
+        RAISE EXCEPTION 'Upload the invoice file to resubmit.';
+    END IF;
+
+    -- Compared in numeric, as the save functions do.
+    IF v_after->'lines' IS NOT NULL AND v_after->'lines' <> 'null'::jsonb
+       AND (v_after->>'lines_total')::numeric <> v_inv.approved_amount THEN
+        RAISE EXCEPTION 'The lines add up to ₹% but the approved amount is ₹%. Change the lines on the invoice''s own page.',
+            to_char((v_after->>'lines_total')::numeric, 'FM999999999990.00'),
+            to_char(v_inv.approved_amount, 'FM999999999990.00');
+    END IF;
+
+    SELECT array_agg(k ORDER BY k) INTO v_changed
+    FROM   jsonb_object_keys(v_after) k
+    WHERE  k <> 'lines_total'
+      AND  v_after->k IS DISTINCT FROM p_before->k;
+
+    IF v_changed IS NULL THEN
+        RAISE EXCEPTION 'Nothing has changed. Replace the file or correct at least one detail before resubmitting.';
+    END IF;
+
+    -- As on first submission: maintenance's Hold starts finance at Hold.
+    IF v_inv.maintenance_payment_status = 'Hold' THEN
+        v_status := 'Hold';
+        v_remark := 'Hold set by maintenance exec';
+    ELSE
+        v_status := 'Resubmitted';
+        v_remark := NULL;
+    END IF;
+
+    UPDATE public.outsource_invoices
+    SET    finance_payment_status = v_status,
+           finance_remark         = v_remark,
+           submitted_on           = v_today
+    WHERE  id = p_invoice_id;
+
+    -- One entry for the whole save. Lines are named, not copied: a batch's line changes
+    -- are logged per line by log_batch_service_change, and the drawer folds them in.
+    SELECT jsonb_object_agg(k, CASE WHEN k = 'lines' THEN NULL ELSE p_before->k END),
+           jsonb_object_agg(k, CASE WHEN k = 'lines' THEN NULL ELSE v_after->k END)
+    INTO   v_old_data, v_new_data
+    FROM   unnest(v_changed) k;
+
+    IF 'supplier_id' = ANY (v_changed) THEN
+        v_old_data := v_old_data || jsonb_build_object('supplier_name',
+            (SELECT entity_name FROM public.suppliers WHERE id = (p_before->>'supplier_id')::uuid));
+        v_new_data := v_new_data || jsonb_build_object('supplier_name',
+            (SELECT entity_name FROM public.suppliers WHERE id = (v_after->>'supplier_id')::uuid));
+    END IF;
+
+    INSERT INTO public.audit_logs (table_name, record_id, action, old_data, new_data, changed_fields, performed_by)
+    VALUES ('outsource_invoices', p_invoice_id, 'UPDATE',
+            v_old_data || jsonb_build_object(
+                'finance_payment_status', v_inv.finance_payment_status,
+                'finance_remark',         v_inv.finance_remark,
+                'submitted_on',           v_inv.submitted_on),
+            v_new_data || jsonb_build_object(
+                'finance_payment_status', v_status,
+                'finance_remark',         v_remark,
+                'submitted_on',           v_today,
+                'resubmitted',            true,
+                'note',                   nullif(btrim(p_note), '')),
+            v_changed || array['finance_payment_status', 'finance_remark', 'submitted_on'],
+            auth.uid());
+END;
+$$;
+
+
+ALTER FUNCTION public.complete_invoice_resubmission(p_invoice_id uuid, p_before jsonb, p_note text) OWNER TO postgres;
+
+--
 -- Name: complete_stock_audit(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2956,7 +3066,7 @@ CREATE FUNCTION public.get_outsource_invoice_rows(p_filters jsonb DEFAULT '{}'::
         'purchase_invoice', (
           select jsonb_build_object(
                    'id', pi.id, 'kind', pi.kind, 'invoice_number', pi.invoice_number,
-                   'invoice_file_url', pi.invoice_file_url,
+                   'invoice_file_url', pi.invoice_file_url, 'total_amount', pi.total_amount,
                    'supplier', (select jsonb_build_object('id', s.id, 'entity_name', s.entity_name)
                                 from public.suppliers s where s.id = pi.supplier_id))
           from public.purchase_invoices pi where pi.id = p.purchase_invoice_id)
@@ -2978,7 +3088,7 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
     SET search_path TO 'public'
     AS $$
     SELECT
-        COUNT(*) FILTER (WHERE oi.finance_payment_status = 'New')      AS new_count,
+        COUNT(*) FILTER (WHERE oi.finance_payment_status IN ('New', 'Resubmitted')) AS new_count,
         COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Hold')     AS hold_count,
         COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Reject')   AS reject_count,
         COUNT(*) FILTER (WHERE oi.finance_payment_status = 'Accepted') AS accepted_count,
@@ -3036,7 +3146,7 @@ BEGIN
         LEFT JOIN public.batch_services    bs ON bs.id = oi.batch_service_id
         LEFT JOIN public.purchase_invoices pi ON pi.id = oi.purchase_invoice_id
         WHERE  oi.submitted_on IS NOT NULL
-          AND  oi.finance_payment_status IN ('New', 'New (invoice pending)', 'Hold')
+          AND  oi.finance_payment_status IN ('New', 'New (invoice pending)', 'Resubmitted', 'Hold')
           AND  (bs.id IS NULL OR bs.status = 'Active')
         GROUP  BY 1
     )
@@ -3271,6 +3381,67 @@ $$;
 ALTER FUNCTION public.guard_job_card_type_change() OWNER TO postgres;
 
 --
+-- Name: guard_locked_invoice_details(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_locked_invoice_details() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_status text;
+BEGIN
+    -- Service-role writes (the prod→staging seed) and resubmissions pass.
+    IF auth.uid() IS NULL OR current_setting('app.invoice_resubmission', true) = 'on' THEN
+        RETURN coalesce(NEW, OLD);
+    END IF;
+
+    IF TG_TABLE_NAME = 'job_cards' THEN
+        IF (NEW.invoice_url, NEW.supplier_id) IS NOT DISTINCT FROM (OLD.invoice_url, OLD.supplier_id) THEN
+            RETURN NEW;
+        END IF;
+        SELECT finance_payment_status INTO v_status
+        FROM   public.outsource_invoices WHERE job_card_id = NEW.id;
+
+    ELSIF TG_TABLE_NAME = 'purchase_invoices' THEN
+        -- The notes stay editable, as under the Accepted lock (MAIN-129).
+        IF (to_jsonb(NEW) - 'notes') IS NOT DISTINCT FROM (to_jsonb(OLD) - 'notes') THEN
+            RETURN NEW;
+        END IF;
+        SELECT finance_payment_status INTO v_status
+        FROM   public.outsource_invoices WHERE purchase_invoice_id = NEW.id;
+
+    ELSE  -- purchase_invoice_items
+        -- save_purchase_invoice rewrites every kept line; an unchanged one passes.
+        IF TG_OP = 'UPDATE'
+           AND (NEW.invoice_id, NEW.part_id, NEW.quantity, NEW.unit_price, NEW.gst_rate, NEW.discount_amount)
+               IS NOT DISTINCT FROM
+               (OLD.invoice_id, OLD.part_id, OLD.quantity, OLD.unit_price, OLD.gst_rate, OLD.discount_amount) THEN
+            RETURN NEW;
+        END IF;
+        SELECT finance_payment_status INTO v_status
+        FROM   public.outsource_invoices
+        WHERE  purchase_invoice_id = coalesce(NEW.invoice_id, OLD.invoice_id);
+    END IF;
+
+    IF v_status = 'Reject' THEN
+        RAISE EXCEPTION 'Finance has rejected this invoice. Resubmit it to change its details.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    IF v_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed') THEN
+        RAISE EXCEPTION 'Finance has accepted this invoice, so its details can no longer be changed.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    RETURN coalesce(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_locked_invoice_details() OWNER TO postgres;
+
+--
 -- Name: guard_outsource_invoice_status_owners(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3290,7 +3461,8 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    IF current_setting('app.finance_submission', true) = 'on' THEN
+    IF current_setting('app.finance_submission', true) = 'on'
+       OR current_setting('app.invoice_resubmission', true) = 'on' THEN
         RETURN NEW;
     END IF;
 
@@ -3326,10 +3498,14 @@ BEGIN
         RAISE EXCEPTION 'The submission date is set when the invoice reaches finance.';
     END IF;
 
-    IF OLD.finance_payment_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
+    IF OLD.finance_payment_status IN ('Reject', 'Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
        AND (to_jsonb(NEW) - array['finance_payment_status', 'finance_remark', 'updated_at'])
            IS DISTINCT FROM
            (to_jsonb(OLD) - array['finance_payment_status', 'finance_remark', 'updated_at']) THEN
+        IF OLD.finance_payment_status = 'Reject' THEN
+            RAISE EXCEPTION 'Finance has rejected this invoice. Resubmit it to change its details.'
+                USING ERRCODE = '42501';
+        END IF;
         RAISE EXCEPTION 'Finance has accepted this invoice, so its details can no longer be changed.'
             USING ERRCODE = '42501';
     END IF;
@@ -3347,6 +3523,7 @@ BEGIN
         END IF;
 
         IF NOT (   (v_old IN ('New', 'Hold') AND v_new IN ('New', 'Hold', 'Reject', 'Accepted'))
+                OR (v_old = 'Resubmitted'    AND v_new IN ('Hold', 'Reject', 'Accepted'))
                 OR (v_old IN ('New (invoice pending)', 'Hold') AND v_new IN ('New (invoice pending)', 'Hold', 'Reject'))
                 OR (v_old = 'Accepted'       AND v_new IN ('Hold', 'Reject', 'GST reconciled & closed', 'GST not applicable & closed'))) THEN
             RAISE EXCEPTION 'Finance status cannot move from % to %.', v_old, v_new;
@@ -3587,7 +3764,7 @@ CREATE TABLE public.outsource_invoices (
     submitted_on date,
     accepted_at timestamp with time zone,
     purchase_invoice_id uuid,
-    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'New (invoice pending)'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
+    CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'New (invoice pending)'::text, 'Resubmitted'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
     CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
     CONSTRAINT outsource_invoices_one_owner_check CHECK ((num_nonnulls(job_card_id, batch_service_id, purchase_invoice_id) = 1)),
     CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'NVS Maintenance account'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
@@ -3726,6 +3903,9 @@ DECLARE
     v_batch   uuid;
 BEGIN
     IF TG_TABLE_NAME = 'batch_services' THEN
+        IF current_setting('app.invoice_resubmission', true) = 'on' THEN
+            RETURN NEW;
+        END IF;
         v_fields := array['supplier_id', 'invoice_url', 'status', 'cancel_reason'];
         v_batch  := coalesce(NEW.id, OLD.id);
     ELSE
@@ -3874,6 +4054,10 @@ DECLARE
     v_old     jsonb;
     v_changed text[];
 BEGIN
+    IF current_setting('app.invoice_resubmission', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
+
     IF TG_OP = 'INSERT' THEN
         INSERT INTO public.audit_logs (table_name, record_id, action, new_data, performed_by)
         VALUES ('outsource_invoices', NEW.id, 'INSERT',
@@ -3932,6 +4116,58 @@ $$;
 
 
 ALTER FUNCTION public.move_invoice_stock_on_location_change() OWNER TO postgres;
+
+--
+-- Name: outsource_invoice_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT jsonb_build_object(
+        'date_of_activity',           oi.date_of_activity,
+        'invoice_no',                 oi.invoice_no,
+        'paid_by',                    oi.paid_by,
+        'invoice_value',              oi.invoice_value,
+        'approved_amount',            oi.approved_amount,
+        'advance_amount',             oi.advance_amount,
+        'maintenance_payment_status', oi.maintenance_payment_status,
+        'payby_date',                 oi.payby_date,
+        'supplier_id',                coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id),
+        'invoice_file',               coalesce(jc.invoice_url, bs.invoice_url, pi.invoice_file_url),
+        'lines', CASE
+            WHEN bs.id IS NOT NULL THEN (
+                SELECT coalesce(jsonb_agg(jsonb_build_object(
+                           'id', v.id, 'vehicle_number', v.vehicle_number, 'site', v.site,
+                           'work_type', v.work_type, 'work_type_other', v.work_type_other,
+                           'rate', v.rate, 'quantity', v.quantity, 'job_card_id', v.job_card_id)
+                       ORDER BY v.id), '[]'::jsonb)
+                FROM   public.batch_service_vehicles v
+                WHERE  v.batch_service_id = bs.id)
+            WHEN pi.id IS NOT NULL THEN (
+                SELECT coalesce(jsonb_agg(jsonb_build_object(
+                           'id', i.id, 'part_id', i.part_id, 'quantity', i.quantity,
+                           'unit_price', i.unit_price, 'gst_rate', i.gst_rate,
+                           'discount_amount', i.discount_amount)
+                       ORDER BY i.id), '[]'::jsonb)
+                FROM   public.purchase_invoice_items i
+                WHERE  i.invoice_id = pi.id)
+            END,
+        'lines_total', CASE
+            WHEN bs.id IS NOT NULL THEN (SELECT coalesce(sum(v.amount), 0) FROM public.batch_service_vehicles v WHERE v.batch_service_id = bs.id)
+            WHEN pi.id IS NOT NULL THEN (SELECT coalesce(sum(i.line_total), 0) FROM public.purchase_invoice_items i WHERE i.invoice_id = pi.id)
+            END
+    )
+    FROM   public.outsource_invoices oi
+    LEFT JOIN public.job_cards         jc ON jc.id = oi.job_card_id
+    LEFT JOIN public.batch_services    bs ON bs.id = oi.batch_service_id
+    LEFT JOIN public.purchase_invoices pi ON pi.id = oi.purchase_invoice_id
+    WHERE  oi.id = p_invoice_id
+$$;
+
+
+ALTER FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) OWNER TO postgres;
 
 --
 -- Name: payment_run_for(date); Type: FUNCTION; Schema: public; Owner: postgres
@@ -5119,6 +5355,134 @@ $$;
 ALTER FUNCTION public.restore_part_to_inventory() OWNER TO postgres;
 
 --
+-- Name: resubmit_outsource_invoice(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+    v_inv       public.outsource_invoices%ROWTYPE;
+    v_before    jsonb;
+    v_today     date    := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+    v_supplier  uuid    := nullif(p_resubmission->>'supplier_id', '')::uuid;
+    v_file      text    := nullif(btrim(p_resubmission->>'invoice_file_url'), '');
+    v_invoice   text    := nullif(btrim(p_resubmission->>'invoice_no'), '');
+    v_date      date    := nullif(p_resubmission->>'date_of_activity', '')::date;
+    v_paid_by   text    := nullif(p_resubmission->>'paid_by', '');
+    v_maint     text    := nullif(p_resubmission->>'maintenance_payment_status', '');
+    v_payby     date    := nullif(p_resubmission->>'payby_date', '')::date;
+    v_inv_value numeric;
+    v_approved  numeric;
+    v_advance   numeric;
+    v_old_supp  uuid;
+    v_supp_name text;
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION 'Only maintenance executives can resubmit an invoice.'
+            USING ERRCODE = '42501';
+    END IF;
+
+    SELECT * INTO v_inv FROM public.outsource_invoices WHERE id = p_invoice_id FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Invoice not found.';
+    END IF;
+
+    IF v_inv.finance_payment_status IS DISTINCT FROM 'Reject' THEN
+        RAISE EXCEPTION 'Only a rejected invoice can be resubmitted.';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM public.batch_services
+               WHERE id = v_inv.batch_service_id AND status = 'Cancelled') THEN
+        RAISE EXCEPTION 'This multi-vehicle invoice is cancelled. Restore it before resubmitting.';
+    END IF;
+
+    -- CASE, because OR does not promise to test the format before the cast.
+    v_inv_value := CASE WHEN coalesce(p_resubmission->>'invoice_value', '')   ~ '^[0-9]{1,10}(\.[0-9]{1,2})?$' THEN (p_resubmission->>'invoice_value')::numeric END;
+    v_approved  := CASE WHEN coalesce(p_resubmission->>'approved_amount', '') ~ '^[0-9]{1,10}(\.[0-9]{1,2})?$' THEN (p_resubmission->>'approved_amount')::numeric END;
+    v_advance   := CASE WHEN coalesce(p_resubmission->>'advance_amount', '')  ~ '^[0-9]{1,10}(\.[0-9]{1,2})?$' THEN (p_resubmission->>'advance_amount')::numeric END;
+
+    -- The rules of the invoice form (validateInvoiceForm).
+    IF v_invoice IS NULL OR length(v_invoice) > 50
+       OR v_date IS NULL OR v_date > v_today
+       OR v_paid_by IS NULL OR v_maint IS NULL
+       OR v_inv_value IS NULL OR v_inv_value <= 0
+       OR v_approved  IS NULL OR v_approved > v_inv_value
+       OR v_advance   IS NULL OR v_advance  > v_approved
+       OR v_payby     IS NULL OR v_payby < v_date THEN
+        RAISE EXCEPTION 'Check the invoice details.';
+    END IF;
+
+    SELECT coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id), pi.supplier_name
+    INTO   v_old_supp, v_supp_name
+    FROM   public.outsource_invoices oi
+    LEFT JOIN public.job_cards         jc ON jc.id = oi.job_card_id
+    LEFT JOIN public.batch_services    bs ON bs.id = oi.batch_service_id
+    LEFT JOIN public.purchase_invoices pi ON pi.id = oi.purchase_invoice_id
+    WHERE  oi.id = p_invoice_id;
+
+    -- A purchase recorded before suppliers were linked (MAIN-128) may keep its typed name.
+    IF v_supplier IS NULL AND v_old_supp IS NOT NULL THEN
+        RAISE EXCEPTION 'Choose the supplier.';
+    END IF;
+
+    IF v_supplier IS DISTINCT FROM v_old_supp THEN
+        SELECT entity_name INTO v_supp_name
+        FROM   public.suppliers
+        WHERE  id = v_supplier AND status = 'approved';
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Choose an approved supplier.';
+        END IF;
+    END IF;
+
+    v_before := public.outsource_invoice_snapshot(p_invoice_id);
+
+    PERFORM set_config('app.invoice_resubmission', 'on', true);
+
+    IF v_inv.job_card_id IS NOT NULL THEN
+        UPDATE public.job_cards
+        SET    supplier_id = v_supplier,
+               invoice_url = v_file
+        WHERE  id = v_inv.job_card_id;
+    ELSIF v_inv.batch_service_id IS NOT NULL THEN
+        UPDATE public.batch_services
+        SET    supplier_id = v_supplier,
+               invoice_url = v_file
+        WHERE  id = v_inv.batch_service_id;
+    ELSE
+        UPDATE public.purchase_invoices
+        SET    supplier_id      = v_supplier,
+               supplier_name    = v_supp_name,
+               invoice_number   = v_invoice,
+               invoice_date     = v_date,
+               invoice_file_url = v_file
+        WHERE  id = v_inv.purchase_invoice_id;
+    END IF;
+
+    UPDATE public.outsource_invoices
+    SET    date_of_activity           = v_date,
+           invoice_no                 = v_invoice,
+           paid_by                    = v_paid_by,
+           invoice_value              = v_inv_value,
+           approved_amount            = v_approved,
+           advance_amount             = v_advance,
+           maintenance_payment_status = v_maint,
+           payby_date                 = v_payby
+    WHERE  id = p_invoice_id;
+
+    PERFORM public.complete_invoice_resubmission(p_invoice_id, v_before, p_resubmission->>'note');
+
+    PERFORM set_config('app.invoice_resubmission', 'off', true);
+END;
+$_$;
+
+
+ALTER FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) OWNER TO postgres;
+
+--
 -- Name: reverse_ledger_adjustment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5196,6 +5560,9 @@ DECLARE
     v_status     text;
     v_approved   numeric;
     v_lines_sum  numeric;
+    -- A rejected invoice changes only by being resubmitted (MAIN-120).
+    v_resubmit   boolean := coalesce((p_invoice->>'resubmit')::boolean, false);
+    v_before     jsonb;
 BEGIN
     IF NOT public.is_maintenance_exec() THEN
         RAISE EXCEPTION '%', json_build_object(
@@ -5296,6 +5663,13 @@ BEGIN
     END IF;
 
     IF v_batch_id IS NULL THEN
+        IF v_resubmit THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'NOT_REJECTED',
+                'error_message', 'Only a rejected invoice can be resubmitted.'
+            )::text;
+        END IF;
+
         IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_lines) l WHERE nullif(l->>'id', '') IS NOT NULL) THEN
             RAISE EXCEPTION '%', json_build_object(
                 'error_code',    'LINE_NOT_FOUND',
@@ -5351,6 +5725,20 @@ BEGIN
             )::text;
         END IF;
 
+        IF v_status = 'Reject' AND NOT v_resubmit THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'BATCH_REJECTED',
+                'error_message', 'Finance has rejected this invoice. Resubmit it to change its details.'
+            )::text;
+        END IF;
+
+        IF v_resubmit AND v_status IS DISTINCT FROM 'Reject' THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'NOT_REJECTED',
+                'error_message', 'Only a rejected invoice can be resubmitted.'
+            )::text;
+        END IF;
+
         IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_lines) l
                    WHERE nullif(l->>'id', '') IS NOT NULL
                      AND NOT EXISTS (
@@ -5361,6 +5749,11 @@ BEGIN
                 'error_code',    'LINE_NOT_FOUND',
                 'error_message', 'A vehicle line no longer exists. Reload the page and try again.'
             )::text;
+        END IF;
+
+        IF v_resubmit THEN
+            v_before := public.outsource_invoice_snapshot(v_invoice_id);
+            PERFORM set_config('app.invoice_resubmission', 'on', true);
         END IF;
 
         UPDATE public.batch_services
@@ -5416,6 +5809,11 @@ BEGIN
            nullif(l->>'job_card_id', '')::uuid
     FROM   jsonb_array_elements(p_lines) l
     WHERE  nullif(l->>'id', '') IS NULL;
+
+    IF v_resubmit THEN
+        PERFORM public.complete_invoice_resubmission(v_invoice_id, v_before, p_invoice->>'resubmit_note');
+        PERFORM set_config('app.invoice_resubmission', 'off', true);
+    END IF;
 
     RETURN v_batch_id;
 END;
@@ -5532,6 +5930,11 @@ DECLARE
     v_old           public.purchase_invoices%ROWTYPE;
     v_status        text;
     v_has_finance   boolean := false;
+    v_finance_id    uuid;
+    -- A rejected invoice changes only by being resubmitted (MAIN-120); the table guards
+    -- refuse any other change but the notes.
+    v_resubmit      boolean := coalesce((p_invoice->>'resubmit')::boolean, false);
+    v_before        jsonb;
 BEGIN
     IF NOT public.is_maintenance_exec() THEN
         RAISE EXCEPTION 'Only maintenance executives can record or edit a purchase invoice.'
@@ -5548,11 +5951,15 @@ BEGIN
         END IF;
 
         -- Locked first, so finance cannot accept it in the middle of the save.
-        SELECT finance_payment_status INTO v_status
+        SELECT id, finance_payment_status INTO v_finance_id, v_status
         FROM   public.outsource_invoices
         WHERE  purchase_invoice_id = v_invoice_id
         FOR UPDATE;
         v_has_finance := FOUND;
+    END IF;
+
+    IF v_resubmit AND v_status IS DISTINCT FROM 'Reject' THEN
+        RAISE EXCEPTION 'Only a rejected invoice can be resubmitted.';
     END IF;
 
     IF v_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed') THEN
@@ -5605,6 +6012,11 @@ BEGIN
         IF NOT FOUND THEN
             RAISE EXCEPTION 'Choose an approved supplier.';
         END IF;
+    END IF;
+
+    IF v_resubmit THEN
+        v_before := public.outsource_invoice_snapshot(v_finance_id);
+        PERFORM set_config('app.invoice_resubmission', 'on', true);
     END IF;
 
     IF v_invoice_id IS NULL THEN
@@ -5678,6 +6090,11 @@ BEGIN
 
     IF p_invoice_id IS NULL OR v_has_finance THEN
         PERFORM public.save_purchase_finance_invoice(v_invoice_id, p_invoice);
+    END IF;
+
+    IF v_resubmit THEN
+        PERFORM public.complete_invoice_resubmission(v_finance_id, v_before, p_invoice->>'resubmit_note');
+        PERFORM set_config('app.invoice_resubmission', 'off', true);
     END IF;
 
     RETURN v_invoice_id;
@@ -15161,6 +15578,27 @@ CREATE TRIGGER trigger_guard_job_card_type_change BEFORE UPDATE OF type ON publi
 
 
 --
+-- Name: purchase_invoices trigger_guard_locked_invoice_header; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_locked_invoice_header BEFORE UPDATE ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.guard_locked_invoice_details();
+
+
+--
+-- Name: job_cards trigger_guard_locked_invoice_job_card; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_locked_invoice_job_card BEFORE UPDATE OF invoice_url, supplier_id ON public.job_cards FOR EACH ROW EXECUTE FUNCTION public.guard_locked_invoice_details();
+
+
+--
+-- Name: purchase_invoice_items trigger_guard_locked_invoice_line; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trigger_guard_locked_invoice_line BEFORE INSERT OR DELETE OR UPDATE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.guard_locked_invoice_details();
+
+
+--
 -- Name: purchase_invoices trigger_guard_purchase_invoice_kind; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -18500,6 +18938,15 @@ GRANT ALL ON FUNCTION public.close_job_card_with_scrap(p_job_card_id uuid, p_rem
 
 
 --
+-- Name: FUNCTION complete_invoice_resubmission(p_invoice_id uuid, p_before jsonb, p_note text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.complete_invoice_resubmission(p_invoice_id uuid, p_before jsonb, p_note text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.complete_invoice_resubmission(p_invoice_id uuid, p_before jsonb, p_note text) TO authenticated;
+GRANT ALL ON FUNCTION public.complete_invoice_resubmission(p_invoice_id uuid, p_before jsonb, p_note text) TO service_role;
+
+
+--
 -- Name: FUNCTION complete_stock_audit(p_audit_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -18734,6 +19181,15 @@ GRANT ALL ON FUNCTION public.guard_job_card_type_change() TO service_role;
 
 
 --
+-- Name: FUNCTION guard_locked_invoice_details(); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.guard_locked_invoice_details() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.guard_locked_invoice_details() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_locked_invoice_details() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_outsource_invoice_status_owners(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -18932,6 +19388,15 @@ GRANT ALL ON FUNCTION public.move_invoice_stock_on_location_change() TO service_
 
 
 --
+-- Name: FUNCTION outsource_invoice_snapshot(p_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION payment_run_for(p_date date); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -19055,6 +19520,15 @@ GRANT ALL ON FUNCTION public.restore_batch_service_invoice(p_batch_id uuid, p_li
 GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO anon;
 GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO authenticated;
 GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
+
+
+--
+-- Name: FUNCTION resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) TO service_role;
 
 
 --

@@ -4,6 +4,8 @@ import { groupBatchLines } from './historyEntries'
 import { workTypeLabel } from '../../constants/batchWorkTypes'
 
 const FIELD_LABELS = {
+    invoice_no:                 'Invoice No',
+    date_of_activity:           'Date',
     maintenance_payment_status: 'Maintenance status',
     finance_payment_status:     'Finance status',
     finance_remark:             'Finance remark',
@@ -20,7 +22,7 @@ const MONEY_FIELDS = ['invoice_value', 'approved_amount', 'advance_amount']
 function fmtValue(field, value) {
     if (value == null || value === '') return '—'
     if (MONEY_FIELDS.includes(field)) return fmtMoney(value)
-    if (field === 'payby_date' || field === 'submitted_on') return fmtDate(value)
+    if (field === 'payby_date' || field === 'submitted_on' || field === 'date_of_activity') return fmtDate(value)
     if (field === 'finance_remark') return `"${value}"`
     return value
 }
@@ -75,8 +77,50 @@ function batchFieldChange(field, entry) {
     return `${label}: ${entry.old_data?.[field] ?? '—'} → ${entry.new_data?.[field] ?? '—'}`
 }
 
+// What finance's status became, and the submission date restarting with it.
+const RESUBMISSION_OUTCOME = ['finance_payment_status', 'finance_remark', 'submitted_on']
+
+// One resubmission (MAIN-120): every field changed in that save, the file, the lines and
+// the note, then where it left the invoice. A batch's line changes come folded in.
+function Resubmission({ entry, who }) {
+    const was = f => entry.old_data?.[f]
+    const now = f => entry.new_data?.[f]
+    const changed = (entry.changed_fields ?? []).filter(f => !RESUBMISSION_OUTCOME.includes(f))
+    return (
+        <>
+            <p className="text-sm text-indigo-800 font-medium">Resubmitted by {who}</p>
+            {changed.map(f => {
+                if (f === 'invoice_file') return <p key={f} className="text-xs text-gray-600">Invoice file replaced</p>
+                if (f === 'supplier_id') {
+                    return <p key={f} className="text-xs text-gray-600">Supplier: {was('supplier_name') ?? '—'} → {now('supplier_name') ?? '—'}</p>
+                }
+                if (f === 'lines') {
+                    return entry.lines.length > 0
+                        ? entry.lines.map((line, i) => <p key={`line-${i}`} className="text-xs text-gray-600">{lineChange(line)}</p>)
+                        : <p key={f} className="text-xs text-gray-600">Lines changed</p>
+                }
+                return (
+                    <p key={f} className="text-xs text-gray-600">
+                        {FIELD_LABELS[f] ?? f}: {fmtValue(f, was(f))} → {fmtValue(f, now(f))}
+                    </p>
+                )
+            })}
+            {now('note') && <p className="text-xs text-gray-800">Note to finance: "{now('note')}"</p>}
+            <p className="text-xs text-gray-600">
+                Finance status: {was('finance_payment_status') ?? '—'} → {now('finance_payment_status') ?? '—'}
+                {now('finance_remark') && ` ("${now('finance_remark')}")`}
+            </p>
+            <p className="text-xs text-gray-600">
+                Submitted to finance: {fmtValue('submitted_on', was('submitted_on'))} → {fmtValue('submitted_on', now('submitted_on'))}
+            </p>
+        </>
+    )
+}
+
 function Entry({ entry }) {
     const who = entry.performed_by_name || 'Someone'
+
+    if (entry.source === 'resubmission') return <Resubmission entry={entry} who={who} />
 
     if (entry.source === 'batch_lines') {
         return (

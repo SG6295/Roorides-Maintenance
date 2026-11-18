@@ -31,7 +31,7 @@ import { formatSiteLabel } from '../utils/siteLabel'
 import { formatBatchNumber, batchPath, parseBatchNumber } from '../utils/batchNumber'
 import { lineAmount, linesSummary } from '../utils/batchSplit'
 import { BATCH_WORK_TYPES, OTHER_WORK_TYPE, workTypeLabel } from '../constants/batchWorkTypes'
-import { isLockedByFinance } from '../constants/outsourceInvoices'
+import { isLockedByFinance, isRejectedInvoice } from '../constants/outsourceInvoices'
 
 const EXEC_ROLES = ['maintenance_exec', 'super_admin']
 
@@ -127,6 +127,9 @@ function BatchForm({ batch }) {
     const [showErrors, setShowErrors] = useState(false)
     const [saveError, setSaveError] = useState(null)
     const [saved, setSaved] = useState(false)
+    // A rejected invoice is saved only by resubmitting it (MAIN-120), with an optional
+    // note to finance.
+    const [resubmitNote, setResubmitNote] = useState('')
 
     const { data: jobCards = [] } = useOutsourceJobCardsForVehicles(lines.map(l => l.vehicle_number))
 
@@ -134,6 +137,7 @@ function BatchForm({ batch }) {
     // Once finance has accepted the invoice it is in the supplier ledger (MAIN-118).
     const lockedByFinance = isLockedByFinance(batch?.invoice)
     const cancelled = batch?.status === 'Cancelled'
+    const rejected = isRejectedInvoice(batch?.invoice)
     if (batch && (!isExec || lockedByFinance || cancelled)) {
         return <BatchReadOnly batch={batch} lockedByFinance={isExec && lockedByFinance && !cancelled} canRestore={isExec && cancelled} />
     }
@@ -214,7 +218,10 @@ function BatchForm({ batch }) {
             const savedNumber = await save.mutateAsync({
                 batchId: batch?.id,
                 batch: { supplier_id: supplierId, invoice_url: invoiceUrl },
-                invoice: invoiceFormToRow(invoiceForm),
+                invoice: {
+                    ...invoiceFormToRow(invoiceForm),
+                    ...(rejected ? { resubmit: true, resubmit_note: resubmitNote.trim() || null } : {}),
+                },
                 lines: lines.map(l => ({
                     id: l.id,
                     vehicle_number: l.vehicle_number,
@@ -245,6 +252,14 @@ function BatchForm({ batch }) {
             <p className="text-sm text-gray-500 -mt-2">
                 One vendor invoice covering several vehicles. No ticket or job card is created; each vehicle's history shows its work.
             </p>
+            {rejected && (
+                <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    Rejected by finance: {batch.invoice.finance_remark || '—'}
+                    <span className="block text-xs text-red-700 mt-0.5">
+                        Correct it below and resubmit — the vendor, the lines, the invoice details or the file. Saving resubmits it to finance.
+                    </span>
+                </p>
+            )}
 
             {/* ── Vendor ───────────────────────────────────────────────────── */}
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
@@ -444,6 +459,21 @@ function BatchForm({ batch }) {
                 {showErrors && errors.invoiceUrl && <p className="mt-2 text-xs text-red-600">{errors.invoiceUrl}</p>}
             </section>
 
+            {rejected && (
+                <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                    <label htmlFor="resubmit-note" className="block text-sm font-semibold text-gray-600 uppercase tracking-wider mb-2">
+                        Note to finance <span className="text-gray-400 normal-case font-normal">(optional)</span>
+                    </label>
+                    <textarea
+                        id="resubmit-note"
+                        rows={2}
+                        value={resubmitNote}
+                        onChange={e => setResubmitNote(e.target.value)}
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </section>
+            )}
+
             {saveError && <p className="text-sm text-red-600">{saveError}</p>}
             {saved && <p className="text-sm text-green-700">Saved.</p>}
 
@@ -453,7 +483,7 @@ function BatchForm({ batch }) {
                 disabled={save.isPending || !linesReady}
                 className="w-full py-3 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
-                {save.isPending ? 'Saving…' : batch ? 'Save changes' : 'Save multi-vehicle invoice'}
+                {save.isPending ? 'Saving…' : rejected ? 'Resubmit to finance' : batch ? 'Save changes' : 'Save multi-vehicle invoice'}
             </button>
             {!linesReady && (
                 <p className="text-xs text-gray-500 text-center -mt-2">

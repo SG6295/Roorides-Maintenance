@@ -27,6 +27,16 @@ describe('groupBatchLines', () => {
         expect(out[0].performed_at).toBe(T2)
     })
 
+    it('folds the lines saved with a resubmission into its single entry (MAIN-120)', () => {
+        const resubmitted = { ...invoice(T2), action: 'UPDATE', new_data: { resubmitted: true } }
+        const out = groupBatchLines([resubmitted, line(T2, 'UPDATE', 'A'), line(T1, 'INSERT', 'B')])
+
+        expect(out).toHaveLength(2)
+        expect(out[0].source).toBe('resubmission')
+        expect(out[0].lines.map(l => l.new_data.vehicle_number)).toEqual(['A'])
+        expect(out[1].source).toBe('batch_lines')
+    })
+
     it('leaves job-card invoice history untouched', () => {
         const entries = [invoice(T2), invoice(T1)]
         expect(groupBatchLines(entries)).toEqual(entries)
