@@ -2778,6 +2778,10 @@ export type Database = {
       }
       apply_sla_change: { Args: { p_change: Json }; Returns: Json }
       assert_ledger_writer: { Args: never; Returns: undefined }
+      can_read_outsource_invoice: {
+        Args: { p_batch_service_id: string; p_job_card_id: string }
+        Returns: boolean
+      }
       cancel_advance_repayment: {
         Args: { p_reason: string; p_repayment_id: string }
         Returns: undefined
@@ -2945,6 +2949,7 @@ export type Database = {
           source: string
         }[]
       }
+      get_outsource_invoice_rows: { Args: { p_filters?: Json }; Returns: Json }
       get_outsource_invoice_summary: {
         Args: {
           p_date_from?: string
