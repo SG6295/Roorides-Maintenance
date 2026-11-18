@@ -8,6 +8,7 @@ import {
     FINANCE_STATUS_MOVES,
     FINANCE_LOCKED_STATUSES,
     isLockedByFinance,
+    isRejectedInvoice,
     financeStatusMoves,
 } from '../outsourceInvoices'
 
@@ -29,6 +30,12 @@ describe('FINANCE_STATUS_MOVES', () => {
         expect(FINANCE_STATUS_MOVES['Hold']).toContain('New')
         expect(FINANCE_STATUS_MOVES['Accepted']).toEqual(expect.arrayContaining(['Hold', 'Reject']))
         expect(FINANCE_STATUS_MOVES['Accepted']).not.toContain('New')
+    })
+
+    it('moves a resubmitted invoice on as New does (MAIN-120)', () => {
+        expect(FINANCE_STATUS_MOVES['Resubmitted']).toEqual(['Hold', 'Reject', 'Accepted'])
+        // Only a resubmission reaches it; finance never picks it.
+        for (const targets of Object.values(FINANCE_STATUS_MOVES)) expect(targets).not.toContain('Resubmitted')
     })
 
     it('reaches a GST close only from Accepted', () => {
@@ -64,5 +71,14 @@ describe('isLockedByFinance', () => {
         }
         expect(FINANCE_LOCKED_STATUSES).toEqual(['Accepted', 'GST reconciled & closed', 'GST not applicable & closed'])
         expect(isLockedByFinance(null)).toBe(false)
+    })
+})
+
+describe('isRejectedInvoice', () => {
+    it('is true only at Reject (MAIN-120)', () => {
+        for (const status of FINANCE_STATUSES) {
+            expect(isRejectedInvoice({ finance_payment_status: status })).toBe(status === 'Reject')
+        }
+        expect(isRejectedInvoice(null)).toBe(false)
     })
 })

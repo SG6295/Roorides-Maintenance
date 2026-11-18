@@ -13,7 +13,7 @@ import { financeStatusColor } from '../outsource-invoices/format'
 
 /** The modal: title and finance badge, the form body, and a footer with Save for execs. */
 export function PurchaseInvoiceModal({ title, form, loading, error, onClose, onSubmit, footer, children }) {
-    const { finance, isFinanceRole, saving } = form
+    const { finance, isFinanceRole, rejected, saving } = form
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
@@ -63,7 +63,7 @@ export function PurchaseInvoiceModal({ title, form, loading, error, onClose, onS
                                         disabled={saving}
                                         className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                                     >
-                                        {saving ? 'Saving…' : 'Save Changes'}
+                                        {saving ? 'Saving…' : rejected ? 'Resubmit to finance' : 'Save Changes'}
                                     </button>
                                 )}
                             </div>
@@ -95,7 +95,8 @@ export function InvoiceTotal({ total, amountProblem }) {
  */
 export function PurchaseInvoiceFields({ form, workshop }) {
     const {
-        invoice, finance, isFinanceRole, accepted, frozen, todayStr,
+        invoice, finance, isFinanceRole, accepted, frozen, rejected, todayStr,
+        resubmitNote, setResubmitNote,
         header, setHeader, invoiceForm, setInvoiceForm, invoiceErrors, showErrors,
         invoiceFile, setInvoiceFile, filePending,
     } = form
@@ -104,6 +105,27 @@ export function PurchaseInvoiceFields({ form, workshop }) {
 
     return (
         <>
+            {rejected && (
+                <div className="text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2 space-y-2">
+                    <p className="text-red-800">Rejected by finance: {finance.finance_remark || '—'}</p>
+                    <p className="text-xs text-red-700">
+                        Correct it below and resubmit. Saving resubmits it to finance, and needs at least one change.
+                    </p>
+                    <div>
+                        <label htmlFor="purchase-resubmit-note" className="block text-xs font-medium text-gray-700 mb-1">
+                            Note to finance <span className="text-gray-400 font-normal">(optional)</span>
+                        </label>
+                        <input
+                            id="purchase-resubmit-note"
+                            type="text"
+                            value={resubmitNote}
+                            onChange={e => setResubmitNote(e.target.value)}
+                            className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+                </div>
+            )}
+
             <div>
                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoice Details</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useAuth } from './useAuth'
 import { useUpdatePurchaseInvoice } from './useInventory'
 import { invoiceFormFromRow, invoiceFormToRow, validateInvoiceForm } from '../components/outsource-invoices/invoiceForm'
-import { isLockedByFinance } from '../constants/outsourceInvoices'
+import { isLockedByFinance, isRejectedInvoice } from '../constants/outsourceInvoices'
 import { approvedAmountError } from '../utils/refurbishment'
 import { todayLocal } from '../utils/datetime'
 
@@ -26,6 +26,10 @@ export function usePurchaseInvoiceForm(invoice) {
     // Hold lifts that.
     const accepted = isLockedByFinance(finance)
     const frozen = isFinanceRole || accepted
+    // A rejected invoice is saved only by resubmitting it (MAIN-120): Save becomes
+    // Resubmit to finance, with an optional note.
+    const rejected = isRejectedInvoice(finance) && !isFinanceRole
+    const [resubmitNote, setResubmitNote] = useState('')
 
     const [header, setHeader] = useState({
         invoice_number: invoice.invoice_number,
@@ -76,11 +80,13 @@ export function usePurchaseInvoiceForm(invoice) {
             },
             lineItems: lines,
             finance: finance ? details : null,
+            resubmit: rejected ? { note: resubmitNote.trim() } : null,
         })
     }
 
     return {
-        invoice, finance, isFinanceRole, accepted, frozen, todayStr,
+        invoice, finance, isFinanceRole, accepted, frozen, rejected, todayStr,
+        resubmitNote, setResubmitNote,
         header, setHeader,
         invoiceForm, setInvoiceForm, invoiceErrors,
         showErrors, revealErrors: () => setShowErrors(true),

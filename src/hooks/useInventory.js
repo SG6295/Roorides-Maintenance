@@ -172,13 +172,14 @@ const toInvoiceItem = item => ({
  * its typed name when none is chosen (MAIN-128).
  *
  * `finance` carries the invoice details for an invoice that went to finance (MAIN-129);
- * an invoice recorded before then has none and saves without them.
+ * an invoice recorded before then has none and saves without them. `resubmit` ({ note })
+ * resubmits a rejected invoice in the same save (MAIN-120); it travels inside p_invoice.
  */
 export function useUpdatePurchaseInvoice() {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ invoiceId, invoiceData, lineItems, finance }) => {
+        mutationFn: async ({ invoiceId, invoiceData, lineItems, finance, resubmit = null }) => {
             const { error } = await supabase.rpc('save_purchase_invoice', {
                 p_invoice_id: invoiceId,
                 p_invoice: {
@@ -189,6 +190,7 @@ export function useUpdatePurchaseInvoice() {
                     invoice_file_url: invoiceData.invoice_file_url || null,
                     location_id: invoiceData.location_id,
                     ...toFinanceDetails(finance),
+                    ...(resubmit ? { resubmit: true, resubmit_note: resubmit.note || null } : {}),
                 },
                 p_items: lineItems.map(toInvoiceItem),
             })

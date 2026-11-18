@@ -180,6 +180,32 @@ export function useUpdateFinancePaymentStatus() {
 }
 
 /**
+ * Resubmits a rejected invoice from the Resubmit popup (MAIN-120): its file, supplier
+ * and invoice fields, with an optional note to finance, in one call. The database
+ * refuses it unless something changed, the file is there, maintenance's status is
+ * Approved or Hold, and any lines still add up to the Approved Amount.
+ */
+export function useResubmitOutsourceInvoice() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async ({ id, resubmission }) => {
+            const { error } = await supabase.rpc('resubmit_outsource_invoice', {
+                p_invoice_id:    id,
+                p_resubmission:  resubmission,
+            })
+            if (error) throw error
+        },
+        onSuccess: () => {
+            for (const queryKey of [
+                ['outsource_invoices'], ['outsource_invoice_summary'], ['outsource_invoice'],
+                ['outsource_invoice_history'], ['job_card'], ['batch_service'],
+                ['purchase_invoices'], ['supplier_ledger'],
+            ]) queryClient.invalidateQueries({ queryKey })
+        },
+    })
+}
+
+/**
  * The dated "who changed what" history of one invoice (MAIN-96), newest first.
  * Entries come from database triggers, with names attached by
  * get_outsource_invoice_history because finance cannot read exec/finance profiles.

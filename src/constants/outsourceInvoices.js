@@ -21,6 +21,7 @@ export const MAINTENANCE_PAYMENT_STATUSES = ['Approved', 'Hold', 'Reject']
  */
 export const FINANCE_STATUSES = [
     'New',
+    'Resubmitted',
     'New (invoice pending)',
     'Hold',
     'Reject',
@@ -32,11 +33,12 @@ export const FINANCE_STATUSES = [
 /**
  * Where finance may move an invoice from each status. Reject and both GST-closed
  * statuses are final — a rejected invoice comes back only by being resubmitted
- * (MAIN-120). Mirrors the moves guard_outsource_invoice_status_owners allows — keep in
- * step.
+ * (MAIN-120), which lands it at Resubmitted, reviewed as New is. Mirrors the moves
+ * guard_outsource_invoice_status_owners allows — keep in step.
  */
 export const FINANCE_STATUS_MOVES = {
     'New':                         ['Hold', 'Reject', 'Accepted'],
+    'Resubmitted':                 ['Hold', 'Reject', 'Accepted'],
     'New (invoice pending)':       ['Hold', 'Reject'],
     'Hold':                        ['New', 'New (invoice pending)', 'Reject', 'Accepted'],
     'Accepted':                    ['Hold', 'Reject', 'GST reconciled & closed', 'GST not applicable & closed'],
@@ -72,6 +74,13 @@ export function financeStatusMoves(invoice) {
 export const FINANCE_LOCKED_STATUSES = ['Accepted', 'GST reconciled & closed', 'GST not applicable & closed']
 
 export const isLockedByFinance = invoice => FINANCE_LOCKED_STATUSES.includes(invoice?.finance_payment_status)
+
+/**
+ * A rejected invoice is locked too (MAIN-120), but its way out is resubmission by a
+ * maintenance exec or super_admin: through the Resubmit popup, or — to change its lines
+ * — on its multi-vehicle invoice page or in Edit Purchase.
+ */
+export const isRejectedInvoice = invoice => invoice?.finance_payment_status === 'Reject'
 
 /** How a supplier payment or an advance repayment was made (MAIN-119). */
 export const PAYMENT_METHODS = ['UPI', 'NEFT', 'RTGS', 'IMPS', 'Cash']
