@@ -1434,6 +1434,31 @@ $$;
 ALTER FUNCTION public.calculate_ticket_overall_sla() OWNER TO postgres;
 
 --
+-- Name: can_read_outsource_invoice(uuid, uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.can_read_outsource_invoice(p_job_card_id uuid, p_batch_service_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select public.is_maintenance_exec()
+      or public.is_finance()
+      or (exists (select 1 from public.users
+                  where id = auth.uid() and role = 'supervisor')
+          and exists (
+            select 1
+            from   public.user_sites us
+            join   public.sites s on s.id = us.site_id
+            where  us.user_id = auth.uid()
+              and (s.name = (select jc.site from public.job_cards jc where jc.id = p_job_card_id)
+                   or s.name in (select bsv.site from public.batch_service_vehicles bsv
+                                 where bsv.batch_service_id = p_batch_service_id))))
+$$;
+
+
+ALTER FUNCTION public.can_read_outsource_invoice(p_job_card_id uuid, p_batch_service_id uuid) OWNER TO postgres;
+
+--
 -- Name: cancel_advance_repayment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2810,25 +2835,29 @@ CREATE FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) RETURNS 
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
+  with allowed as (
+    select oi.*
+    from   public.outsource_invoices oi
+    where  oi.id = p_invoice_id
+      and  public.can_read_outsource_invoice(oi.job_card_id, oi.batch_service_id)
+  )
   select a.performed_at, u.name, 'invoice', a.action, a.changed_fields, a.old_data, a.new_data
-  from   public.audit_logs a
+  from   allowed oi
+  join   public.audit_logs a
+         on a.table_name = 'outsource_invoices'
+        and a.record_id  = oi.id
   left join public.users u on u.id = a.performed_by
-  where  a.table_name = 'outsource_invoices'
-    and  a.record_id  = p_invoice_id
-    and  auth.uid() is not null
 
   union all
 
   select a.performed_at, u.name,
          case a.table_name when 'batch_services' then 'batch' else 'batch_vehicle' end,
          a.action, a.changed_fields, a.old_data, a.new_data
-  from   public.outsource_invoices oi
+  from   allowed oi
   join   public.audit_logs a
          on a.table_name in ('batch_services', 'batch_service_vehicles')
         and a.record_id = oi.batch_service_id
   left join public.users u on u.id = a.performed_by
-  where  oi.id = p_invoice_id
-    and  auth.uid() is not null
 
   union all
 
@@ -2842,11 +2871,9 @@ CREATE FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) RETURNS 
               order  by a.performed_at
               limit  1),
              oi.maintenance_payment_status))
-  from   public.outsource_invoices oi
+  from   allowed oi
   left join public.users u on u.id = oi.created_by
-  where  oi.id = p_invoice_id
-    and  auth.uid() is not null
-    and  not exists (
+  where  not exists (
            select 1 from public.audit_logs a
            where  a.table_name = 'outsource_invoices'
              and  a.record_id  = oi.id
@@ -2857,6 +2884,90 @@ $$;
 
 
 ALTER FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) OWNER TO postgres;
+
+--
+-- Name: get_outsource_invoice_rows(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_outsource_invoice_rows(p_filters jsonb DEFAULT '{}'::jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  with f as (
+    select
+      (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'maintenance_payment_status', 'null')) x) as ps,
+      (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'finance_payment_status', 'null')) x)     as fs,
+      (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'paid_by', 'null')) x)                    as pb,
+      nullif(p_filters->>'date_from', '')::date as date_from,
+      nullif(p_filters->>'date_to', '')::date   as date_to,
+      (p_filters->>'page')::int                 as page,
+      coalesce((p_filters->>'page_size')::int, 50) as page_size
+  ),
+  visible as (
+    select oi.*, jc.id as jc_id
+    from   public.outsource_invoices oi
+    left join public.job_cards jc on jc.id = oi.job_card_id and jc.status = 'Completed'
+    cross join f
+    where (oi.batch_service_id is not null or oi.purchase_invoice_id is not null or jc.id is not null)
+      and public.can_read_outsource_invoice(oi.job_card_id, oi.batch_service_id)
+      and (f.ps is null        or oi.maintenance_payment_status = any (f.ps))
+      and (f.fs is null        or oi.finance_payment_status     = any (f.fs))
+      and (f.pb is null        or oi.paid_by                    = any (f.pb))
+      and (f.date_from is null or oi.date_of_activity >= f.date_from)
+      and (f.date_to is null   or oi.date_of_activity <= f.date_to)
+  ),
+  page as (
+    select v.*
+    from   visible v
+    -- Newest submitted first: finance's review queue (MAIN-119).
+    order  by v.submitted_on desc nulls last, v.created_at desc, v.id
+    offset (select coalesce(f.page * f.page_size, 0) from f)
+    limit  (select case when f.page is null then null else f.page_size end from f)
+  )
+  select jsonb_build_object(
+    'total', (select count(*) from visible),
+    'rows',  coalesce(jsonb_agg(
+      (to_jsonb(p) - 'jc_id') || jsonb_build_object(
+        'job_card', (
+          select jsonb_build_object(
+                   'id', jc.id, 'job_card_number', jc.job_card_number,
+                   'vehicle_number', jc.vehicle_number, 'status', jc.status,
+                   'completed_at', jc.completed_at, 'invoice_url', jc.invoice_url,
+                   'supplier', (select jsonb_build_object('id', s.id, 'entity_name', s.entity_name)
+                                from public.suppliers s where s.id = jc.supplier_id))
+          from public.job_cards jc where jc.id = p.jc_id),
+        'batch_service', (
+          select jsonb_build_object(
+                   'id', bs.id, 'batch_number', bs.batch_number, 'invoice_url', bs.invoice_url,
+                   'status', bs.status, 'cancel_reason', bs.cancel_reason, 'cancelled_at', bs.cancelled_at,
+                   'supplier', (select jsonb_build_object('id', s.id, 'entity_name', s.entity_name)
+                                from public.suppliers s where s.id = bs.supplier_id),
+                   'vehicles', (
+                     select coalesce(jsonb_agg(jsonb_build_object(
+                              'id', bsv.id, 'vehicle_number', bsv.vehicle_number, 'site', bsv.site,
+                              'work_type', bsv.work_type, 'work_type_other', bsv.work_type_other,
+                              'rate', bsv.rate, 'quantity', bsv.quantity, 'amount', bsv.amount,
+                              'linked_job_card', (select jsonb_build_object('job_card_number', ljc.job_card_number)
+                                                  from public.job_cards ljc where ljc.id = bsv.job_card_id))
+                            order by bsv.vehicle_number, bsv.created_at), '[]'::jsonb)
+                     from public.batch_service_vehicles bsv
+                     where bsv.batch_service_id = bs.id))
+          from public.batch_services bs where bs.id = p.batch_service_id),
+        'purchase_invoice', (
+          select jsonb_build_object(
+                   'id', pi.id, 'kind', pi.kind, 'invoice_number', pi.invoice_number,
+                   'invoice_file_url', pi.invoice_file_url,
+                   'supplier', (select jsonb_build_object('id', s.id, 'entity_name', s.entity_name)
+                                from public.suppliers s where s.id = pi.supplier_id))
+          from public.purchase_invoices pi where pi.id = p.purchase_invoice_id)
+      )
+      order by p.submitted_on desc nulls last, p.created_at desc, p.id), '[]'::jsonb)
+  )
+  from page p
+$$;
+
+
+ALTER FUNCTION public.get_outsource_invoice_rows(p_filters jsonb) OWNER TO postgres;
 
 --
 -- Name: get_outsource_invoice_summary(text[], text[], date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2876,6 +2987,7 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
     LEFT JOIN job_cards          jc ON jc.id = oi.job_card_id
     LEFT JOIN batch_services     bs ON bs.id = oi.batch_service_id
     WHERE (bs.status = 'Active' OR jc.status = 'Completed' OR oi.purchase_invoice_id IS NOT NULL)
+      AND public.can_read_outsource_invoice(oi.job_card_id, oi.batch_service_id)
       AND (p_maintenance_payment_status IS NULL OR oi.maintenance_payment_status = ANY(p_maintenance_payment_status))
       AND (p_finance_payment_status     IS NULL OR oi.finance_payment_status     = ANY(p_finance_payment_status))
       AND (p_paid_by                    IS NULL OR oi.paid_by                    = ANY(p_paid_by))
@@ -6952,6 +7064,14 @@ declare
     -- previous identity values for update/delete
     old_columns realtime.wal_column[];
 
+    -- the same values as wal2json sent them, which is what filters compare against
+    raw_columns realtime.wal_column[] =
+        array_agg((x->>'name', x->>'type', x->>'typeoid', x->'value', null, null)::realtime.wal_column)
+        from jsonb_array_elements(wal -> 'columns') x;
+    raw_old_columns realtime.wal_column[] =
+        array_agg((x->>'name', x->>'type', x->>'typeoid', x->'value', null, null)::realtime.wal_column)
+        from jsonb_array_elements(wal -> 'identity') x;
+
     error_record_exceeds_max_size boolean = octet_length(wal::text) > max_record_bytes;
 
     -- Primary jsonb output for record
@@ -7110,10 +7230,10 @@ begin
                         subs.entity = entity_
                         and subs.claims_role = working_role
                         and (
-                            realtime.is_visible_through_filters(columns, subs.filters)
+                            realtime.is_visible_through_filters(raw_columns, subs.filters)
                             or (
                               action = 'DELETE'
-                              and realtime.is_visible_through_filters(old_columns, subs.filters)
+                              and realtime.is_visible_through_filters(raw_old_columns, subs.filters)
                             )
                         )
             ) loop
@@ -7280,6 +7400,80 @@ $$;
 
 
 ALTER FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) OWNER TO supabase_realtime_admin;
+
+--
+-- Name: authorize(text, text, text, text, text, text[], text[]); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+CREATE FUNCTION realtime.authorize(role_name text, topic_name text, claims text, sub text, headers text, read_extensions text[], write_extensions text[], OUT read_allowed boolean[], OUT write_allowed boolean[]) RETURNS record
+    LANGUAGE plpgsql
+    AS $$
+declare
+  probe_ids uuid[];
+  probe_inserted_at timestamp := now() at time zone 'utc';
+  visible_ids uuid[];
+  ext text;
+  allowed boolean;
+begin
+  -- The probe inserts are rolled back, but they still give the transaction an xid, so it ends
+  -- in a commit. Nothing durable was written, so skip waiting on the WAL flush and sync standbys.
+  -- Set outside the block below, whose rollback would undo it.
+  perform set_config('synchronous_commit', 'off', true);
+
+  -- The RAISE at the end of this block rolls back everything in it.
+  begin
+    probe_ids := array(select gen_random_uuid() from unnest(read_extensions));
+
+    insert into realtime.messages (id, topic, extension, inserted_at, updated_at)
+    select p.id, topic_name, p.extension, probe_inserted_at, probe_inserted_at
+    from unnest(probe_ids, read_extensions) as p(id, extension);
+
+    perform set_config('role', role_name, true),
+            set_config('realtime.topic', topic_name, true),
+            set_config('request.jwt.claims', claims, true),
+            set_config('request.jwt.claim.sub', sub, true),
+            set_config('request.jwt.claim.role', role_name, true),
+            set_config('request.headers', headers, true);
+
+    -- One lookup for every probe, by the full primary key. Skipped without probes, so the
+    -- SELECT policies are not planned for a write.
+    if cardinality(probe_ids) > 0 then
+      visible_ids := array(
+        select m.id
+        from realtime.messages m
+        where m.inserted_at = probe_inserted_at
+          and m.id = any(probe_ids));
+    end if;
+
+    read_allowed := array(
+      select p.id = any(visible_ids)
+      from unnest(probe_ids) with ordinality as p(id, n)
+      order by p.n);
+
+    write_allowed := '{}';
+
+    foreach ext in array write_extensions loop
+      begin
+        insert into realtime.messages (topic, extension, inserted_at, updated_at)
+        values (topic_name, ext, now() at time zone 'utc', now() at time zone 'utc');
+
+        allowed := true;
+      exception when insufficient_privilege then
+        allowed := false;
+      end;
+
+      write_allowed := write_allowed || allowed;
+    end loop;
+
+    raise sqlstate 'RTA01';
+  exception when sqlstate 'RTA01' then
+    null;
+  end;
+end;
+$$;
+
+
+ALTER FUNCTION realtime.authorize(role_name text, topic_name text, claims text, sub text, headers text, read_extensions text[], write_extensions text[], OUT read_allowed boolean[], OUT write_allowed boolean[]) OWNER TO supabase_realtime_admin;
 
 --
 -- Name: broadcast_changes(text, text, text, text, text, record, record, text); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
@@ -7484,6 +7678,20 @@ $$;
 ALTER FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean) OWNER TO supabase_realtime_admin;
 
 --
+-- Name: filters_hash(realtime.user_defined_filter[]); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+CREATE FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) RETURNS bytea
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+  select pg_catalog.int8send(pg_catalog.hash_array_extended(filters, 0))
+      || pg_catalog.int8send(pg_catalog.hash_array_extended(filters, 1))
+$$;
+
+
+ALTER FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) OWNER TO supabase_realtime_admin;
+
+--
 -- Name: is_visible_through_filters(realtime.wal_column[], realtime.user_defined_filter[]); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
 --
 
@@ -7588,6 +7796,78 @@ $$;
 ALTER FUNCTION realtime.list_changes(publication name, slot_name name, max_changes integer, max_record_bytes integer) OWNER TO supabase_realtime_admin;
 
 --
+-- Name: list_changes_sync(name, name, integer, integer); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+CREATE FUNCTION realtime.list_changes_sync(publication name, slot_name name, max_changes integer, max_record_bytes integer) RETURNS TABLE(wal jsonb, is_rls_enabled boolean, subscription_ids uuid[], errors text[], slot_changes_count bigint)
+    LANGUAGE sql
+    SET log_min_messages TO 'fatal'
+    AS $$
+  WITH pub AS (
+    SELECT
+      concat_ws(
+        ',',
+        CASE WHEN bool_or(pubinsert) THEN 'insert' ELSE NULL END,
+        CASE WHEN bool_or(pubupdate) THEN 'update' ELSE NULL END,
+        CASE WHEN bool_or(pubdelete) THEN 'delete' ELSE NULL END
+      ) AS w2j_actions,
+      coalesce(
+        string_agg(
+          realtime.quote_wal2json(format('%I.%I', schemaname, tablename)::regclass),
+          ','
+        ) filter (WHERE ppt.tablename IS NOT NULL),
+        ''
+      ) AS w2j_add_tables
+    FROM pg_publication pp
+    LEFT JOIN pg_publication_tables ppt ON pp.pubname = ppt.pubname
+    WHERE pp.pubname = publication
+    GROUP BY pp.pubname
+    LIMIT 1
+  ),
+  -- MATERIALIZED ensures the slot is read exactly once.
+  consumed AS MATERIALIZED (
+    SELECT x.*, pub.w2j_add_tables
+    FROM pub,
+         realtime.settled_changes(
+           slot_name, max_changes,
+           'include-pk', 'true',
+           'include-transaction', 'false',
+           'include-timestamp', 'true',
+           'include-type-oids', 'true',
+           'format-version', '2',
+           'actions', pub.w2j_actions,
+           'add-tables', pub.w2j_add_tables
+         ) x
+  ),
+  slot_count AS (
+    SELECT count(*)::bigint AS cnt
+    FROM consumed
+    WHERE consumed.w2j_add_tables <> ''
+  ),
+  rls_filtered AS (
+    SELECT xyz.wal, xyz.is_rls_enabled, xyz.subscription_ids, xyz.errors
+    FROM consumed,
+         realtime.apply_rls(
+           wal := consumed.data::jsonb,
+           max_record_bytes := max_record_bytes
+         ) xyz(wal, is_rls_enabled, subscription_ids, errors)
+    WHERE consumed.w2j_add_tables <> ''
+      AND xyz.subscription_ids[1] IS NOT NULL
+  )
+  SELECT rf.wal, rf.is_rls_enabled, rf.subscription_ids, rf.errors, sc.cnt
+  FROM rls_filtered rf, slot_count sc
+
+  UNION ALL
+
+  SELECT null, null, null, null, sc.cnt
+  FROM slot_count sc
+  WHERE NOT EXISTS (SELECT 1 FROM rls_filtered)
+$$;
+
+
+ALTER FUNCTION realtime.list_changes_sync(publication name, slot_name name, max_changes integer, max_record_bytes integer) OWNER TO supabase_realtime_admin;
+
+--
 -- Name: quote_wal2json(regclass); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
 --
 
@@ -7668,6 +7948,99 @@ $$;
 
 
 ALTER FUNCTION realtime.send_binary(payload bytea, event text, topic text, private boolean) OWNER TO supabase_realtime_admin;
+
+--
+-- Name: settled_changes(name, integer, text[]); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+CREATE FUNCTION realtime.settled_changes(slot_name name, max_changes integer, VARIADIC opts text[]) RETURNS TABLE(lsn pg_lsn, xid xid, data text)
+    LANGUAGE plpgsql
+    AS $$
+declare
+  upto pg_lsn;
+  total bigint;
+  xids xid[];
+  starts bigint[];
+  snapshot pg_snapshot;
+  running_xids xid[];
+  xmax_age int;
+  cut bigint;
+begin
+  -- Each statement in a volatile function takes its own snapshot, which is what lets the
+  -- check below see a writer that was still in flight when the peek ran. Under REPEATABLE
+  -- READ the snapshot never advances, so a deferred change would never be released.
+  if current_setting('transaction_isolation') <> 'read committed' then
+    raise exception 'realtime.settled_changes requires READ COMMITTED';
+  end if;
+
+  -- The peek and the read below cover the same WAL, so the read cannot reach a commit the
+  -- check never saw.
+  upto := pg_current_wal_flush_lsn();
+
+  -- One entry per transaction, in commit order: its xid and the position of its first
+  -- change. The peek uses the caller's own options, so max_changes counts exactly what the
+  -- read counts. A non-transactional logical message is emitted as soon as it is decoded,
+  -- tagged with the xid of whatever transaction wrote it, so it does not mark where that
+  -- transaction starts.
+  select coalesce(sum(g.n), 0),
+         array_agg(g.x order by g.first) filter (where g.first is not null),
+         array_agg(g.first order by g.first) filter (where g.first is not null)
+    into total, xids, starts
+    from (
+      select p.xid as x, count(*) as n,
+             min(p.ord) filter (where not case
+               when starts_with(p.data, '{"action":"M"') then (p.data::jsonb->>'transactional')::boolean is false
+               else false
+             end) as first
+      from pg_logical_slot_peek_changes(slot_name, upto, max_changes, variadic opts)
+           with ordinality as p(lsn, xid, data, ord)
+      group by p.xid
+    ) g;
+
+  -- Nothing for the caller, but the slot still has to move past what the peek covered.
+  if total = 0 then
+    perform pg_replication_slot_advance(slot_name, upto);
+    return;
+  end if;
+
+  if xids is not null then
+    -- Taken after the peek is materialized, so a writer that was still in flight during
+    -- decoding is guaranteed to show up here.
+    snapshot := pg_current_snapshot();
+
+    -- A commit record reaches the WAL before the writer leaves the proc array, so a change
+    -- can be decoded while its row is invisible. apply_rls would resolve a policy against a
+    -- row it cannot see and authorize it for nobody, while the read consumed it regardless.
+    --
+    -- xip lists transactions running when the snapshot was taken. It does not cover a writer
+    -- whose xid sits at or beyond xmax, which never appears there, so the horizon is checked
+    -- too. age() counts backwards from the current xid and so compares correctly across
+    -- wraparound.
+    select coalesce(array_agg(running.x::xid), array[]::xid[])
+      into running_xids
+      from pg_snapshot_xip(snapshot) running(x);
+    xmax_age := age(pg_snapshot_xmax(snapshot)::xid);
+
+    select min(u.s) into cut
+      from unnest(xids, starts) as u(x, s)
+      where u.x = any(running_xids) or age(u.x) <= xmax_age;
+  end if;
+
+  -- The read stops right after the commit that brings its count to upto_nchanges, so the
+  -- count of changes in front of the first unsettled transaction stops it just before that
+  -- transaction.
+  if cut is null then
+    return query
+      select p.* from pg_logical_slot_get_changes(slot_name, upto, max_changes, variadic opts) p;
+  elsif cut > 1 then
+    return query
+      select p.* from pg_logical_slot_get_changes(slot_name, upto, (cut - 1)::int, variadic opts) p;
+  end if;
+end;
+$$;
+
+
+ALTER FUNCTION realtime.settled_changes(slot_name name, max_changes integer, VARIADIC opts text[]) OWNER TO supabase_realtime_admin;
 
 --
 -- Name: subscription_check_filters(); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
@@ -7923,6 +8296,72 @@ $$;
 ALTER FUNCTION storage.can_insert_object(bucketid text, name text, owner uuid, metadata jsonb) OWNER TO supabase_storage_admin;
 
 --
+-- Name: delete_lifecycle_objects(uuid[]); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE FUNCTION storage.delete_lifecycle_objects(object_ids uuid[]) RETURNS TABLE(id uuid, is_delete_marker boolean, metadata jsonb)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    object_id uuid;
+    deleted_row storage.objects%ROWTYPE;
+    deleted_ids uuid[];
+    deleted_markers boolean[];
+    deleted_metadata jsonb[];
+    bulk_deleted boolean := false;
+BEGIN
+    -- Surface pre-existing deferred violations instead of treating them as blocked rows.
+    SET CONSTRAINTS ALL IMMEDIATE;
+    PERFORM set_config('storage.allow_delete_query', 'true', true);
+
+    -- One subxact keeps the subxid cache from overflowing; rows return only once it commits.
+    BEGIN
+        WITH deleted AS (
+            DELETE FROM storage.objects AS object_row
+              WHERE object_row.id = ANY(object_ids) AND object_row.archived_at IS NOT NULL
+              RETURNING object_row.id, object_row.is_delete_marker, object_row.metadata
+        )
+        SELECT array_agg(deleted.id), array_agg(deleted.is_delete_marker), array_agg(deleted.metadata)
+          INTO deleted_ids, deleted_markers, deleted_metadata
+          FROM deleted;
+        bulk_deleted := true;
+    EXCEPTION
+        WHEN OTHERS THEN
+            -- User triggers may use insufficient_privilege to block a row.
+            IF SQLSTATE <> '42501' AND left(SQLSTATE, 2) IN ('08', '40', '42', '53', '55', '57', '58', 'XX') THEN
+                RAISE;
+            END IF;
+    END;
+    IF bulk_deleted THEN
+        RETURN QUERY SELECT * FROM unnest(deleted_ids, deleted_markers, deleted_metadata);
+        RETURN;
+    END IF;
+
+    FOREACH object_id IN ARRAY object_ids LOOP
+        BEGIN
+            DELETE FROM storage.objects AS object_row
+              WHERE object_row.id = object_id AND object_row.archived_at IS NOT NULL
+              RETURNING object_row.* INTO deleted_row;
+            IF FOUND THEN
+                id := deleted_row.id;
+                is_delete_marker := deleted_row.is_delete_marker;
+                metadata := deleted_row.metadata;
+                RETURN NEXT;
+            END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE <> '42501' AND left(SQLSTATE, 2) IN ('08', '40', '42', '53', '55', '57', '58', 'XX') THEN
+                    RAISE;
+                END IF;
+        END;
+    END LOOP;
+END;
+$$;
+
+
+ALTER FUNCTION storage.delete_lifecycle_objects(object_ids uuid[]) OWNER TO supabase_storage_admin;
+
+--
 -- Name: enforce_bucket_lifecycle_service_role(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -7931,14 +8370,9 @@ CREATE FUNCTION storage.enforce_bucket_lifecycle_service_role() RETURNS trigger
     SET search_path TO 'pg_catalog'
     AS $$
 BEGIN
-  IF current_user::text IS DISTINCT FROM TG_ARGV[0]
-     AND (
-       OLD.lifecycle_configuration IS DISTINCT FROM NEW.lifecycle_configuration
-       OR OLD.lifecycle_configuration_generation IS DISTINCT FROM NEW.lifecycle_configuration_generation
-     ) THEN
-    -- AFTER runs only after caller RLS has accepted the proposed row. The API
-    -- recognizes this specific error after rolling back its permission probe;
-    -- direct non-service writes still fail and cannot persist the change.
+  IF current_user::text IS DISTINCT FROM TG_ARGV[0] THEN
+    -- Keep this check AFTER caller RLS accepts the proposed row. The API
+    -- recognizes this exact signal after rolling back its permission probe.
     RAISE EXCEPTION 'bucket control columns may only be changed by the configured storage service role'
       USING ERRCODE = 'PST01',
             SCHEMA = TG_TABLE_SCHEMA,
@@ -7970,6 +8404,31 @@ $$;
 
 
 ALTER FUNCTION storage.enforce_bucket_name_length() OWNER TO supabase_storage_admin;
+
+--
+-- Name: enforce_versioning_status_transition(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE FUNCTION storage.enforce_versioning_status_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.versioning_status = OLD.versioning_status THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW.versioning_status = 'DISABLED' OR
+       (OLD.versioning_status = 'DISABLED' AND NEW.versioning_status = 'SUSPENDED') THEN
+        RAISE EXCEPTION 'Cannot transition bucket versioning status from % to %',
+            OLD.versioning_status, NEW.versioning_status;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION storage.enforce_versioning_status_transition() OWNER TO supabase_storage_admin;
 
 --
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
@@ -8802,6 +9261,37 @@ $$;
 ALTER FUNCTION storage.operation() OWNER TO supabase_storage_admin;
 
 --
+-- Name: protect_active_lifecycle_states(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE FUNCTION storage.protect_active_lifecycle_states() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog'
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM storage.bucket_lifecycle_states
+        WHERE bucket_id = OLD.id
+          AND NOT (
+              continuation IS NULL
+              OR (continuation @> '{"continuationVersion": 1}' AND continuation #> '{batch,inFlight}' IS NULL)
+          )
+    ) THEN
+        RAISE EXCEPTION 'update or delete on table "buckets" violates foreign key constraint "bucket_lifecycle_states_bucket_id_fkey" on table "bucket_lifecycle_states"'
+            USING ERRCODE = 'foreign_key_violation',
+                  DETAIL = format('Key (id)=(%s) is still referenced from table "bucket_lifecycle_states".', OLD.id),
+                  SCHEMA = 'storage',
+                  TABLE = 'bucket_lifecycle_states',
+                  CONSTRAINT = 'bucket_lifecycle_states_bucket_id_fkey';
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+ALTER FUNCTION storage.protect_active_lifecycle_states() OWNER TO supabase_storage_admin;
+
+--
 -- Name: protect_bucket_control_columns(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -8881,6 +9371,82 @@ $$;
 
 
 ALTER FUNCTION storage.protect_delete() OWNER TO supabase_storage_admin;
+
+--
+-- Name: reconcile_lifecycle_state(text, boolean); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE FUNCTION storage.reconcile_lifecycle_state(target_bucket_id text, policy_changed boolean) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog'
+    AS $$
+DECLARE
+    bucket storage.buckets%ROWTYPE;
+    active boolean;
+    idle boolean;
+    state_generation uuid;
+BEGIN
+    SELECT * INTO bucket FROM storage.buckets WHERE id = target_bucket_id FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    SELECT continuation IS NULL OR (
+               continuation @> '{"continuationVersion": 1}'
+               AND continuation #> '{batch,inFlight}' IS NULL
+           ), generation
+    INTO idle, state_generation
+    FROM storage.bucket_lifecycle_states
+    WHERE bucket_id = target_bucket_id
+    FOR UPDATE;
+
+    IF bucket.lifecycle_configuration IS NULL THEN
+        DELETE FROM storage.bucket_lifecycle_states
+        WHERE bucket_id = target_bucket_id
+          AND idle IS TRUE;
+
+        UPDATE storage.bucket_lifecycle_states
+        SET next_run_at = clock_timestamp(), updated_at = clock_timestamp()
+        WHERE bucket_id = target_bucket_id
+          AND idle IS NOT TRUE;
+        RETURN;
+    END IF;
+
+    active := bucket.versioning_status <> 'DISABLED'
+        AND bucket.lifecycle_configuration @> '{"rules":[{"status":"Enabled"}]}'::jsonb;
+
+    -- The state row records the generation it was reconciled with so callers need not detect
+    -- policy changes. Rows without a recorded generation keep their work.
+    policy_changed := policy_changed OR (
+        state_generation IS NOT NULL AND state_generation <> bucket.lifecycle_configuration_generation
+    );
+
+    INSERT INTO storage.bucket_lifecycle_states AS state (bucket_id, generation, next_run_at)
+    VALUES (bucket.id, bucket.lifecycle_configuration_generation, CASE WHEN active THEN clock_timestamp() END)
+    ON CONFLICT (bucket_id) DO UPDATE
+    SET next_run_at = CASE
+            WHEN policy_changed THEN
+                CASE WHEN active OR idle IS NOT TRUE THEN clock_timestamp() END
+            ELSE EXCLUDED.next_run_at
+        END,
+        generation = EXCLUDED.generation,
+        claim_id = CASE WHEN policy_changed AND idle IS TRUE
+                        THEN NULL ELSE state.claim_id END,
+        claim_until = CASE WHEN policy_changed AND idle IS TRUE
+                           THEN NULL ELSE state.claim_until END,
+        continuation = CASE WHEN policy_changed AND idle IS TRUE
+                            THEN NULL ELSE state.continuation END,
+        failure_count = CASE WHEN policy_changed AND idle IS TRUE
+                             THEN 0 ELSE state.failure_count END,
+        last_error = CASE WHEN policy_changed AND idle IS TRUE
+                          THEN NULL ELSE state.last_error END,
+        updated_at = clock_timestamp()
+    WHERE policy_changed OR (state.next_run_at IS NULL AND EXCLUDED.next_run_at IS NOT NULL);
+END;
+$$;
+
+
+ALTER FUNCTION storage.reconcile_lifecycle_state(target_bucket_id text, policy_changed boolean) OWNER TO supabase_storage_admin;
 
 --
 -- Name: search(text, text, integer, integer, integer, text, text, text, text, text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
@@ -9700,6 +10266,27 @@ $$;
 
 
 ALTER FUNCTION storage.update_updated_at_column() OWNER TO supabase_storage_admin;
+
+--
+-- Name: wake_lifecycle_state(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE FUNCTION storage.wake_lifecycle_state() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog'
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' AND NEW.lifecycle_configuration IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    PERFORM storage.reconcile_lifecycle_state(NEW.id, false);
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION storage.wake_lifecycle_state() OWNER TO supabase_storage_admin;
 
 --
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
@@ -11892,11 +12479,12 @@ CREATE TABLE realtime.messages (
     payload jsonb,
     event text,
     private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT timezone('utc'::text, clock_timestamp()) NOT NULL,
+    inserted_at timestamp without time zone DEFAULT timezone('utc'::text, clock_timestamp()) NOT NULL,
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     binary_payload bytea,
-    skip_broadcast boolean DEFAULT false NOT NULL
+    skip_broadcast boolean DEFAULT false NOT NULL,
+    expires_at timestamp without time zone
 )
 PARTITION BY RANGE (inserted_at);
 
@@ -11950,6 +12538,33 @@ ALTER TABLE realtime.subscription ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTI
 
 
 --
+-- Name: bucket_lifecycle_states; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TABLE storage.bucket_lifecycle_states (
+    bucket_id text NOT NULL,
+    generation uuid,
+    next_run_at timestamp with time zone,
+    claim_id uuid,
+    claim_until timestamp with time zone,
+    continuation jsonb,
+    last_started_at timestamp with time zone,
+    last_completed_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_result jsonb,
+    failure_count integer DEFAULT 0 NOT NULL,
+    last_error jsonb,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT bucket_lifecycle_continuation_object_check CHECK (((continuation IS NULL) OR (jsonb_typeof(continuation) = 'object'::text))),
+    CONSTRAINT bucket_lifecycle_failure_count_check CHECK ((failure_count >= 0)),
+    CONSTRAINT bucket_lifecycle_last_result_object_check CHECK (((last_result IS NULL) OR (jsonb_typeof(last_result) = 'object'::text))),
+    CONSTRAINT bucket_lifecycle_recovery_due_check CHECK (((next_run_at IS NOT NULL) OR (NOT jsonb_path_exists(COALESCE(continuation, '{}'::jsonb), '$."batch"."inFlight"'::jsonpath))))
+);
+
+
+ALTER TABLE storage.bucket_lifecycle_states OWNER TO supabase_storage_admin;
+
+--
 -- Name: buckets; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -11975,7 +12590,6 @@ CASE
     ELSE false
 END))),
     CONSTRAINT buckets_lifecycle_configuration_standard_only_check CHECK (((type = 'STANDARD'::storage.buckettype) OR ((lifecycle_configuration IS NULL) AND (lifecycle_configuration_generation IS NULL)))),
-    CONSTRAINT buckets_versioning_dark_check CHECK ((versioning_status = 'DISABLED'::text)),
     CONSTRAINT buckets_versioning_standard_only_check CHECK (((type = 'STANDARD'::storage.buckettype) OR (versioning_status = 'DISABLED'::text))),
     CONSTRAINT buckets_versioning_status_check CHECK ((versioning_status = ANY (ARRAY['DISABLED'::text, 'ENABLED'::text, 'SUSPENDED'::text])))
 );
@@ -12020,6 +12634,21 @@ CREATE TABLE storage.buckets_vectors (
 
 
 ALTER TABLE storage.buckets_vectors OWNER TO supabase_storage_admin;
+
+--
+-- Name: lifecycle_abandoned_artifacts; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TABLE storage.lifecycle_abandoned_artifacts (
+    bucket_id text NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    version text,
+    attempted_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE storage.lifecycle_abandoned_artifacts OWNER TO supabase_storage_admin;
 
 --
 -- Name: migrations; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
@@ -13021,6 +13650,14 @@ ALTER TABLE ONLY realtime.schema_migrations
 
 
 --
+-- Name: bucket_lifecycle_states bucket_lifecycle_states_pkey; Type: CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
+--
+
+ALTER TABLE ONLY storage.bucket_lifecycle_states
+    ADD CONSTRAINT bucket_lifecycle_states_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: buckets_analytics buckets_analytics_pkey; Type: CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -13042,6 +13679,14 @@ ALTER TABLE ONLY storage.buckets
 
 ALTER TABLE ONLY storage.buckets_vectors
     ADD CONSTRAINT buckets_vectors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: lifecycle_abandoned_artifacts lifecycle_abandoned_artifacts_pkey; Type: CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
+--
+
+ALTER TABLE ONLY storage.lifecycle_abandoned_artifacts
+    ADD CONSTRAINT lifecycle_abandoned_artifacts_pkey PRIMARY KEY (bucket_id, key);
 
 
 --
@@ -14131,17 +14776,17 @@ CREATE INDEX ix_realtime_subscription_entity ON realtime.subscription USING btre
 
 
 --
--- Name: messages_inserted_at_topic_index; Type: INDEX; Schema: realtime; Owner: supabase_realtime_admin
+-- Name: messages_replay_index; Type: INDEX; Schema: realtime; Owner: supabase_realtime_admin
 --
 
-CREATE INDEX messages_inserted_at_topic_index ON ONLY realtime.messages USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+CREATE INDEX messages_replay_index ON ONLY realtime.messages USING btree (topic, inserted_at DESC, COALESCE(expires_at, 'infinity'::timestamp without time zone)) WHERE ((extension = 'broadcast'::text) AND (private = true));
 
 
 --
--- Name: subscription_subscription_id_entity_filters_action_filter_selec; Type: INDEX; Schema: realtime; Owner: supabase_realtime_admin
+-- Name: subscription_subscription_id_entity_filters_hash_key; Type: INDEX; Schema: realtime; Owner: supabase_realtime_admin
 --
 
-CREATE UNIQUE INDEX subscription_subscription_id_entity_filters_action_filter_selec ON realtime.subscription USING btree (subscription_id, entity, filters, action_filter, COALESCE(selected_columns, '{}'::text[]));
+CREATE UNIQUE INDEX subscription_subscription_id_entity_filters_hash_key ON realtime.subscription USING btree (subscription_id, entity, realtime.filters_hash(filters), action_filter, COALESCE(selected_columns, '{}'::text[]));
 
 
 --
@@ -14149,6 +14794,13 @@ CREATE UNIQUE INDEX subscription_subscription_id_entity_filters_action_filter_se
 --
 
 CREATE UNIQUE INDEX bname ON storage.buckets USING btree (name);
+
+
+--
+-- Name: bucket_lifecycle_states_due_idx; Type: INDEX; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE INDEX bucket_lifecycle_states_due_idx ON storage.bucket_lifecycle_states USING btree (next_run_at, bucket_id) WHERE (next_run_at IS NOT NULL);
 
 
 --
@@ -14201,10 +14853,31 @@ CREATE UNIQUE INDEX idx_objects_null_version ON storage.objects USING btree (buc
 
 
 --
+-- Name: lifecycle_abandoned_artifacts_attempted_at_idx; Type: INDEX; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE INDEX lifecycle_abandoned_artifacts_attempted_at_idx ON storage.lifecycle_abandoned_artifacts USING btree (attempted_at);
+
+
+--
 -- Name: name_prefix_search; Type: INDEX; Schema: storage; Owner: supabase_storage_admin
 --
 
 CREATE INDEX name_prefix_search ON storage.objects USING btree (name text_pattern_ops);
+
+
+--
+-- Name: objects_archived_due_idx; Type: INDEX; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE INDEX objects_archived_due_idx ON storage.objects USING btree (bucket_id, archived_at, name COLLATE "C") INCLUDE (id, version, is_delete_marker) WHERE (archived_at IS NOT NULL);
+
+
+--
+-- Name: objects_archived_order_uq; Type: INDEX; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE UNIQUE INDEX objects_archived_order_uq ON storage.objects USING btree (bucket_id, name COLLATE "C", archived_at) WHERE (archived_at IS NOT NULL);
 
 
 --
@@ -14558,6 +15231,20 @@ CREATE TRIGGER enforce_bucket_name_length_trigger BEFORE INSERT OR UPDATE OF nam
 
 
 --
+-- Name: buckets enforce_versioning_status_transition; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TRIGGER enforce_versioning_status_transition BEFORE UPDATE OF versioning_status ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.enforce_versioning_status_transition();
+
+
+--
+-- Name: buckets protect_active_lifecycle_states; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TRIGGER protect_active_lifecycle_states BEFORE DELETE ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.protect_active_lifecycle_states();
+
+
+--
 -- Name: buckets protect_bucket_control_insert; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -14597,6 +15284,20 @@ CREATE TRIGGER protect_objects_delete BEFORE DELETE ON storage.objects FOR EACH 
 --
 
 CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.update_updated_at_column();
+
+
+--
+-- Name: buckets wake_lifecycle_on_policy_write; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TRIGGER wake_lifecycle_on_policy_write AFTER INSERT OR UPDATE OF lifecycle_configuration_generation ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.wake_lifecycle_state();
+
+
+--
+-- Name: buckets wake_lifecycle_on_versioning_enable; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TRIGGER wake_lifecycle_on_versioning_enable AFTER UPDATE OF versioning_status ON storage.buckets FOR EACH ROW WHEN ((new.lifecycle_configuration IS NOT NULL)) EXECUTE FUNCTION storage.wake_lifecycle_state();
 
 
 --
@@ -15544,6 +16245,14 @@ ALTER TABLE ONLY public.vehicle_sites
 
 
 --
+-- Name: bucket_lifecycle_states bucket_lifecycle_states_bucket_id_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
+--
+
+ALTER TABLE ONLY storage.bucket_lifecycle_states
+    ADD CONSTRAINT bucket_lifecycle_states_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES storage.buckets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: objects objects_bucketId_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -15740,13 +16449,6 @@ CREATE POLICY "Authenticated users view parts" ON public.parts FOR SELECT USING 
 --
 
 CREATE POLICY "Authenticated users view vehicles" ON public.vehicles FOR SELECT USING ((auth.role() = 'authenticated'::text));
-
-
---
--- Name: outsource_invoices Authenticated view outsource invoices; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY "Authenticated view outsource invoices" ON public.outsource_invoices FOR SELECT USING ((auth.role() = 'authenticated'::text));
 
 
 --
@@ -16276,6 +16978,13 @@ CREATE POLICY "Mechanics view assigned cards" ON public.job_cards FOR SELECT USI
 CREATE POLICY "Mechanics view issues on assigned cards" ON public.issues FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.job_cards
   WHERE ((job_cards.id = issues.job_card_id) AND (job_cards.assigned_mechanic_id = auth.uid())))));
+
+
+--
+-- Name: outsource_invoices Readers view their outsource invoices; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Readers view their outsource invoices" ON public.outsource_invoices FOR SELECT USING (public.can_read_outsource_invoice(job_card_id, batch_service_id));
 
 
 --
@@ -16893,6 +17602,12 @@ ALTER TABLE public.workshop_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: bucket_lifecycle_states; Type: ROW SECURITY; Schema: storage; Owner: supabase_storage_admin
+--
+
+ALTER TABLE storage.bucket_lifecycle_states ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: buckets; Type: ROW SECURITY; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -16909,6 +17624,12 @@ ALTER TABLE storage.buckets_analytics ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE storage.buckets_vectors ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: lifecycle_abandoned_artifacts; Type: ROW SECURITY; Schema: storage; Owner: supabase_storage_admin
+--
+
+ALTER TABLE storage.lifecycle_abandoned_artifacts ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: migrations; Type: ROW SECURITY; Schema: storage; Owner: supabase_storage_admin
@@ -17707,6 +18428,15 @@ GRANT ALL ON FUNCTION public.calculate_ticket_overall_sla() TO service_role;
 
 
 --
+-- Name: FUNCTION can_read_outsource_invoice(p_job_card_id uuid, p_batch_service_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.can_read_outsource_invoice(p_job_card_id uuid, p_batch_service_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.can_read_outsource_invoice(p_job_card_id uuid, p_batch_service_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.can_read_outsource_invoice(p_job_card_id uuid, p_batch_service_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION cancel_advance_repayment(p_repayment_id uuid, p_reason text); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -17908,9 +18638,18 @@ GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_da
 -- Name: FUNCTION get_outsource_invoice_history(p_invoice_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) TO anon;
+REVOKE ALL ON FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.get_outsource_invoice_history(p_invoice_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION get_outsource_invoice_rows(p_filters jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.get_outsource_invoice_rows(p_filters jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_rows(p_filters jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_rows(p_filters jsonb) TO service_role;
 
 
 --
@@ -18665,6 +19404,14 @@ GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO
 
 
 --
+-- Name: FUNCTION authorize(role_name text, topic_name text, claims text, sub text, headers text, read_extensions text[], write_extensions text[], OUT read_allowed boolean[], OUT write_allowed boolean[]); Type: ACL; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+GRANT ALL ON FUNCTION realtime.authorize(role_name text, topic_name text, claims text, sub text, headers text, read_extensions text[], write_extensions text[], OUT read_allowed boolean[], OUT write_allowed boolean[]) TO postgres;
+GRANT ALL ON FUNCTION realtime.authorize(role_name text, topic_name text, claims text, sub text, headers text, read_extensions text[], write_extensions text[], OUT read_allowed boolean[], OUT write_allowed boolean[]) TO dashboard_user;
+
+
+--
 -- Name: FUNCTION broadcast_changes(topic_name text, event_name text, operation text, table_name text, table_schema text, new record, old record, level text); Type: ACL; Schema: realtime; Owner: supabase_realtime_admin
 --
 
@@ -18717,6 +19464,17 @@ GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ 
 
 
 --
+-- Name: FUNCTION filters_hash(filters realtime.user_defined_filter[]); Type: ACL; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+GRANT ALL ON FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) TO postgres;
+GRANT ALL ON FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) TO anon;
+GRANT ALL ON FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) TO authenticated;
+GRANT ALL ON FUNCTION realtime.filters_hash(filters realtime.user_defined_filter[]) TO service_role;
+
+
+--
 -- Name: FUNCTION is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]); Type: ACL; Schema: realtime; Owner: supabase_realtime_admin
 --
 
@@ -18733,6 +19491,14 @@ GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_c
 
 GRANT ALL ON FUNCTION realtime.list_changes(publication name, slot_name name, max_changes integer, max_record_bytes integer) TO postgres;
 GRANT ALL ON FUNCTION realtime.list_changes(publication name, slot_name name, max_changes integer, max_record_bytes integer) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION list_changes_sync(publication name, slot_name name, max_changes integer, max_record_bytes integer); Type: ACL; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+GRANT ALL ON FUNCTION realtime.list_changes_sync(publication name, slot_name name, max_changes integer, max_record_bytes integer) TO postgres;
+GRANT ALL ON FUNCTION realtime.list_changes_sync(publication name, slot_name name, max_changes integer, max_record_bytes integer) TO dashboard_user;
 
 
 --
@@ -18760,6 +19526,14 @@ GRANT ALL ON FUNCTION realtime.send(payload jsonb, event text, topic text, priva
 
 GRANT ALL ON FUNCTION realtime.send_binary(payload bytea, event text, topic text, private boolean) TO postgres;
 GRANT ALL ON FUNCTION realtime.send_binary(payload bytea, event text, topic text, private boolean) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION settled_changes(slot_name name, max_changes integer, VARIADIC opts text[]); Type: ACL; Schema: realtime; Owner: supabase_realtime_admin
+--
+
+GRANT ALL ON FUNCTION realtime.settled_changes(slot_name name, max_changes integer, VARIADIC opts text[]) TO postgres;
+GRANT ALL ON FUNCTION realtime.settled_changes(slot_name name, max_changes integer, VARIADIC opts text[]) TO dashboard_user;
 
 
 --
@@ -18798,6 +19572,36 @@ GRANT ALL ON FUNCTION realtime.topic() TO dashboard_user;
 
 GRANT ALL ON FUNCTION realtime.wal2json_escape_identifier(name text) TO postgres;
 GRANT ALL ON FUNCTION realtime.wal2json_escape_identifier(name text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION delete_lifecycle_objects(object_ids uuid[]); Type: ACL; Schema: storage; Owner: supabase_storage_admin
+--
+
+REVOKE ALL ON FUNCTION storage.delete_lifecycle_objects(object_ids uuid[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION storage.delete_lifecycle_objects(object_ids uuid[]) TO service_role;
+
+
+--
+-- Name: FUNCTION protect_active_lifecycle_states(); Type: ACL; Schema: storage; Owner: supabase_storage_admin
+--
+
+REVOKE ALL ON FUNCTION storage.protect_active_lifecycle_states() FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION reconcile_lifecycle_state(target_bucket_id text, policy_changed boolean); Type: ACL; Schema: storage; Owner: supabase_storage_admin
+--
+
+REVOKE ALL ON FUNCTION storage.reconcile_lifecycle_state(target_bucket_id text, policy_changed boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION storage.reconcile_lifecycle_state(target_bucket_id text, policy_changed boolean) TO service_role;
+
+
+--
+-- Name: FUNCTION wake_lifecycle_state(); Type: ACL; Schema: storage; Owner: supabase_storage_admin
+--
+
+REVOKE ALL ON FUNCTION storage.wake_lifecycle_state() FROM PUBLIC;
 
 
 --
@@ -19597,14 +20401,22 @@ GRANT USAGE ON SEQUENCE realtime.subscription_id_seq TO service_role;
 
 
 --
+-- Name: TABLE bucket_lifecycle_states; Type: ACL; Schema: storage; Owner: supabase_storage_admin
+--
+
+GRANT ALL ON TABLE storage.bucket_lifecycle_states TO service_role;
+GRANT SELECT ON TABLE storage.bucket_lifecycle_states TO postgres;
+
+
+--
 -- Name: TABLE buckets; Type: ACL; Schema: storage; Owner: supabase_storage_admin
 --
 
 REVOKE ALL ON TABLE storage.buckets FROM supabase_storage_admin;
 GRANT ALL ON TABLE storage.buckets TO supabase_storage_admin WITH GRANT OPTION;
 GRANT ALL ON TABLE storage.buckets TO service_role;
-GRANT ALL ON TABLE storage.buckets TO authenticated;
-GRANT ALL ON TABLE storage.buckets TO anon;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE storage.buckets TO authenticated;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE storage.buckets TO anon;
 GRANT ALL ON TABLE storage.buckets TO postgres WITH GRANT OPTION;
 
 
@@ -19613,8 +20425,8 @@ GRANT ALL ON TABLE storage.buckets TO postgres WITH GRANT OPTION;
 --
 
 GRANT ALL ON TABLE storage.buckets_analytics TO service_role;
-GRANT ALL ON TABLE storage.buckets_analytics TO authenticated;
-GRANT ALL ON TABLE storage.buckets_analytics TO anon;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE storage.buckets_analytics TO authenticated;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE storage.buckets_analytics TO anon;
 
 
 --
@@ -19622,8 +20434,16 @@ GRANT ALL ON TABLE storage.buckets_analytics TO anon;
 --
 
 GRANT SELECT ON TABLE storage.buckets_vectors TO service_role;
-GRANT SELECT ON TABLE storage.buckets_vectors TO authenticated;
 GRANT SELECT ON TABLE storage.buckets_vectors TO anon;
+GRANT SELECT ON TABLE storage.buckets_vectors TO authenticated;
+
+
+--
+-- Name: TABLE lifecycle_abandoned_artifacts; Type: ACL; Schema: storage; Owner: supabase_storage_admin
+--
+
+GRANT ALL ON TABLE storage.lifecycle_abandoned_artifacts TO service_role;
+GRANT SELECT ON TABLE storage.lifecycle_abandoned_artifacts TO postgres;
 
 
 --
@@ -19633,8 +20453,8 @@ GRANT SELECT ON TABLE storage.buckets_vectors TO anon;
 REVOKE ALL ON TABLE storage.objects FROM supabase_storage_admin;
 GRANT ALL ON TABLE storage.objects TO supabase_storage_admin WITH GRANT OPTION;
 GRANT ALL ON TABLE storage.objects TO service_role;
-GRANT ALL ON TABLE storage.objects TO authenticated;
-GRANT ALL ON TABLE storage.objects TO anon;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE storage.objects TO authenticated;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE storage.objects TO anon;
 GRANT ALL ON TABLE storage.objects TO postgres WITH GRANT OPTION;
 
 
@@ -19661,8 +20481,8 @@ GRANT SELECT ON TABLE storage.s3_multipart_uploads_parts TO anon;
 --
 
 GRANT SELECT ON TABLE storage.vector_indexes TO service_role;
-GRANT SELECT ON TABLE storage.vector_indexes TO authenticated;
 GRANT SELECT ON TABLE storage.vector_indexes TO anon;
+GRANT SELECT ON TABLE storage.vector_indexes TO authenticated;
 
 
 --

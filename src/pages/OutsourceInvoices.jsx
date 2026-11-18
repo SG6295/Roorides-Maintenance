@@ -25,6 +25,9 @@ export default function OutsourceInvoices() {
     const [visibleKeys, setVisibleKeys] = useState(DEFAULT_COLUMN_KEYS)
     const canEdit = FINANCE_ROLES.includes(userProfile?.role)
     const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    // Supervisors see their own sites' invoices (MAIN-141) but have no job card or
+    // multi-vehicle invoice page to open.
+    const canOpenRecords = userProfile?.role !== 'supervisor'
     const visibleColumns = COLUMNS.filter(c => visibleKeys.includes(c.key))
 
     // ── Parse URL params ──────────────────────────────────────────────────────
@@ -324,7 +327,7 @@ export default function OutsourceInvoices() {
                                                     key={c.key}
                                                     className={`px-3 py-3 whitespace-nowrap align-top ${inv.cancelled ? 'text-gray-400' : 'text-gray-700'} ${c.align === 'right' ? 'text-right' : ''}`}
                                                 >
-                                                    <InvoiceCell columnKey={c.key} invoice={inv} canEdit={rowCanEdit} />
+                                                    <InvoiceCell columnKey={c.key} invoice={inv} canEdit={rowCanEdit} canOpen={canOpenRecords} />
                                                 </td>
                                             ))}
                                             <td className="px-3 py-3 whitespace-nowrap align-top">

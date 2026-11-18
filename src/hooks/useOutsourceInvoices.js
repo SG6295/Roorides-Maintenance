@@ -64,10 +64,12 @@ const PAGE_SIZE = 50
  * Returns invoices of completed job cards, every multi-vehicle invoice (MAIN-99) and
  * every purchase invoice's finance invoice (refurbishments from MAIN-123, all purchases
  * from MAIN-129) — a batch or purchase is complete by construction, its invoice details
- * being mandatory at save. The job_card embed is
- * filtered to Completed, so it comes back null for an unfinished card, and the or()
- * keeps a row only if it is a batch, a purchase invoice the reader can see, or its job
- * card survived that filter. (PostgREST cannot put job_card.status itself inside an or().)
+ * being mandatory at save.
+ *
+ * Served by get_outsource_invoice_rows (MAIN-141) for every role, under the same rule
+ * as the summary tiles: a supervisor sees only their own sites' invoices, and cannot
+ * read the job cards, batches or suppliers a plain PostgREST embed would need. Rows
+ * keep the embed shape (job_card / batch_service / purchase_invoice, supplier name only).
  */
 export function useOutsourceInvoices(filters = {}) {
     return useQuery({
@@ -75,53 +77,19 @@ export function useOutsourceInvoices(filters = {}) {
         queryFn: async () => {
             const isPaginated = filters.page !== null && filters.page !== undefined
 
-            let query = supabase
-                .from('outsource_invoices')
-                .select(
-                    `*,
-                    job_card:job_cards!job_card_id(
-                        id, job_card_number, vehicle_number, status, completed_at, invoice_url,
-                        supplier:suppliers!supplier_id(id, entity_name)
-                    ),
-                    batch_service:batch_services!batch_service_id(
-                        id, batch_number, invoice_url, status, cancel_reason, cancelled_at,
-                        supplier:suppliers!supplier_id(id, entity_name),
-                        vehicles:batch_service_vehicles(
-                            id, vehicle_number, site, work_type, work_type_other, rate, quantity, amount,
-                            linked_job_card:job_cards!job_card_id(job_card_number)
-                        )
-                    ),
-                    purchase_invoice:purchase_invoices!purchase_invoice_id(
-                        id, kind, invoice_number, invoice_file_url,
-                        supplier:suppliers!supplier_id(id, entity_name)
-                    )`,
-                    isPaginated ? { count: 'exact' } : undefined,
-                )
-                .eq('job_card.status', 'Completed')
-                .or('batch_service_id.not.is.null,purchase_invoice.not.is.null,job_card.not.is.null')
-                // Newest submitted first: finance's review queue (MAIN-119).
-                .order('submitted_on', { ascending: false, nullsFirst: false })
-                .order('created_at', { ascending: false })
-
-            if (filters.maintenancePaymentStatus?.length)
-                query = query.in('maintenance_payment_status', filters.maintenancePaymentStatus)
-            if (filters.financePaymentStatus?.length)
-                query = query.in('finance_payment_status', filters.financePaymentStatus)
-            if (filters.paidBy?.length)
-                query = query.in('paid_by', filters.paidBy)
-            if (filters.dateFrom)
-                query = query.gte('date_of_activity', filters.dateFrom)
-            if (filters.dateTo)
-                query = query.lte('date_of_activity', filters.dateTo)
-
-            if (isPaginated) {
-                const from = filters.page * PAGE_SIZE
-                query = query.range(from, from + PAGE_SIZE - 1)
-            }
-
-            const { data, count, error } = await query
+            const { data, error } = await supabase.rpc('get_outsource_invoice_rows', {
+                p_filters: {
+                    maintenance_payment_status: filters.maintenancePaymentStatus?.length ? filters.maintenancePaymentStatus : null,
+                    finance_payment_status:     filters.financePaymentStatus?.length     ? filters.financePaymentStatus     : null,
+                    paid_by:                    filters.paidBy?.length                   ? filters.paidBy                   : null,
+                    date_from:                  filters.dateFrom || null,
+                    date_to:                    filters.dateTo   || null,
+                    page:                       isPaginated ? filters.page : null,
+                    page_size:                  PAGE_SIZE,
+                },
+            })
             if (error) throw error
-            return { invoices: data || [], totalCount: isPaginated ? count : null }
+            return { invoices: data?.rows || [], totalCount: isPaginated ? data?.total ?? 0 : null }
         },
     })
 }

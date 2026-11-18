@@ -10,8 +10,10 @@ import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
 /**
  * One cell of the Outsource Invoices list (MAIN-98), by column key — the column
  * list itself is in columns.js. `invoice` is a row from enrichInvoice().
+ * `canOpen` is false for a supervisor, who has no job card or multi-vehicle invoice
+ * page to go to (MAIN-141): the number is then shown as plain text.
  */
-export default function InvoiceCell({ columnKey, invoice: inv, canEdit }) {
+export default function InvoiceCell({ columnKey, invoice: inv, canEdit, canOpen = true }) {
     // A multi-vehicle invoice (MAIN-99) has a batch in place of a job card, and a
     // purchase or refurbishment (MAIN-123, MAIN-129) its purchase invoice.
     const batch = inv.batch_service
@@ -29,19 +31,27 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit }) {
             }
             return batch ? (
                 <span className="inline-flex items-center gap-1.5">
-                    <Link to={batchPath(batch.batch_number)} className="text-blue-600 hover:underline font-medium" title={workTypeSummary(batch.vehicles)}>
-                        {formatBatchNumber(batch.batch_number)}
-                    </Link>
+                    {canOpen ? (
+                        <Link to={batchPath(batch.batch_number)} className="text-blue-600 hover:underline font-medium" title={workTypeSummary(batch.vehicles)}>
+                            {formatBatchNumber(batch.batch_number)}
+                        </Link>
+                    ) : (
+                        <span className="font-medium" title={workTypeSummary(batch.vehicles)}>
+                            {formatBatchNumber(batch.batch_number)}
+                        </span>
+                    )}
                     {inv.cancelled && (
                         <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-700" title={batch.cancel_reason}>
                             Cancelled
                         </span>
                     )}
                 </span>
-            ) : (
+            ) : canOpen ? (
                 <Link to={`/job-cards/${inv.job_card?.job_card_number}`} className="text-blue-600 hover:underline font-medium">
                     #{inv.job_card?.job_card_number}
                 </Link>
+            ) : (
+                <span className="font-medium">#{inv.job_card?.job_card_number}</span>
             )
         case 'vehicle':
             if (purchase) return '—'
