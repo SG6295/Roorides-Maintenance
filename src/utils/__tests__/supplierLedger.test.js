@@ -13,6 +13,11 @@ describe('invoiceSplit', () => {
             .toBe('₹700.00 to the supplier + ₹300.00 advance paid from Accounts')
     })
 
+    it('repays an advance NVS Maintenance account paid (MAIN-122)', () => {
+        expect(invoiceSplit({ to_supplier: 3200, advance: 1000, paid_by: 'NVS Maintenance account', advance_by_person: true }))
+            .toBe('₹3,200.00 to the supplier + ₹1,000.00 advance to repay NVS Maintenance account')
+    })
+
     it('is just the supplier share with no advance', () => {
         expect(invoiceSplit({ to_supplier: 1000, advance: 0 })).toBe('₹1,000.00 to the supplier')
     })
@@ -32,6 +37,14 @@ describe('describeLine', () => {
     it('names an advance after the person who paid it', () => {
         const line = { kind: 'advance', invoice_no: 'INV-482', detail: { paid_by: 'PCN', advance_by_person: true } }
         expect(describeLine(line).title).toBe('Advance – Nithin (Petty Cash)')
+    })
+
+    it('sends an NVS Maintenance account advance to Advances to repay (MAIN-122)', () => {
+        const line = { kind: 'advance', invoice_no: '187', detail: { paid_by: 'NVS Maintenance account', advance_by_person: true } }
+        expect(describeLine(line)).toMatchObject({
+            title: 'Advance – NVS Maintenance account',
+            sub: 'Paid to the vendor upfront on 187; repaid to NVS Maintenance account under Advances to repay',
+        })
     })
 
     it('shows a payment’s date paid, TDS and trail', () => {

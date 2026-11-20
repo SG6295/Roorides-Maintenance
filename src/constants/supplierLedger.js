@@ -4,15 +4,23 @@
  */
 
 /**
- * The people who pay suppliers upfront and are repaid by accounts. `ledger` is both
- * their Paid By value and their repayment ledger. Mirrors advance_repayments_person_check
- * and the people in advance_ledger_lines() — keep in step.
+ * Who pays suppliers upfront and is repaid by accounts, in display order. `ledger` is
+ * both their Paid By value and their repayment ledger. NVS Maintenance account is
+ * repaid like the people (MAIN-122); only Accounts is company money. Mirrors the
+ * database's advance_people() — keep in step.
  */
 export const ADVANCE_PEOPLE = [
-    { ledger: 'NVS 659 Manjunath',    name: 'Manjunath' },
-    { ledger: 'NVS 2954 Gokilavanan', name: 'Gokilavanan' },
-    { ledger: 'PCN',                  name: 'Nithin (Petty Cash)' },
+    { ledger: 'NVS 659 Manjunath',       name: 'Manjunath' },
+    { ledger: 'NVS 2954 Gokilavanan',    name: 'Gokilavanan' },
+    { ledger: 'PCN',                     name: 'Nithin (Petty Cash)' },
+    { ledger: 'NVS Maintenance account', name: 'NVS Maintenance account' },
 ]
+
+/** "Manjunath, Gokilavanan, … and NVS Maintenance account" — `or` for "… or …". */
+export function advancePeopleNames(joiner = 'and') {
+    return new Intl.ListFormat('en', { type: joiner === 'or' ? 'disjunction' : 'conjunction' })
+        .format(ADVANCE_PEOPLE.map(p => p.name))
+}
 
 /** A person's short name from their ledger, or the Paid By value as it is. */
 export function personName(ledger) {
