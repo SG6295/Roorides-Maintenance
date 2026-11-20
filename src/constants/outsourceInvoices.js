@@ -2,7 +2,8 @@
  * Who pays an outsourced repair invoice — the "Paid By" choice on the job card's
  * invoice form, and the Paid By filter on Outsource Invoices. The people's entries are
  * their repayment ledgers' names (MAIN-119), so an advance they paid matches its
- * repayment with no mapping; Accounts and NVS Maintenance account are company money.
+ * repayment with no mapping. NVS Maintenance account is repaid the same way (MAIN-122);
+ * only Accounts is company money.
  *
  * Mirrors the outsource_invoices_paid_by_check constraint — keep in step.
  */

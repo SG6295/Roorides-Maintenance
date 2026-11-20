@@ -1147,7 +1147,7 @@ CREATE FUNCTION public.advance_ledger_lines() RETURNS TABLE(person text, entry_a
   where  oi.finance_payment_status in ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
     and  (bs.id is null or bs.status = 'Active')
     and  oi.advance_amount > 0
-    and  oi.paid_by in ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN')
+    and  oi.paid_by = any(public.advance_people())
 
   union all
 
@@ -1204,6 +1204,20 @@ $$;
 
 
 ALTER FUNCTION public.advance_open_items(p_today date) OWNER TO postgres;
+
+--
+-- Name: advance_people(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.advance_people() RETURNS text[]
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
+    AS $$
+  select array['NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN', 'NVS Maintenance account']
+$$;
+
+
+ALTER FUNCTION public.advance_people() OWNER TO postgres;
 
 --
 -- Name: apply_part_stock_delta(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2654,7 +2668,7 @@ BEGIN
 
     RETURN QUERY
     WITH people(person, ord) AS (
-        VALUES ('NVS 659 Manjunath', 1), ('NVS 2954 Gokilavanan', 2), ('PCN', 3)
+        SELECT * FROM unnest(public.advance_people()) WITH ORDINALITY
     ),
     bal AS (
         SELECT l.person AS p, sum(l.amount) FILTER (WHERE l.counts) AS total
@@ -4326,7 +4340,7 @@ DECLARE
 BEGIN
     PERFORM public.assert_ledger_writer();
 
-    IF p_person IS NULL OR p_person NOT IN ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN') THEN
+    IF p_person IS NULL OR NOT (p_person = any(public.advance_people())) THEN
         RAISE EXCEPTION 'Choose who is being repaid.';
     END IF;
     -- One repayment at a time per person.
@@ -7111,7 +7125,7 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
              coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id) as sup_id,
              public.invoice_submitted_day(oi)               as submitted_day,
              coalesce(oi.accepted_at, oi.updated_at)        as entered_at,
-             oi.paid_by in ('NVS 659 Manjunath', 'NVS 2954 Gokilavanan', 'PCN') as by_person,
+             oi.paid_by = any(public.advance_people()) as by_person,
              jc.job_card_number, bs.batch_number,
              pi.kind as purchase_invoice_kind
       from   public.outsource_invoices oi
@@ -11500,7 +11514,7 @@ CREATE TABLE public.advance_repayments (
     CONSTRAINT advance_repayments_bank_trail_check CHECK (((payment_method = 'Cash'::text) OR ((bank IS NOT NULL) AND (NULLIF(btrim(utr), ''::text) IS NOT NULL)))),
     CONSTRAINT advance_repayments_cancel_reason_check CHECK (((status = 'Active'::text) OR ((cancelled_at IS NOT NULL) AND (NULLIF(btrim(cancel_reason), ''::text) IS NOT NULL)))),
     CONSTRAINT advance_repayments_method_check CHECK ((payment_method = ANY (ARRAY['UPI'::text, 'NEFT'::text, 'RTGS'::text, 'IMPS'::text, 'Cash'::text]))),
-    CONSTRAINT advance_repayments_person_check CHECK ((person = ANY (ARRAY['NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
+    CONSTRAINT advance_repayments_person_check CHECK ((person = ANY (public.advance_people()))),
     CONSTRAINT advance_repayments_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Cancelled'::text])))
 );
 
@@ -18820,6 +18834,15 @@ GRANT ALL ON FUNCTION public.advance_ledger_lines() TO service_role;
 
 REVOKE ALL ON FUNCTION public.advance_open_items(p_today date) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.advance_open_items(p_today date) TO service_role;
+
+
+--
+-- Name: FUNCTION advance_people(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.advance_people() TO anon;
+GRANT ALL ON FUNCTION public.advance_people() TO authenticated;
+GRANT ALL ON FUNCTION public.advance_people() TO service_role;
 
 
 --

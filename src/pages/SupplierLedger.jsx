@@ -5,7 +5,7 @@ import CreditDaysEditor from '../components/supplier-ledger/CreditDaysEditor'
 import { Tile } from '../components/supplier-ledger/LedgerParts'
 import { useAuth } from '../hooks/useAuth'
 import { useSupplierBalances, useAdvanceBalances } from '../hooks/useSupplierLedger'
-import { LEDGER_WRITE_ROLES, ADVANCE_PEOPLE } from '../constants/supplierLedger'
+import { LEDGER_WRITE_ROLES, ADVANCE_PEOPLE, advancePeopleNames } from '../constants/supplierLedger'
 import { upcomingRuns } from '../utils/paymentRuns'
 import { exportSupplierBalances } from '../utils/supplierLedgerExport'
 import { todayLocal, formatAs } from '../utils/datetime'
@@ -183,7 +183,7 @@ function AdvancesPanel({ thisRun, nextRun }) {
         <section id="advances" className="space-y-2">
             <div>
                 <h2 className="text-lg font-semibold text-gray-900">Advances to repay</h2>
-                <p className="text-sm text-gray-500">Advances Manjunath, Gokilavanan and Nithin paid to suppliers on accepted invoices, less what accounts has repaid them.</p>
+                <p className="text-sm text-gray-500">Advances {advancePeopleNames()} paid to suppliers on accepted invoices, less what accounts has repaid them.</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
                 {isLoading ? (

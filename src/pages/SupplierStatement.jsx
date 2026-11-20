@@ -11,7 +11,7 @@ import {
     useSupplierBalance, useSupplierStatement, useSupplierOpenItems,
     useRecordSupplierPayment, useCancelSupplierPayment, useReverseAdjustment,
 } from '../hooks/useSupplierLedger'
-import { LEDGER_WRITE_ROLES } from '../constants/supplierLedger'
+import { LEDGER_WRITE_ROLES, advancePeopleNames } from '../constants/supplierLedger'
 import { describeLine } from '../utils/supplierLedger'
 import { exportSupplierStatement } from '../utils/supplierLedgerExport'
 import { todayLocal } from '../utils/datetime'
@@ -95,7 +95,7 @@ export default function SupplierStatement() {
 
             <p className="text-xs text-gray-500">
                 Entries are in the order they were recorded. An invoice enters when finance accepts it; its due date
-                still counts from the day it reached finance. Advances paid by Manjunath, Gokilavanan or Nithin are
+                still counts from the day it reached finance. Advances paid by {advancePeopleNames('or')} are
                 repaid to them under <Link to="/supplier-ledger#advances" className="text-blue-600 hover:underline">Advances to repay</Link>.
             </p>
 

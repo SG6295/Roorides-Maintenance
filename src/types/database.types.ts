@@ -2772,6 +2772,7 @@ export type Database = {
           supplier: string
         }[]
       }
+      advance_people: { Args: never; Returns: string[] }
       apply_part_stock_delta: {
         Args: { p_delta: number; p_location_id: string; p_part_id: string }
         Returns: undefined
