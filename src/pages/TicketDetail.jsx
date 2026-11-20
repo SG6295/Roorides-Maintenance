@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
-import { useTicket, useUpdateTicket } from '../hooks/useTickets'
+import { useTicket, useTicketIdByNumber, useUpdateTicket } from '../hooks/useTickets'
 import { useIssues, useCreateIssue, useUpdateIssue, useDeleteIssue } from '../hooks/useIssues'
 import { useJobCards, useCreateJobCard, useLinkIssuesToJobCard } from '../hooks/useJobCards'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
@@ -41,8 +41,17 @@ import { Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/r
 import { Fragment } from 'react'
 import { ISSUE_CATEGORIES, categoryOptions } from '../constants/issueCategories'
 
+// The address carries the ticket number (MAIN-143); the page below works by id.
 export default function TicketDetail() {
-  const { id } = useParams()
+  const { ticketNumber } = useParams()
+  const { data: id, isLoading } = useTicketIdByNumber(ticketNumber)
+
+  if (isLoading) return <TicketDetailSkeleton />
+  if (!id) return <div className="p-8 text-center">Ticket not found</div>
+  return <TicketDetailById id={id} />
+}
+
+function TicketDetailById({ id }) {
   const navigate = useNavigate()
   const { userProfile } = useAuth()
 

@@ -6,6 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import QuickAddSupplierModal from '../components/suppliers/QuickAddSupplierModal'
+import { formatSupplierNumber, supplierPath } from '../utils/supplierNumber'
 
 const STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -127,7 +128,7 @@ export default function Suppliers() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, PAN or email..."
+            placeholder="Search by name, SUP no., PAN or email..."
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500"
           />
           <FilterSelect
@@ -172,7 +173,7 @@ export default function Suppliers() {
                     <tr key={s.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900 truncate max-w-[180px]">{s.entity_name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{s.entity_type ?? '—'}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{formatSupplierNumber(s.supplier_number)} · {s.entity_type ?? '—'}</p>
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell font-mono text-xs text-gray-700">{s.pan_number ?? '—'}</td>
                       <td className="px-4 py-3 hidden md:table-cell text-gray-600 truncate max-w-[200px]">{s.nature_of_work}</td>
@@ -186,7 +187,7 @@ export default function Suppliers() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Link
-                          to={`/suppliers/${s.id}`}
+                          to={supplierPath(s.supplier_number)}
                           className="text-blue-600 hover:text-blue-800 text-xs font-medium"
                         >
                           View →

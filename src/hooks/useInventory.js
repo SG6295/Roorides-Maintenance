@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../utils/fetchAllRows'
 import { toDate } from '../utils/datetime'
+import { parsePurchaseNumber } from '../utils/purchaseInvoice'
+import { employeeKey } from '../utils/employeeId'
 
 /**
  * All parts with stock levels, ordered by name.
@@ -37,6 +39,7 @@ export function useParts(filters = {}) {
 
 const PURCHASE_INVOICE_COLUMNS = `
     id,
+    purchase_number,
     kind,
     invoice_number,
     supplier_id,
@@ -71,8 +74,11 @@ export function usePurchaseInvoices(filters = {}) {
                 .order('created_at', { ascending: false })
 
             if (filters.search) {
+                // "PI-257" (or "257") also finds our running number (MAIN-143).
+                const number = parsePurchaseNumber(filters.search)
                 query = query.or(
                     `invoice_number.ilike.%${filters.search}%,supplier_name.ilike.%${filters.search}%`
+                    + (number != null ? `,purchase_number.eq.${number}` : '')
                 )
             }
             if (filters.dateFrom) {
@@ -93,18 +99,18 @@ export function usePurchaseInvoices(filters = {}) {
 }
 
 /**
- * One purchase invoice by id, in the list's shape — for a link that opens it in Edit
+ * One purchase invoice by its PI number (MAIN-143), in the list's shape — for a link that opens it in Edit
  * Purchase whatever the list's filters (MAIN-123). Null when there is none to see.
  */
-export function usePurchaseInvoice(id) {
+export function usePurchaseInvoiceByNumber(number) {
     return useQuery({
-        queryKey: ['purchase_invoices', 'one', id],
-        enabled: !!id,
+        queryKey: ['purchase_invoices', 'one', number],
+        enabled: number != null,
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('purchase_invoices')
                 .select(PURCHASE_INVOICE_COLUMNS)
-                .eq('id', id)
+                .eq('purchase_number', number)
                 .maybeSingle()
             if (error) throw error
             return data && { ...data, item_count: data.purchase_invoice_items?.length ?? 0 }
@@ -317,7 +323,7 @@ export function usePartConsumption(filters = {}) {
                     part:parts(id, name, part_number, unit),
                     issue:issues(
                         id,
-                        issue_labour(technician:technician_id(id, name)),
+                        issue_labour(technician:technician_id(id, name, employee_id)),
                         job_card:job_cards(
                             id,
                             job_card_number,
@@ -358,7 +364,7 @@ export function usePartConsumption(filters = {}) {
                     job_card_status: row.issue?.job_card?.status,
                     location_id: row.issue?.job_card?.location?.id,
                     location_name: row.issue?.job_card?.location?.name,
-                    mechanic_id: techs.length === 1 ? techs[0].id : null,
+                    mechanic_employee_id: techs.length === 1 ? techs[0].employee_id : null,
                     mechanic_name: techs.map(t => t.name).join(', ') || null,
                 }
             })
@@ -439,7 +445,7 @@ async function fetchAuditConsumption(filters = {}) {
             job_card_status: null,
             location_id: row.audit.location?.id,
             location_name: row.audit.location?.name,
-            mechanic_id: null,
+            mechanic_employee_id: null,
             mechanic_name: null,
             audit_id: row.audit.id,
             audit_number: row.audit.audit_number,
@@ -466,7 +472,7 @@ export function useVehicleHistory(vehicleNumber) {
                     type,
                     created_at,
                     completed_at,
-                    issues(id, description, status, labour_hours, issue_labour(id, hours, technician:technician_id(id, name)))
+                    issues(id, description, status, labour_hours, issue_labour(id, hours, technician:technician_id(id, name, employee_id)))
                 `)
                 .eq('vehicle_number', vehicleNumber)
                 .order('created_at', { ascending: false })
@@ -506,18 +512,19 @@ export function useJobCardParts(jobCardId) {
 }
 
 /**
- * Profile + job card activity + labour hours for a specific mechanic.
+ * A mechanic's profile by the employee ID in their address (MAIN-143) — matched on
+ * users.employee_key, so /mechanics/NVS-1234 finds "NVS 1234". null when nobody has it.
  */
-export function useMechanicProfile(mechanicId) {
+export function useMechanicProfile(employeeId) {
     return useQuery({
-        queryKey: ['mechanic_profile', mechanicId],
-        enabled: !!mechanicId,
+        queryKey: ['mechanic_profile', employeeKey(employeeId)],
+        enabled: !!employeeId,
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('users')
-                .select('id, name, role, site, created_at')
-                .eq('id', mechanicId)
-                .single()
+                .select('id, name, role, site, employee_id, created_at')
+                .eq('employee_key', employeeKey(employeeId))
+                .maybeSingle()
             if (error) throw error
             return data
         },

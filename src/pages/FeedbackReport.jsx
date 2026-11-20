@@ -312,7 +312,7 @@ export default function FeedbackReport() {
                                             {row.created_at ? formatAs(row.created_at, 'MMM d, yyyy') : '-'}
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-sm">
-                                            <Link to={`/tickets/${row.ticket_id}`} className="text-blue-600 hover:underline font-medium">
+                                            <Link to={`/tickets/${row.ticket?.ticket_number}`} className="text-blue-600 hover:underline font-medium">
                                                 #{row.ticket?.ticket_number}
                                             </Link>
                                         </td>

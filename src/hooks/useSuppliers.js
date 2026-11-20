@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { parseSupplierNumber } from '../utils/supplierNumber'
 
 export function useSuppliers(filters = {}) {
   return useQuery({
@@ -11,15 +12,18 @@ export function useSuppliers(filters = {}) {
     queryFn: async () => {
       let query = supabase
         .from('suppliers')
-        .select('id, created_at, status, email, entity_name, entity_type, pan_number, nature_of_work, submitted_by, created_via')
+        .select('id, supplier_number, created_at, status, email, entity_name, entity_type, pan_number, nature_of_work, submitted_by, created_via')
         .order('created_at', { ascending: false })
 
       if (filters.status) {
         query = query.eq('status', filters.status)
       }
       if (filters.search) {
+        // "SUP-5" (or "5") also finds the supplier's running number (MAIN-143).
+        const number = parseSupplierNumber(filters.search)
         query = query.or(
           `entity_name.ilike.%${filters.search}%,pan_number.ilike.%${filters.search}%,email.ilike.%${filters.search}%`
+          + (number != null ? `,supplier_number.eq.${number}` : '')
         )
       }
 
@@ -43,6 +47,29 @@ export function useApprovedSuppliers() {
         .order('entity_name')
       if (error) throw error
       return data || []
+    },
+  })
+}
+
+/**
+ * A supplier's id from the SUP-<n> in its address (MAIN-143), for /suppliers/SUP-5 and
+ * /supplier-ledger/SUP-5. The pages then load by id, as their refreshes are keyed.
+ * null when no supplier has that number.
+ */
+export function useSupplierIdByNumber(value) {
+  const number = parseSupplierNumber(value)
+  return useQuery({
+    queryKey: ['supplier_id_by_number', number],
+    enabled: number != null,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('id')
+        .eq('supplier_number', number)
+        .maybeSingle()
+      if (error) throw error
+      return data?.id ?? null
     },
   })
 }

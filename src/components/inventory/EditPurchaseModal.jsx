@@ -216,6 +216,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     return (
         <PurchaseInvoiceModal
             title={isFinanceRole ? 'Purchase' : 'Edit Purchase'}
+            number={invoice.purchase_number}
             form={form}
             loading={itemsLoading || lines === null}
             error={error}

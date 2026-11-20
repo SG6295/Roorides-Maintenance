@@ -10,6 +10,7 @@ import { formatBatchNumber, batchPath } from '../utils/batchNumber'
 import { fmtMoney } from '../components/outsource-invoices/format'
 import { issueLabourHours, totalLabourHours, formatHours } from '../utils/labour'
 import { ChevronDownIcon, ChevronUpIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
+import { mechanicPath } from '../utils/employeeId'
 
 const STATUS_BADGE = {
     Completed: 'bg-green-100 text-green-700',
@@ -55,7 +56,7 @@ function JobCardRow({ jc }) {
                         <span key={t.id}>
                             {idx > 0 && ', '}
                             <Link
-                                to={`/mechanics/${t.id}`}
+                                to={mechanicPath(t.employee_id)}
                                 onClick={e => e.stopPropagation()}
                                 className="text-blue-600 hover:underline"
                             >

@@ -894,6 +894,7 @@ export type Database = {
           kind: string
           location_id: string
           notes: string | null
+          purchase_number: number
           supplier_id: string | null
           supplier_name: string
           total_amount: number | null
@@ -908,6 +909,7 @@ export type Database = {
           kind?: string
           location_id?: string
           notes?: string | null
+          purchase_number?: never
           supplier_id?: string | null
           supplier_name: string
           total_amount?: number | null
@@ -922,6 +924,7 @@ export type Database = {
           kind?: string
           location_id?: string
           notes?: string | null
+          purchase_number?: never
           supplier_id?: string | null
           supplier_name?: string
           total_amount?: number | null
@@ -2189,6 +2192,7 @@ export type Database = {
           skilled_manpower_available: boolean | null
           status: string | null
           submitted_by: string | null
+          supplier_number: number
           udyam_certificate_url: string | null
           workshop_address: string | null
           years_of_experience: string | null
@@ -2238,6 +2242,7 @@ export type Database = {
           skilled_manpower_available?: boolean | null
           status?: string | null
           submitted_by?: string | null
+          supplier_number?: never
           udyam_certificate_url?: string | null
           workshop_address?: string | null
           years_of_experience?: string | null
@@ -2287,6 +2292,7 @@ export type Database = {
           skilled_manpower_available?: boolean | null
           status?: string | null
           submitted_by?: string | null
+          supplier_number?: never
           udyam_certificate_url?: string | null
           workshop_address?: string | null
           years_of_experience?: string | null
@@ -2563,7 +2569,8 @@ export type Database = {
           contact: string | null
           created_at: string | null
           email: string
-          employee_id: string | null
+          employee_id: string
+          employee_key: string | null
           id: string
           is_active: boolean | null
           name: string
@@ -2574,7 +2581,8 @@ export type Database = {
           contact?: string | null
           created_at?: string | null
           email: string
-          employee_id?: string | null
+          employee_id: string
+          employee_key?: string | null
           id: string
           is_active?: boolean | null
           name: string
@@ -2585,7 +2593,8 @@ export type Database = {
           contact?: string | null
           created_at?: string | null
           email?: string
-          employee_id?: string | null
+          employee_id?: string
+          employee_key?: string | null
           id?: string
           is_active?: boolean | null
           name?: string
@@ -2887,6 +2896,7 @@ export type Database = {
           issue_number: string
           job_card_number: number
           site: string
+          technician_employee_id: string
           technician_id: string
           technician_name: string
           technician_role: string
@@ -2986,6 +2996,7 @@ export type Database = {
           outstanding: number
           overdue: number
           supplier_id: string
+          supplier_number: number
           this_wednesday: string
         }[]
       }

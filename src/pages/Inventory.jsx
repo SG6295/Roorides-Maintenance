@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { formatDate, formatDateTime } from '../utils/datetime'
+import { formatPurchaseNumber, parsePurchaseNumber } from '../utils/purchaseInvoice'
+import { mechanicPath } from '../utils/employeeId'
 import { Link, useSearchParams } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import Navigation from '../components/shared/Navigation'
@@ -15,7 +17,7 @@ import StockAuditTab from '../components/inventory/audit/StockAuditTab'
 import {
     useParts,
     usePurchaseInvoices,
-    usePurchaseInvoice,
+    usePurchaseInvoiceByNumber,
     usePurchaseInvoiceItems,
     usePartConsumption,
     usePartStock,
@@ -453,6 +455,7 @@ function InvoiceRow({ invoice, onEdit }) {
                 className="hover:bg-gray-50 cursor-pointer group"
                 onClick={() => setExpanded(p => !p)}
             >
+                <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{formatPurchaseNumber(invoice.purchase_number)}</td>
                 <td className="px-4 py-3 font-mono text-xs text-gray-700">{invoice.invoice_number}</td>
                 <td className="px-4 py-3 text-gray-700">
                     {invoice.invoice_date
@@ -485,7 +488,7 @@ function InvoiceRow({ invoice, onEdit }) {
             </tr>
             {expanded && (
                 <tr>
-                    <td colSpan={8} className="bg-gray-50 px-6 py-3">
+                    <td colSpan={9} className="bg-gray-50 px-6 py-3">
                         {isLoading ? (
                             <p className="text-xs text-gray-400">Loading…</p>
                         ) : (
@@ -551,11 +554,11 @@ function PurchaseHistory() {
     const [editingInvoice, setEditingInvoice] = useState(null)
     const [exporting, setExporting] = useState(false)
 
-    // ?invoice=<id> opens that invoice — Invoices and the supplier ledger link
-    // to a purchase or refurbishment this way (MAIN-123, MAIN-130).
+    // ?invoice=PI-257 opens that invoice — Invoices and the supplier ledger link
+    // to a purchase or refurbishment this way (MAIN-123, MAIN-130, MAIN-143).
     const [searchParams, setSearchParams] = useSearchParams()
     const linkedId = searchParams.get('invoice')
-    const { data: linkedInvoice } = usePurchaseInvoice(linkedId)
+    const { data: linkedInvoice } = usePurchaseInvoiceByNumber(parsePurchaseNumber(linkedId))
     const openInvoice = editingInvoice ?? linkedInvoice ?? null
 
     function closeInvoice() {
@@ -588,6 +591,7 @@ function PurchaseHistory() {
                 const gstAmount = taxable * (Number(item.gst_rate) / 100)
                 const inv = invoiceMap[item.invoice_id]
                 return {
+                    'PI No.': inv ? formatPurchaseNumber(inv.purchase_number) : '',
                     'Invoice #': inv?.invoice_number ?? '',
                     'Date': inv?.invoice_date ? formatDate(inv.invoice_date) : '',
                     'Supplier': inv?.supplier_name ?? '',
@@ -627,7 +631,7 @@ function PurchaseHistory() {
                     <div className="relative sm:col-span-2">
                         <input
                             type="text"
-                            placeholder="Search invoice # or supplier…"
+                            placeholder="Search PI no., invoice # or supplier…"
                             className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                             value={filters.search}
                             onChange={e => setFilters(p => ({ ...p, search: e.target.value }))}
@@ -670,6 +674,7 @@ function PurchaseHistory() {
                     <table className="min-w-full divide-y divide-gray-100 text-sm">
                         <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
                             <tr>
+                                <th className="px-4 py-3 text-left">PI No.</th>
                                 <th className="px-4 py-3 text-left">Invoice #</th>
                                 <th className="px-4 py-3 text-left">Date</th>
                                 <th className="px-4 py-3 text-left">Supplier</th>
@@ -852,9 +857,9 @@ function ConsumptionHistory() {
                                     </td>
                                     <td className="px-4 py-3 text-gray-700">{row.location_name || '—'}</td>
                                     <td className="px-4 py-3">
-                                        {row.mechanic_id ? (
+                                        {row.mechanic_employee_id ? (
                                             <Link
-                                                to={`/mechanics/${row.mechanic_id}`}
+                                                to={mechanicPath(row.mechanic_employee_id)}
                                                 className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
                                             >
                                                 {row.mechanic_name}

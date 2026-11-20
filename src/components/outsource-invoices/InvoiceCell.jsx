@@ -5,7 +5,7 @@ import InvoiceFileLink from './InvoiceFileLink'
 import { fmtMoney, fmtPaise, fmtDate, MAINTENANCE_STATUS_COLORS } from './format'
 import { workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTypes'
 import { formatBatchNumber, batchPath } from '../../utils/batchNumber'
-import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
+import { formatPurchaseNumber, purchaseInvoicePath } from '../../utils/purchaseInvoice'
 import { INVOICE_TYPE_LABELS } from '../../constants/outsourceInvoices'
 
 /**
@@ -25,10 +25,15 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, canOpen 
         case 'type':          return INVOICE_TYPE_LABELS[inv.invoice_type] ?? '—'
         case 'job_card':
             if (purchase) {
+                // Our running number beside the supplier's invoice number, which
+                // suppliers reuse (MAIN-143); the Type column says which kind it is.
                 return (
-                    <Link to={purchaseInvoicePath(purchase.id)} className="text-blue-600 hover:underline font-medium">
-                        {inv.refurbishment ? 'Refurbishment' : 'Purchase'}
-                    </Link>
+                    <span className="inline-flex items-center gap-1.5">
+                        <Link to={purchaseInvoicePath(purchase.purchase_number)} className="text-blue-600 hover:underline font-medium">
+                            {formatPurchaseNumber(purchase.purchase_number)}
+                        </Link>
+                        {purchase.invoice_number && <span className="text-xs text-gray-500">{purchase.invoice_number}</span>}
+                    </span>
                 )
             }
             return batch ? (

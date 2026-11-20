@@ -19,11 +19,12 @@ const TABS = [
 ]
 
 export default function MechanicDetail() {
-    const { mechanicId } = useParams()
+    const { employeeId } = useParams()
     const [tab, setTab] = useState('activity')
 
-    const { data: profile, isLoading: profileLoading } = useMechanicProfile(mechanicId)
-    const { data: jobCards = [], isLoading: activityLoading } = useMechanicActivity(mechanicId)
+    // The address carries the employee ID (MAIN-143); the activity is keyed on the id.
+    const { data: profile, isLoading: profileLoading } = useMechanicProfile(employeeId)
+    const { data: jobCards = [], isLoading: activityLoading } = useMechanicActivity(profile?.id)
 
     const isLoading = profileLoading || activityLoading
 
@@ -62,6 +63,11 @@ export default function MechanicDetail() {
 
                 {isLoading ? (
                     <TicketListSkeleton />
+                ) : !profile ? (
+                    <div className="bg-white rounded-xl shadow-sm px-6 py-10 text-center">
+                        <p className="text-gray-700 font-medium">No one has employee ID {employeeId}.</p>
+                        <p className="text-sm text-gray-500 mt-1">The ID may have been corrected since this link was made.</p>
+                    </div>
                 ) : (
                     <>
                         {/* Profile header */}
@@ -71,9 +77,9 @@ export default function MechanicDetail() {
                             </div>
                             <div>
                                 <h1 className="text-2xl font-bold text-gray-900">{profile?.name}</h1>
-                                <p className="text-sm text-gray-500 capitalize mt-0.5">
-                                    {profile?.role?.replace('_', ' ')}
-                                    {profile?.site ? ` · ${profile.site}` : ''}
+                                <p className="text-sm text-gray-500 mt-0.5">
+                                    {profile.employee_id} · <span className="capitalize">{profile.role?.replace('_', ' ')}</span>
+                                    {profile.site ? ` · ${profile.site}` : ''}
                                 </p>
                             </div>
                         </div>

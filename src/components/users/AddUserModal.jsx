@@ -67,6 +67,12 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
             setLoading(false)
             return
         }
+        // Mandatory and unique (MAIN-143); create-user checks the uniqueness.
+        if (!formData.employee_id.trim()) {
+            setError('Please enter an employee ID.')
+            setLoading(false)
+            return
+        }
 
         try {
             const { data, error } = await supabase.functions.invoke('create-user', {
@@ -165,8 +171,9 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
                                             <label className="block text-sm font-medium text-gray-700 mb-2">Employee ID</label>
                                             <input
                                                 type="text"
+                                                required
                                                 className="block w-full rounded-lg border-gray-300 py-3 px-4 text-left shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                                                placeholder="e.g. EMP-001"
+                                                placeholder="e.g. NVS 1234"
                                                 value={formData.employee_id}
                                                 onChange={e => setFormData({ ...formData, employee_id: e.target.value })}
                                             />

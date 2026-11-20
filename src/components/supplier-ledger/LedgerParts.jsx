@@ -24,8 +24,8 @@ export function Tile({ label, value, note, tone = '', highlight = false }) {
 export function OwnerLink({ line }) {
     const owner = invoiceOwner(line)
     if (!owner) return null
-    const to = owner.purchaseInvoiceId
-        ? purchaseInvoicePath(owner.purchaseInvoiceId)
+    const to = owner.purchaseNumber != null
+        ? purchaseInvoicePath(owner.purchaseNumber)
         : owner.jobCardNumber != null ? `/job-cards/${owner.jobCardNumber}` : batchPath(owner.batchNumber)
     return <Link to={to} className="text-blue-600 hover:underline">{owner.label}</Link>
 }

@@ -74,7 +74,7 @@ export default function Issues() {
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                                         <div className="font-medium text-gray-900">{issue.ticket?.vehicle_number}</div>
-                                        <Link to={`/tickets/${issue.ticket_id}`} className="text-blue-600 hover:underline">
+                                        <Link to={`/tickets/${issue.ticket?.ticket_number}`} className="text-blue-600 hover:underline">
                                             Ticket #{issue.ticket?.ticket_number}
                                         </Link>
                                     </td>
