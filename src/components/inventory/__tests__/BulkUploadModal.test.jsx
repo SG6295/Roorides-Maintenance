@@ -58,7 +58,8 @@ vi.mock('../../../lib/supabase', () => {
     return { supabase: { from: (table) => makeQuery(table) } }
 })
 
-// One invoice, one line, matching the part above so no part creation is needed.
+// One invoice, one line, matching the part above so no part creation is needed. The
+// header is an old template's, with pay_by_date, which is ignored (MAIN-121).
 const HEADER = ['invoice_number', 'invoice_date', 'supplier_name', 'part_number',
     'part_name', 'unit', 'quantity', 'unit_price', 'gst_rate', 'discount_amount', 'notes',
     'paid_by', 'pay_by_date', 'maintenance_status', 'advance_amount', 'invoice_value']
@@ -150,7 +151,7 @@ describe('BulkUploadModal — MAIN-73', () => {
         // 20 × 85 + 18% = 2006
         expect(saved[0].finance).toEqual({
             paid_by: 'Accounts', maintenance_payment_status: 'Approved', invoice_value: 2006,
-            approved_amount: 2006, advance_amount: 0, payby_date: '2026-02-15',
+            approved_amount: 2006, advance_amount: 0,
         })
         // Nothing is written to the purchase tables directly any more.
         expect(calls.filter(c => c.table.startsWith('purchase_invoice'))).toEqual([])

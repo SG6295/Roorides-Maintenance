@@ -34,9 +34,6 @@ export function InvoiceDetailsReadOnly({ invoice }) {
                 ['Payable Amount', (invoice?.approved_amount != null && invoice?.advance_amount != null)
                     ? rupees(invoice.approved_amount - invoice.advance_amount)
                     : '—'],
-                ['Pay By Date', invoice?.payby_date
-                    ? formatDate(invoice.payby_date)
-                    : '—'],
             ].map(([label, value]) => (
                 <div key={label}>
                     <p className="text-xs text-gray-500 mb-0.5">{label}</p>
@@ -195,24 +192,6 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
                             : <span className="text-gray-400 font-normal">Auto-computed</span>
                         }
                     </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                        Pay By Date {req}
-                    </label>
-                    <input
-                        type="date"
-                        value={form.paybyDate}
-                        min={form.dateOfActivity || undefined}
-                        onChange={e => setForm(f => ({ ...f, paybyDate: e.target.value }))}
-                        className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${showErrors && errors.paybyDate ? 'border-red-400' : 'border-gray-300'}`}
-                    />
-                    {showErrors && errors.paybyDate && (
-                        <p className="text-xs text-red-600 mt-0.5">{errors.paybyDate}</p>
-                    )}
                 </div>
             </div>
 

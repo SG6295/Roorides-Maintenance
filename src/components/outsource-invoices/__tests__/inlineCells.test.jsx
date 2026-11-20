@@ -1,5 +1,5 @@
 /**
- * MAIN-98, MAIN-118 — the cells finance edits straight from the Outsource Invoices table.
+ * MAIN-98, MAIN-118 — the cells finance edits straight from the Invoices table.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'

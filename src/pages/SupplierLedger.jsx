@@ -163,7 +163,7 @@ export default function SupplierLedger() {
                     An invoice is due its submission date plus the supplier's credit days (blank counts as 0) and goes
                     in the first Wednesday run on or after that; it is overdue once that run has passed. The due figures
                     assume payments clear the oldest invoices first — nothing is stored against an invoice.
-                    {totals.awaiting > 0 && <> {totals.awaiting} submitted invoice{totals.awaiting === 1 ? ' is' : 's are'} waiting for finance to accept {totals.awaiting === 1 ? 'it' : 'them'} and {totals.awaiting === 1 ? 'is' : 'are'} not counted — see <Link to="/outsource-invoices?fs=New&fs=Hold" className="text-blue-600 hover:underline">Outsource Invoices</Link>.</>}
+                    {totals.awaiting > 0 && <> {totals.awaiting} submitted invoice{totals.awaiting === 1 ? ' is' : 's are'} waiting for finance to accept {totals.awaiting === 1 ? 'it' : 'them'} and {totals.awaiting === 1 ? 'is' : 'are'} not counted — see <Link to="/invoices?fs=New&fs=Hold" className="text-blue-600 hover:underline">Invoices</Link>.</>}
                 </p>
             </div>
         </div>

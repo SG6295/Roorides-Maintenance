@@ -3,7 +3,7 @@ import { fmtMoney, fmtDate, fmtPaise } from './format'
 import { toPaise } from '../../utils/settlement'
 
 /**
- * The Resubmit popup's rules (MAIN-120), for a row of the Outsource Invoices list. The
+ * The Resubmit popup's rules (MAIN-120), for a row of the Invoices list. The
  * database checks the same things in resubmit_outsource_invoice; these let the popup say
  * so before saving.
  */
@@ -27,10 +27,9 @@ const FIELDS = [
     ['approvedAmount',           'Approved amount'],
     ['advanceAmount',            'Advance'],
     ['maintenancePaymentStatus', 'Maintenance status'],
-    ['paybyDate',                'Pay-by date'],
 ]
 const MONEY = ['invoiceValue', 'approvedAmount', 'advanceAmount']
-const DATES = ['dateOfActivity', 'paybyDate']
+const DATES = ['dateOfActivity']
 
 // "1000" and "1000.00" are the same amount; " A1 " and "A1" the same number.
 const same = (field, a, b) => MONEY.includes(field)

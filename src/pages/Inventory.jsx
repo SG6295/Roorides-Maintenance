@@ -551,7 +551,7 @@ function PurchaseHistory() {
     const [editingInvoice, setEditingInvoice] = useState(null)
     const [exporting, setExporting] = useState(false)
 
-    // ?invoice=<id> opens that invoice — Outsource Invoices and the supplier ledger link
+    // ?invoice=<id> opens that invoice — Invoices and the supplier ledger link
     // to a purchase or refurbishment this way (MAIN-123, MAIN-130).
     const [searchParams, setSearchParams] = useSearchParams()
     const linkedId = searchParams.get('invoice')

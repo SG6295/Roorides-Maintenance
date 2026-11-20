@@ -33,8 +33,9 @@ export function matchSupplier(name, suppliers) {
 
 const matchOption = (value, options) => options.find(o => norm(o) === norm(value)) ?? null
 
-// The invoice-level cells every row of one invoice must agree on.
-const INVOICE_CELLS = ['paid_by', 'maintenance_status', 'pay_by_date', 'advance_amount', 'invoice_value']
+// The invoice-level cells every row of one invoice must agree on. An old template's
+// pay_by_date column is not read (MAIN-121).
+const INVOICE_CELLS = ['paid_by', 'maintenance_status', 'advance_amount', 'invoice_value']
 
 /**
  * Groups validated rows into invoices and checks each invoice.
@@ -66,7 +67,7 @@ export function checkBulkInvoices(records, suppliers, today) {
         }
 
         for (const cell of INVOICE_CELLS) {
-            const values = new Set(rows.map(r => norm(cell.endsWith('_date') ? cellDate(r[cell]) : r[cell])))
+            const values = new Set(rows.map(r => norm(r[cell])))
             if (values.size > 1) errors.push(`Rows of this invoice disagree on ${cell}`)
         }
 
@@ -79,10 +80,6 @@ export function checkBulkInvoices(records, suppliers, today) {
             ? 'Approved'
             : matchOption(first.maintenance_status, MAINTENANCE_PAYMENT_STATUSES)
         if (!status) errors.push(`maintenance_status must be one of: ${MAINTENANCE_PAYMENT_STATUSES.join(', ')}`)
-
-        const payBy = cellDate(first.pay_by_date)
-        if (!isIsoDate(payBy)) errors.push('pay_by_date is missing or not a date')
-        else if (isIsoDate(first._dateStr) && payBy < first._dateStr) errors.push('pay_by_date is before invoice_date')
 
         const approved = invoiceTotal(rows.map(r => ({
             quantity: r._qty, unit_price: r._price, gst_rate: r._gst, discount_amount: r._discount,
@@ -113,7 +110,6 @@ export function checkBulkInvoices(records, suppliers, today) {
                 invoice_value: invoiceValue,
                 approved_amount: approved,
                 advance_amount: advance,
-                payby_date: payBy,
             },
         })
     }

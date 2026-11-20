@@ -20,7 +20,7 @@ import VehicleHistory from './pages/VehicleHistory'
 import MechanicDetail from './pages/MechanicDetail'
 import Vehicles from './pages/Vehicles'
 
-import OutsourceInvoices from './pages/OutsourceInvoices'
+import OutsourceInvoices, { LegacyInvoicesRedirect } from './pages/OutsourceInvoices'
 import BatchServiceDetail, { LegacyBatchRedirect } from './pages/BatchServiceDetail'
 import Suppliers from './pages/Suppliers'
 import SupplierDetail from './pages/SupplierDetail'
@@ -256,13 +256,14 @@ function App() {
             <Route path="/supplier-registration" element={<SupplierRegistration />} />
 
             <Route
-              path="/outsource-invoices"
+              path="/invoices"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance', 'supervisor']}>
                   <OutsourceInvoices />
                 </ProtectedRoute>
               }
             />
+            <Route path="/outsource-invoices" element={<LegacyInvoicesRedirect />} />
             <Route
               path="/multi-vehicle-invoices/:number"
               element={

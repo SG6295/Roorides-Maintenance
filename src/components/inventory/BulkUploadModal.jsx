@@ -38,23 +38,22 @@ const TEMPLATE_COLUMNS = [
     'discount_amount',
     'notes',
     'paid_by',
-    'pay_by_date',
     'maintenance_status',
     'advance_amount',
     'invoice_value',
 ]
 
 const TEMPLATE_EXAMPLE = [
-    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'OIL-5W40', 'Engine Oil 5W40', 'L', 20, 85.00, 18, 0, 'Bulk purchase', 'Accounts', '2024-02-15', 'Approved', 0, ''],
-    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'FLT-OIL-01', 'Oil Filter', 'pcs', 10, 45.00, 18, 50, '', 'Accounts', '2024-02-15', 'Approved', 0, ''],
-    ['INV-002', '2024-01-16', 'Brake Masters', 'BRK-PAD-R', 'Rear Brake Pads', 'set', 5, 320.00, 28, 0, '', 'PCN', '2024-02-16', '', 500, ''],
+    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'OIL-5W40', 'Engine Oil 5W40', 'L', 20, 85.00, 18, 0, 'Bulk purchase', 'Accounts', 'Approved', 0, ''],
+    ['INV-001', '2024-01-15', 'AutoParts Ltd', 'FLT-OIL-01', 'Oil Filter', 'pcs', 10, 45.00, 18, 50, '', 'Accounts', 'Approved', 0, ''],
+    ['INV-002', '2024-01-16', 'Brake Masters', 'BRK-PAD-R', 'Rear Brake Pads', 'set', 5, 320.00, 28, 0, '', 'PCN', '', 500, ''],
 ]
 
 function downloadTemplate() {
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, ...TEMPLATE_EXAMPLE])
     // Column widths
-    ws['!cols'] = [16, 14, 20, 16, 24, 8, 10, 12, 10, 16, 24, 22, 14, 18, 16, 14].map(w => ({ wch: w }))
+    ws['!cols'] = [16, 14, 20, 16, 24, 8, 10, 12, 10, 16, 24, 22, 18, 16, 14].map(w => ({ wch: w }))
     XLSX.utils.book_append_sheet(wb, ws, 'Inventory Upload')
     XLSX.writeFile(wb, 'nvs_inventory_upload_template.xlsx')
 }
@@ -383,7 +382,7 @@ export default function BulkUploadModal({ onClose }) {
                                 <div>
                                     <p className="text-sm font-medium text-blue-800">Download the template first</p>
                                     <p className="text-xs text-blue-600 mt-0.5">
-                                        Fill in your data using the exact column headers. Multiple rows with the same invoice_number will be grouped as one invoice. gst_rate (0/5/12/18/28) and discount_amount are optional and default to 0. supplier_name must match a supplier in the supplier list. Every invoice goes to finance as New (invoice pending): repeat paid_by and pay_by_date on each row; maintenance_status (default Approved), advance_amount (default 0) and invoice_value (default the lines' total) are optional. Upload each file afterwards from Edit Purchase.
+                                        Fill in your data using the exact column headers. Multiple rows with the same invoice_number will be grouped as one invoice. gst_rate (0/5/12/18/28) and discount_amount are optional and default to 0. supplier_name must match a supplier in the supplier list. Every invoice goes to finance as New (invoice pending): repeat paid_by on each row; maintenance_status (default Approved), advance_amount (default 0) and invoice_value (default the lines' total) are optional. Upload each file afterwards from Edit Purchase.
                                     </p>
                                 </div>
                                 <button

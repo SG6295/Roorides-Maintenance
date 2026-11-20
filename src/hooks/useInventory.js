@@ -52,7 +52,7 @@ const PURCHASE_INVOICE_COLUMNS = `
     purchase_invoice_items(id),
     finance_invoice:outsource_invoices!purchase_invoice_id(
         id, invoice_no, date_of_activity, finance_payment_status, finance_remark, paid_by, maintenance_payment_status,
-        invoice_value, approved_amount, advance_amount, payby_date
+        invoice_value, approved_amount, advance_amount
     )
 `
 
@@ -138,7 +138,6 @@ const toFinanceDetails = finance => finance ? {
     invoice_value: finance.invoice_value,
     approved_amount: finance.approved_amount,
     advance_amount: finance.advance_amount,
-    payby_date: finance.payby_date,
 } : {}
 
 // Purchases go to finance, so its views are stale after a save.

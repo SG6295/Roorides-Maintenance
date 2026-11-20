@@ -6,9 +6,10 @@ import { fmtMoney, fmtPaise, fmtDate, MAINTENANCE_STATUS_COLORS } from './format
 import { workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTypes'
 import { formatBatchNumber, batchPath } from '../../utils/batchNumber'
 import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
+import { INVOICE_TYPE_LABELS } from '../../constants/outsourceInvoices'
 
 /**
- * One cell of the Outsource Invoices list (MAIN-98), by column key — the column
+ * One cell of the Invoices list (MAIN-98), by column key — the column
  * list itself is in columns.js. `invoice` is a row from enrichInvoice().
  * `canOpen` is false for a supervisor, who has no job card or multi-vehicle invoice
  * page to go to (MAIN-141): the number is then shown as plain text.
@@ -21,6 +22,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, canOpen 
     const owner = batch ?? purchase ?? inv.job_card
 
     switch (columnKey) {
+        case 'type':          return INVOICE_TYPE_LABELS[inv.invoice_type] ?? '—'
         case 'job_card':
             if (purchase) {
                 return (
@@ -79,7 +81,6 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, canOpen 
             )
         case 'finance_status': return <FinanceStatusCell invoice={inv} canEdit={canEdit} />
         case 'finance_remark': return <RemarkCell invoice={inv} canEdit={canEdit} />
-        case 'pay_by':         return fmtDate(inv.payby_date)
         default:
             return null
     }

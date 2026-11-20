@@ -55,6 +55,7 @@ const PAGE_SIZE = 50
  *   maintenancePaymentStatus — string[]       server-side IN filter on maintenance_payment_status
  *   financePaymentStatus     — string[]       server-side IN filter on finance_payment_status
  *   paidBy                   — string[]       server-side IN filter on paid_by
+ *   type                     — string[]       server-side IN filter on the invoice's type (MAIN-142)
  *   dateFrom                 — string         ISO date, gte date_of_activity
  *   dateTo                   — string         ISO date, lte date_of_activity
  *   page                     — number | null  0-based page index; null = fetch all (search mode)
@@ -82,6 +83,7 @@ export function useOutsourceInvoices(filters = {}) {
                     maintenance_payment_status: filters.maintenancePaymentStatus?.length ? filters.maintenancePaymentStatus : null,
                     finance_payment_status:     filters.financePaymentStatus?.length     ? filters.financePaymentStatus     : null,
                     paid_by:                    filters.paidBy?.length                   ? filters.paidBy                   : null,
+                    type:                       filters.type?.length                     ? filters.type                     : null,
                     date_from:                  filters.dateFrom || null,
                     date_to:                    filters.dateTo   || null,
                     page:                       isPaginated ? filters.page : null,
@@ -95,7 +97,7 @@ export function useOutsourceInvoices(filters = {}) {
 }
 
 /**
- * Fetches the finance-status counts for the Outsource Invoices dashboard tiles
+ * Fetches the finance-status counts for the Invoices dashboard tiles
  * (MAIN-118) via a single RPC call. Applies the same server-side filters as useOutsourceInvoices
  * but ignores pagination — tiles always reflect the full filtered set.
  */
@@ -107,6 +109,7 @@ export function useOutsourceInvoiceSummary(filters = {}) {
                 p_maintenance_payment_status: filters.maintenancePaymentStatus?.length ? filters.maintenancePaymentStatus : null,
                 p_finance_payment_status:     filters.financePaymentStatus?.length     ? filters.financePaymentStatus     : null,
                 p_paid_by:                    filters.paidBy?.length                   ? filters.paidBy                   : null,
+                p_type:                       filters.type?.length                     ? filters.type                     : null,
                 p_date_from:                  filters.dateFrom || null,
                 p_date_to:                    filters.dateTo   || null,
             })
