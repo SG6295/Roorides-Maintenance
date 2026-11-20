@@ -1,6 +1,6 @@
 /**
  * A purchase invoice has no page of its own: this opens it from Purchase History, in the
- * purchase or refurbishment form by its kind (MAIN-130). Outsource Invoices and the
+ * purchase or refurbishment form by its kind (MAIN-130). Invoices and the
  * supplier ledger link here (MAIN-123).
  */
 export function purchaseInvoicePath(id) {

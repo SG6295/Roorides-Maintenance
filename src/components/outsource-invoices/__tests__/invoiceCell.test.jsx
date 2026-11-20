@@ -11,6 +11,7 @@ vi.mock('../../../hooks/useOutsourceInvoices', () => ({
 }))
 
 import InvoiceCell from '../InvoiceCell'
+import { COLUMNS, DEFAULT_COLUMN_KEYS } from '../columns'
 
 const jobCardInvoice = { id: 'inv-1', job_card: { job_card_number: 8863, vehicle_number: 'KA01AB1' } }
 const batchInvoice = {
@@ -37,5 +38,25 @@ describe('InvoiceCell job card column', () => {
         renderCell(batchInvoice, false)
         expect(screen.getByText('MVI-12')).toBeInTheDocument()
         expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    })
+})
+
+describe('InvoiceCell type column (MAIN-142)', () => {
+    it.each([
+        ['job_card', 'Job card'],
+        ['multi_vehicle', 'Multi-vehicle'],
+        ['purchase', 'Purchase'],
+        ['refurbishment', 'Refurbishment'],
+    ])('labels %s as %s', (type, label) => {
+        render(<MemoryRouter><InvoiceCell columnKey="type" invoice={{ id: 'inv', invoice_type: type }} /></MemoryRouter>)
+        expect(screen.getByText(label)).toBeInTheDocument()
+    })
+})
+
+describe('Invoices columns (MAIN-142)', () => {
+    it('shows Type by default, and calls the job card column Reference', () => {
+        expect(DEFAULT_COLUMN_KEYS).toContain('type')
+        expect(COLUMNS.find(c => c.key === 'job_card').label).toBe('Reference')
+        expect(COLUMNS.some(c => c.key === 'pay_by')).toBe(false)
     })
 })

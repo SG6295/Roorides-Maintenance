@@ -2602,7 +2602,6 @@ BEGIN
            OR v_invoice.approved_amount            IS NULL
            OR v_invoice.advance_amount             IS NULL
            OR v_invoice.date_of_activity           IS NULL
-           OR v_invoice.payby_date                 IS NULL
            OR v_invoice.maintenance_payment_status IS NULL
            OR v_invoice.paid_by                    IS NULL
         THEN
@@ -3022,21 +3021,25 @@ CREATE FUNCTION public.get_outsource_invoice_rows(p_filters jsonb DEFAULT '{}'::
       (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'maintenance_payment_status', 'null')) x) as ps,
       (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'finance_payment_status', 'null')) x)     as fs,
       (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'paid_by', 'null')) x)                    as pb,
+      (select array_agg(x) from jsonb_array_elements_text(nullif(p_filters->'type', 'null')) x)                       as ty,
       nullif(p_filters->>'date_from', '')::date as date_from,
       nullif(p_filters->>'date_to', '')::date   as date_to,
       (p_filters->>'page')::int                 as page,
       coalesce((p_filters->>'page_size')::int, 50) as page_size
   ),
   visible as (
-    select oi.*, jc.id as jc_id
+    select oi.*, jc.id as jc_id,
+           public.outsource_invoice_type(oi.job_card_id, oi.batch_service_id, pi.kind) as invoice_type
     from   public.outsource_invoices oi
     left join public.job_cards jc on jc.id = oi.job_card_id and jc.status = 'Completed'
+    left join public.purchase_invoices pi on pi.id = oi.purchase_invoice_id
     cross join f
     where (oi.batch_service_id is not null or oi.purchase_invoice_id is not null or jc.id is not null)
       and public.can_read_outsource_invoice(oi.job_card_id, oi.batch_service_id)
       and (f.ps is null        or oi.maintenance_payment_status = any (f.ps))
       and (f.fs is null        or oi.finance_payment_status     = any (f.fs))
       and (f.pb is null        or oi.paid_by                    = any (f.pb))
+      and (f.ty is null        or public.outsource_invoice_type(oi.job_card_id, oi.batch_service_id, pi.kind) = any (f.ty))
       and (f.date_from is null or oi.date_of_activity >= f.date_from)
       and (f.date_to is null   or oi.date_of_activity <= f.date_to)
   ),
@@ -3094,10 +3097,10 @@ $$;
 ALTER FUNCTION public.get_outsource_invoice_rows(p_filters jsonb) OWNER TO postgres;
 
 --
--- Name: get_outsource_invoice_summary(text[], text[], date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_outsource_invoice_summary(text[], text[], date, date, text[], text[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date, p_finance_payment_status text[] DEFAULT NULL::text[]) RETURNS TABLE(new_count bigint, hold_count bigint, reject_count bigint, accepted_count bigint, pending_count bigint)
+CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[] DEFAULT NULL::text[], p_paid_by text[] DEFAULT NULL::text[], p_date_from date DEFAULT NULL::date, p_date_to date DEFAULT NULL::date, p_finance_payment_status text[] DEFAULT NULL::text[], p_type text[] DEFAULT NULL::text[]) RETURNS TABLE(new_count bigint, hold_count bigint, reject_count bigint, accepted_count bigint, pending_count bigint)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -3110,6 +3113,7 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
     FROM  outsource_invoices     oi
     LEFT JOIN job_cards          jc ON jc.id = oi.job_card_id
     LEFT JOIN batch_services     bs ON bs.id = oi.batch_service_id
+    LEFT JOIN purchase_invoices  pi ON pi.id = oi.purchase_invoice_id
     WHERE (bs.status = 'Active' OR jc.status = 'Completed' OR oi.purchase_invoice_id IS NOT NULL)
       AND public.can_read_outsource_invoice(oi.job_card_id, oi.batch_service_id)
       AND (p_maintenance_payment_status IS NULL OR oi.maintenance_payment_status = ANY(p_maintenance_payment_status))
@@ -3117,10 +3121,11 @@ CREATE FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_statu
       AND (p_paid_by                    IS NULL OR oi.paid_by                    = ANY(p_paid_by))
       AND (p_date_from                  IS NULL OR oi.date_of_activity >= p_date_from)
       AND (p_date_to                    IS NULL OR oi.date_of_activity <= p_date_to)
+      AND (p_type                       IS NULL OR public.outsource_invoice_type(oi.job_card_id, oi.batch_service_id, pi.kind) = ANY(p_type))
 $$;
 
 
-ALTER FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) OWNER TO postgres;
+ALTER FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[], p_type text[]) OWNER TO postgres;
 
 --
 -- Name: get_supplier_balances(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4184,6 +4189,25 @@ $$;
 ALTER FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) OWNER TO postgres;
 
 --
+-- Name: outsource_invoice_type(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
+    AS $$
+  select case
+    when p_job_card_id      is not null then 'job_card'
+    when p_batch_service_id is not null then 'multi_vehicle'
+    when p_purchase_kind = 'refurbishment' then 'refurbishment'
+    else 'purchase'
+  end
+$$;
+
+
+ALTER FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) OWNER TO postgres;
+
+--
 -- Name: payment_run_for(date); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4397,7 +4421,6 @@ DECLARE
     v_inv_value   numeric := NULLIF(p_invoice->>'invoice_value', '')::numeric;
     v_approved    numeric := NULLIF(p_invoice->>'approved_amount', '')::numeric;
     v_advance     numeric := NULLIF(p_invoice->>'advance_amount', '')::numeric;
-    v_payby       date := NULLIF(p_invoice->>'payby_date', '')::date;
     v_total       numeric;
     v_invoice_id  uuid;
     v_line        jsonb;
@@ -4460,8 +4483,7 @@ BEGIN
        OR NULLIF(p_invoice->>'maintenance_payment_status', '') IS NULL
        OR v_inv_value IS NULL OR v_inv_value <= 0
        OR v_approved  IS NULL OR v_approved  < 0 OR v_approved > v_inv_value
-       OR v_advance   IS NULL OR v_advance   < 0 OR v_advance  > v_approved
-       OR v_payby     IS NULL OR v_payby < v_inv_date THEN
+       OR v_advance   IS NULL OR v_advance   < 0 OR v_advance  > v_approved THEN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_DETAILS_INVALID',
             'error_message', 'Check the invoice details.',
@@ -5386,7 +5408,6 @@ DECLARE
     v_date      date    := nullif(p_resubmission->>'date_of_activity', '')::date;
     v_paid_by   text    := nullif(p_resubmission->>'paid_by', '');
     v_maint     text    := nullif(p_resubmission->>'maintenance_payment_status', '');
-    v_payby     date    := nullif(p_resubmission->>'payby_date', '')::date;
     v_inv_value numeric;
     v_approved  numeric;
     v_advance   numeric;
@@ -5424,8 +5445,7 @@ BEGIN
        OR v_paid_by IS NULL OR v_maint IS NULL
        OR v_inv_value IS NULL OR v_inv_value <= 0
        OR v_approved  IS NULL OR v_approved > v_inv_value
-       OR v_advance   IS NULL OR v_advance  > v_approved
-       OR v_payby     IS NULL OR v_payby < v_date THEN
+       OR v_advance   IS NULL OR v_advance  > v_approved THEN
         RAISE EXCEPTION 'Check the invoice details.';
     END IF;
 
@@ -5483,8 +5503,7 @@ BEGIN
            invoice_value              = v_inv_value,
            approved_amount            = v_approved,
            advance_amount             = v_advance,
-           maintenance_payment_status = v_maint,
-           payby_date                 = v_payby
+           maintenance_payment_status = v_maint
     WHERE  id = p_invoice_id;
 
     PERFORM public.complete_invoice_resubmission(p_invoice_id, v_before, p_resubmission->>'note');
@@ -5594,7 +5613,6 @@ BEGIN
        OR nullif(p_invoice->>'approved_amount', '') IS NULL
        OR nullif(p_invoice->>'advance_amount', '') IS NULL
        OR nullif(p_invoice->>'maintenance_payment_status', '') IS NULL
-       OR nullif(p_invoice->>'payby_date', '') IS NULL
     THEN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_DETAILS_INCOMPLETE',
@@ -5697,7 +5715,7 @@ BEGIN
 
         INSERT INTO public.outsource_invoices
             (batch_service_id, date_of_activity, invoice_no, paid_by, invoice_value,
-             approved_amount, advance_amount, maintenance_payment_status, payby_date, created_by)
+             approved_amount, advance_amount, maintenance_payment_status, created_by)
         VALUES (
             v_batch_id,
             (p_invoice->>'date_of_activity')::date,
@@ -5707,7 +5725,6 @@ BEGIN
             v_approved,
             (p_invoice->>'advance_amount')::numeric,
             p_invoice->>'maintenance_payment_status',
-            (p_invoice->>'payby_date')::date,
             auth.uid()
         );
     ELSE
@@ -5782,8 +5799,7 @@ BEGIN
                invoice_value              = (p_invoice->>'invoice_value')::numeric,
                approved_amount            = v_approved,
                advance_amount             = (p_invoice->>'advance_amount')::numeric,
-               maintenance_payment_status = p_invoice->>'maintenance_payment_status',
-               payby_date                 = (p_invoice->>'payby_date')::date
+               maintenance_payment_status = p_invoice->>'maintenance_payment_status'
         WHERE  id = v_invoice_id;
 
         DELETE FROM public.batch_service_vehicles
@@ -5850,7 +5866,6 @@ DECLARE
     v_inv_value numeric := NULLIF(p_invoice->>'invoice_value', '')::numeric;
     v_approved  numeric := NULLIF(p_invoice->>'approved_amount', '')::numeric;
     v_advance   numeric := NULLIF(p_invoice->>'advance_amount', '')::numeric;
-    v_payby     date    := NULLIF(p_invoice->>'payby_date', '')::date;
     v_total     numeric;
 BEGIN
     IF NOT public.is_maintenance_exec() THEN
@@ -5871,8 +5886,7 @@ BEGIN
        OR NULLIF(p_invoice->>'maintenance_payment_status', '') IS NULL
        OR v_inv_value IS NULL OR v_inv_value <= 0
        OR v_approved  IS NULL OR v_approved  < 0 OR v_approved > v_inv_value
-       OR v_advance   IS NULL OR v_advance   < 0 OR v_advance  > v_approved
-       OR v_payby     IS NULL OR v_payby < v_header.invoice_date THEN
+       OR v_advance   IS NULL OR v_advance   < 0 OR v_advance  > v_approved THEN
         RAISE EXCEPTION 'Check the invoice details.';
     END IF;
 
@@ -5895,10 +5909,10 @@ BEGIN
         -- The insert trigger submits it to finance.
         INSERT INTO public.outsource_invoices (
             purchase_invoice_id, date_of_activity, invoice_no, paid_by, invoice_value,
-            approved_amount, advance_amount, maintenance_payment_status, payby_date, created_by
+            approved_amount, advance_amount, maintenance_payment_status, created_by
         ) VALUES (
             p_invoice_id, v_header.invoice_date, btrim(v_header.invoice_number), p_invoice->>'paid_by', v_inv_value,
-            v_approved, v_advance, p_invoice->>'maintenance_payment_status', v_payby, auth.uid()
+            v_approved, v_advance, p_invoice->>'maintenance_payment_status', auth.uid()
         );
         RETURN;
     END IF;
@@ -5911,8 +5925,7 @@ BEGIN
            invoice_value              = v_inv_value,
            approved_amount            = v_approved,
            advance_amount             = v_advance,
-           maintenance_payment_status = p_invoice->>'maintenance_payment_status',
-           payby_date                 = v_payby
+           maintenance_payment_status = p_invoice->>'maintenance_payment_status'
     WHERE  id = v_finance.id;
 
     -- The file has arrived: the invoice is ready for finance.
@@ -19123,12 +19136,12 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_rows(p_filters jsonb) TO serv
 
 
 --
--- Name: FUNCTION get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[], p_type text[]); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO authenticated;
-GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[]) TO service_role;
+REVOKE ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[], p_type text[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[], p_type text[]) TO authenticated;
+GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status text[], p_paid_by text[], p_date_from date, p_date_to date, p_finance_payment_status text[], p_type text[]) TO service_role;
 
 
 --
@@ -19417,6 +19430,15 @@ GRANT ALL ON FUNCTION public.move_invoice_stock_on_location_change() TO service_
 REVOKE ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) TO anon;
+GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) TO authenticated;
+GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) TO service_role;
 
 
 --

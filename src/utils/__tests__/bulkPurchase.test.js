@@ -17,7 +17,6 @@ const row = over => ({
     _qty: 10, _price: 100, _gst: 18, _discount: 0,
     notes: '',
     paid_by: 'Accounts',
-    pay_by_date: '2026-11-20',
     maintenance_status: '',
     advance_amount: '',
     invoice_value: '',
@@ -48,7 +47,6 @@ describe('checkBulkInvoices', () => {
             invoice_value: 1280,
             approved_amount: 1280,
             advance_amount: 0,
-            payby_date: '2026-11-20',
         })
     })
 
@@ -82,11 +80,17 @@ describe('checkBulkInvoices', () => {
 
     it('checks the dates and amounts', () => {
         const check = over => Object.values(checkBulkInvoices([row(over)], suppliers, today).rowErrors)[0] ?? []
-        expect(check({ pay_by_date: '' })).toContain('pay_by_date is missing or not a date')
-        expect(check({ pay_by_date: '2026-11-01' })).toContain('pay_by_date is before invoice_date')
-        expect(check({ _dateStr: '2026-11-12', pay_by_date: '2026-11-20' })).toContain('invoice_date is in the future')
+        expect(check({ _dateStr: '2026-11-12' })).toContain('invoice_date is in the future')
         expect(check({ advance_amount: 2000 })).toContain('advance_amount is more than the invoice total')
         expect(check({ invoice_value: 1000 })).toContain('invoice_value is less than the lines add up to')
         expect(check({ invoice_value: 1500, advance_amount: 180 })).toEqual([])
+    })
+
+    it('ignores the pay_by_date column of an old template (MAIN-121)', () => {
+        const a = row({ pay_by_date: '2026-11-20' })
+        const b = row({ pay_by_date: 'not a date' })
+        const { invoices, rowErrors } = checkBulkInvoices([a, b], suppliers, today)
+        expect(rowErrors).toEqual({})
+        expect(invoices[0].finance).not.toHaveProperty('payby_date')
     })
 })

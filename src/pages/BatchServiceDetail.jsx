@@ -77,7 +77,7 @@ export default function BatchServiceDetail() {
     return (
         <div className="min-h-screen bg-gray-50">
             <Navigation breadcrumbs={[
-                { label: 'Outsource Invoices', href: '/outsource-invoices' },
+                { label: 'Invoices', href: '/invoices' },
                 { label: isNew ? 'New multi-vehicle invoice' : formatBatchNumber(batchNumber ?? number) },
             ]} />
             <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-4">
@@ -237,7 +237,7 @@ function BatchForm({ batch }) {
             else {
                 // Same pattern as a new ticket: confirm, then back to the list (MAIN-126).
                 alert(`Multi-vehicle invoice ${formatBatchNumber(savedNumber)} submitted successfully!`)
-                navigate('/outsource-invoices', { replace: true })
+                navigate('/invoices', { replace: true })
             }
         } catch (e) {
             setSaveError(e.message)
@@ -814,5 +814,5 @@ export function LegacyBatchRedirect() {
     const { data: batchNumber, isLoading } = useBatchNumberById(isNew ? null : id)
     if (isNew) return <Navigate to="/multi-vehicle-invoices/new" replace />
     if (isLoading) return <TicketDetailSkeleton />
-    return <Navigate to={batchNumber ? batchPath(batchNumber) : '/outsource-invoices'} replace />
+    return <Navigate to={batchNumber ? batchPath(batchNumber) : '/invoices'} replace />
 }

@@ -11,7 +11,6 @@ export const EMPTY_INVOICE_FORM = {
     approvedAmount: '',
     advanceAmount: '',
     maintenancePaymentStatus: '',
-    paybyDate: '',
 }
 
 /** An outsource_invoices row as form values. */
@@ -24,7 +23,6 @@ export function invoiceFormFromRow(row) {
         approvedAmount: row.approved_amount != null ? String(row.approved_amount) : '',
         advanceAmount: row.advance_amount != null ? String(row.advance_amount) : '',
         maintenancePaymentStatus: row.maintenance_payment_status || '',
-        paybyDate: row.payby_date || '',
     }
 }
 
@@ -38,7 +36,6 @@ export function invoiceFormToRow(f) {
         approved_amount: parseFloat(f.approvedAmount),
         advance_amount: parseFloat(f.advanceAmount),
         maintenance_payment_status: f.maintenancePaymentStatus,
-        payby_date: f.paybyDate,
     }
 }
 
@@ -63,7 +60,5 @@ export function validateInvoiceForm(f, today) {
     if (f.advanceAmount === '' || isNaN(adv) || adv < 0) errors.advanceAmount = 'Must be ≥ 0'
     else if (!isNaN(aa) && adv > aa) errors.advanceAmount = 'Must be ≤ approved amount'
     if (!f.maintenancePaymentStatus) errors.maintenancePaymentStatus = 'Required'
-    if (!f.paybyDate) errors.paybyDate = 'Required'
-    else if (f.dateOfActivity && f.paybyDate < f.dateOfActivity) errors.paybyDate = 'Must be ≥ date of activity'
     return errors
 }

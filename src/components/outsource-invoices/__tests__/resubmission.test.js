@@ -109,6 +109,8 @@ describe('resubmissionPayload', () => {
         const p = resubmissionPayload(edited(start, { fileUrl: 'https://drive/new' }), '  clearer scan ')
         expect(p).toMatchObject({ invoice_no: 'INV-1', supplier_id: 's1', invoice_file_url: 'https://drive/new', note: 'clearer scan' })
         expect(resubmissionPayload(start, '  ').note).toBeNull()
+        // The Pay By Date is no longer asked for or sent, so a stored one is kept (MAIN-121).
+        expect(p).not.toHaveProperty('payby_date')
     })
 })
 

@@ -244,7 +244,7 @@ export default function PurchaseModal({ onClose }) {
                                 dateLabel="Invoice Date"
                             />
                             <p className="text-xs text-gray-400 mt-2">
-                                Goes to finance in Outsource Invoices as soon as it is saved. The lines must add up to the Approved Amount.
+                                Goes to finance in Invoices as soon as it is saved. The lines must add up to the Approved Amount.
                             </p>
                         </div>
 

@@ -21,7 +21,7 @@ import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
 import { todayLocal } from '../../utils/datetime'
 
 /**
- * Corrects and resubmits a rejected invoice (MAIN-120), from the Outsource Invoices list
+ * Corrects and resubmits a rejected invoice (MAIN-120), from the Invoices list
  * or the job card page: the file, the supplier and the invoice fields, with an optional
  * note to finance. `invoice` is a row in the list's shape (get_outsource_invoice_rows).
  *

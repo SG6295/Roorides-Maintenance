@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { todayLocal } from '../utils/datetime'
 import { useAuth } from '../hooks/useAuth'
 import { useOutsourceInvoices, useOutsourceInvoiceSummary } from '../hooks/useOutsourceInvoices'
@@ -15,6 +15,7 @@ import {
     PAID_BY_OPTIONS,
     MAINTENANCE_PAYMENT_STATUSES,
     FINANCE_STATUSES,
+    INVOICE_TYPES,
     isRejectedInvoice,
 } from '../constants/outsourceInvoices'
 import { formatBatchNumber } from '../utils/batchNumber'
@@ -53,6 +54,7 @@ export default function OutsourceInvoices() {
     const psFilter = searchParams.getAll('ps')
     const fsFilter = searchParams.getAll('fs')
     const pbFilter = searchParams.getAll('pb')
+    const typeFilter = searchParams.getAll('type')
     const dateFrom = searchParams.get('from') || ''
     const dateTo   = searchParams.get('to')   || ''
     const page     = Math.max(0, parseInt(searchParams.get('p') ?? '0', 10) || 0)
@@ -66,6 +68,7 @@ export default function OutsourceInvoices() {
         maintenancePaymentStatus: psFilter,
         financePaymentStatus:     fsFilter,
         paidBy:                   pbFilter,
+        type:                     typeFilter,
         dateFrom,
         dateTo,
     }
@@ -169,16 +172,16 @@ export default function OutsourceInvoices() {
     }
 
     const clearFilters = () => setSearchParams({})
-    const hasFilters   = !!(search || psFilter.length || fsFilter.length || pbFilter.length || dateFrom || dateTo)
+    const hasFilters   = !!(search || psFilter.length || fsFilter.length || pbFilter.length || typeFilter.length || dateFrom || dateTo)
 
     return (
         <div className="min-h-screen bg-gray-50">
-            <Navigation breadcrumbs={[{ label: 'Outsource Invoices' }]} />
+            <Navigation breadcrumbs={[{ label: 'Invoices' }]} />
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
 
                 <div className="flex items-center justify-between gap-4">
-                    <h1 className="text-2xl font-bold text-gray-900">Outsource Invoices</h1>
+                    <h1 className="text-2xl font-bold text-gray-900">Invoices</h1>
                     <div className="flex items-center gap-2">
                     {/* Accepted invoices are paid from the supplier ledger (MAIN-119). */}
                     {['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role) && (
@@ -246,6 +249,25 @@ export default function OutsourceInvoices() {
                     </div>
 
                     <div className="flex flex-wrap gap-6">
+                        <div>
+                            <p className="text-xs font-medium text-gray-500 mb-1.5">Type</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {INVOICE_TYPES.map(t => (
+                                    <button
+                                        key={t.value}
+                                        onClick={() => toggleMulti('type', t.value)}
+                                        className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                                            typeFilter.includes(t.value)
+                                                ? 'bg-blue-600 text-white border-blue-600'
+                                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                                        }`}
+                                    >
+                                        {t.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
                         <div>
                             <p className="text-xs font-medium text-gray-500 mb-1.5">Maintenance Status</p>
                             <div className="flex flex-wrap gap-1.5">
@@ -447,4 +469,13 @@ export default function OutsourceInvoices() {
             )}
         </div>
     )
+}
+
+/**
+ * `/outsource-invoices` — the page's address until MAIN-142 renamed it Invoices —
+ * forwards to `/invoices`, keeping the filters in the query string.
+ */
+export function LegacyInvoicesRedirect() {
+    const { search } = useLocation()
+    return <Navigate to={`/invoices${search}`} replace />
 }

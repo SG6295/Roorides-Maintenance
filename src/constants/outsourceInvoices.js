@@ -1,6 +1,6 @@
 /**
  * Who pays an outsourced repair invoice — the "Paid By" choice on the job card's
- * invoice form, and the Paid By filter on Outsource Invoices. The people's entries are
+ * invoice form, and the Paid By filter on Invoices. The people's entries are
  * their repayment ledgers' names (MAIN-119), so an advance they paid matches its
  * repayment with no mapping. NVS Maintenance account is repaid the same way (MAIN-122);
  * only Accounts is company money.
@@ -14,6 +14,19 @@ export const PAID_BY_OPTIONS = ['Accounts', 'NVS Maintenance account', 'NVS 659 
  * by maintenance". Mirrors outsource_invoices_maintenance_payment_status_check.
  */
 export const MAINTENANCE_PAYMENT_STATUSES = ['Approved', 'Hold', 'Reject']
+
+/**
+ * What an invoice is for (MAIN-142) — the Type column and filter on Invoices. Values are
+ * what the database's outsource_invoice_type() returns, from which of job card, batch or
+ * purchase invoice owns it and, for a purchase, its kind — keep in step.
+ */
+export const INVOICE_TYPES = [
+    { value: 'job_card',      label: 'Job card' },
+    { value: 'multi_vehicle', label: 'Multi-vehicle' },
+    { value: 'purchase',      label: 'Purchase' },
+    { value: 'refurbishment', label: 'Refurbishment' },
+]
+export const INVOICE_TYPE_LABELS = Object.fromEntries(INVOICE_TYPES.map(t => [t.value, t.label]))
 
 /**
  * Finance's review of an outsource invoice (MAIN-118) — "Finance status". Only finance

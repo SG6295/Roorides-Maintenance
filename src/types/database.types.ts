@@ -2962,6 +2962,7 @@ export type Database = {
           p_finance_payment_status?: string[]
           p_maintenance_payment_status?: string[]
           p_paid_by?: string[]
+          p_type?: string[]
         }
         Returns: {
           accepted_count: number
@@ -3046,6 +3047,14 @@ export type Database = {
       outsource_invoice_snapshot: {
         Args: { p_invoice_id: string }
         Returns: Json
+      }
+      outsource_invoice_type: {
+        Args: {
+          p_batch_service_id: string
+          p_job_card_id: string
+          p_purchase_kind: string
+        }
+        Returns: string
       }
       payment_run_for: { Args: { p_date: string }; Returns: string }
       preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
