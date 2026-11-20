@@ -17,7 +17,7 @@ import { fmtDateTime } from './format'
 import { useOutsourceInvoiceHistory, useResubmitOutsourceInvoice } from '../../hooks/useOutsourceInvoices'
 import { useApprovedSuppliers } from '../../hooks/useSuppliers'
 import { formatBatchNumber, batchPath } from '../../utils/batchNumber'
-import { purchaseInvoicePath } from '../../utils/purchaseInvoice'
+import { formatPurchaseNumber, purchaseInvoicePath } from '../../utils/purchaseInvoice'
 import { todayLocal } from '../../utils/datetime'
 
 /**
@@ -157,8 +157,8 @@ export default function ResubmitInvoiceModal({ invoice, onClose }) {
                                             Change the lines on {formatBatchNumber(batch.batch_number)} and resubmit from there →
                                         </Link>
                                     ) : (
-                                        <Link to={purchaseInvoicePath(purchase.id)} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
-                                            Change the lines in Edit Purchase and resubmit from there →
+                                        <Link to={purchaseInvoicePath(purchase.purchase_number)} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+                                            Change the lines on {formatPurchaseNumber(purchase.purchase_number)} in Edit Purchase and resubmit from there →
                                         </Link>
                                     )
                                 )}

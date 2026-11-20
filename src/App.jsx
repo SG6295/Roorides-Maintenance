@@ -136,7 +136,7 @@ function App() {
               }
             />
             <Route
-              path="/tickets/:id"
+              path="/tickets/:ticketNumber"
               element={
                 <ProtectedRoute>
                   <TicketDetail />
@@ -237,7 +237,7 @@ function App() {
               }
             />
             <Route
-              path="/mechanics/:mechanicId"
+              path="/mechanics/:employeeId"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <MechanicDetail />
@@ -299,7 +299,7 @@ function App() {
               }
             />
             <Route
-              path="/supplier-ledger/:supplierId"
+              path="/supplier-ledger/:supplierNumber"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <SupplierStatement />
@@ -315,7 +315,7 @@ function App() {
               }
             />
             <Route
-              path="/suppliers/:id"
+              path="/suppliers/:supplierNumber"
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <SupplierDetail />

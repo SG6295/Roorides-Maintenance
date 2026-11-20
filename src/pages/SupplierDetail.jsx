@@ -1,5 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { useSupplierById, useUpdateSupplierStatus } from '../hooks/useSuppliers'
+import { useSupplierById, useSupplierIdByNumber, useUpdateSupplierStatus } from '../hooks/useSuppliers'
+import { formatSupplierNumber } from '../utils/supplierNumber'
 import Navigation from '../components/shared/Navigation'
 import { useAuth } from '../hooks/useAuth'
 
@@ -36,10 +37,13 @@ function Row({ label, value, mono = false, link = false }) {
 }
 
 export default function SupplierDetail() {
-  const { id } = useParams()
+  const { supplierNumber } = useParams()
   const navigate = useNavigate()
   const { userProfile } = useAuth()
-  const { data: supplier, isLoading, error } = useSupplierById(id)
+  // The address carries SUP-<n> (MAIN-143); the page loads and saves by id.
+  const { data: id, isLoading: resolving } = useSupplierIdByNumber(supplierNumber)
+  const { data: supplier, isLoading: loadingSupplier, error } = useSupplierById(id)
+  const isLoading = resolving || loadingSupplier
   const { mutateAsync: updateStatus, isPending: updating } = useUpdateSupplierStatus()
 
   const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
@@ -95,7 +99,10 @@ export default function SupplierDetail() {
         {/* Header card */}
         <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col sm:flex-row sm:items-start gap-4">
           <div className="flex-1 min-w-0">
-            <h1 className="text-lg font-bold text-gray-900">{supplier.entity_name}</h1>
+            <h1 className="text-lg font-bold text-gray-900">
+              {supplier.entity_name}
+              <span className="ml-2 text-sm font-medium text-gray-500">{formatSupplierNumber(supplier.supplier_number)}</span>
+            </h1>
             <p className="text-sm text-gray-500 mt-0.5">{entityTypeDisplay}</p>
             <p className="text-sm text-gray-600 mt-1">{supplier.nature_of_work}</p>
             <p className="text-xs text-gray-400 mt-1">

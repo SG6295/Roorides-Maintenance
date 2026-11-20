@@ -46,6 +46,30 @@ export function useTickets(filters = {}) {
 }
 
 /**
+ * A ticket's id from the ticket number in its address, /tickets/1234 (MAIN-143). The page
+ * then loads by id, which is what every mutation's refresh is keyed on. null when no
+ * ticket has that number (or the caller cannot see it).
+ */
+export function useTicketIdByNumber(ticketNumber) {
+  const number = /^[0-9]{1,9}$/.test(String(ticketNumber ?? '')) ? Number(ticketNumber) : null
+  return useQuery({
+    queryKey: ['ticket_id_by_number', number],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tickets')
+        .select('id')
+        .eq('ticket_number', number)
+        .maybeSingle()
+
+      if (error) throw error
+      return data?.id ?? null
+    },
+    enabled: number != null,
+    staleTime: Infinity,
+  })
+}
+
+/**
  * Hook to fetch a single ticket by ID
  */
 export function useTicket(ticketId) {

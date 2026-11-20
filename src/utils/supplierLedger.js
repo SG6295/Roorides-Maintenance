@@ -1,4 +1,5 @@
 import { formatBatchNumber } from './batchNumber'
+import { formatPurchaseNumber } from './purchaseInvoice'
 import { formatDate, formatAs } from './datetime'
 import { personName } from '../constants/supplierLedger'
 
@@ -26,9 +27,10 @@ const rupees = v => `₹${Number(v ?? 0).toLocaleString('en-IN', { minimumFracti
 /** The job card, multi-vehicle invoice, purchase or refurbishment (MAIN-130) a line belongs to. */
 export function invoiceOwner(line) {
     if (line.detail?.purchase_invoice_id) {
+        const kind = line.detail.purchase_invoice_kind === 'refurbishment' ? 'Refurbishment' : 'Purchase'
         return {
-            label: line.detail.purchase_invoice_kind === 'refurbishment' ? 'Refurbishment' : 'Purchase',
-            purchaseInvoiceId: line.detail.purchase_invoice_id,
+            label: `${kind} ${formatPurchaseNumber(line.detail.purchase_invoice_number)}`,
+            purchaseNumber: line.detail.purchase_invoice_number,
         }
     }
     if (line.job_card_number != null) return { label: `Job card #${line.job_card_number}`, jobCardNumber: line.job_card_number }

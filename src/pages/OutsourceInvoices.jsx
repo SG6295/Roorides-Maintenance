@@ -19,6 +19,7 @@ import {
     isRejectedInvoice,
 } from '../constants/outsourceInvoices'
 import { formatBatchNumber } from '../utils/batchNumber'
+import { formatPurchaseNumber } from '../utils/purchaseInvoice'
 
 // The summary tiles, each a shortcut to its Finance Status filter. Resubmitted invoices
 // wait for review with New (MAIN-120); Reject lists everything waiting to be fixed.
@@ -96,7 +97,8 @@ export default function OutsourceInvoices() {
                 inv.job_card?.vehicle_number?.toLowerCase().includes(q) ||
                 inv.batch_service?.vehicles?.some(v => v.vehicle_number.toLowerCase().includes(q)) ||
                 (inv.batch_service && formatBatchNumber(inv.batch_service.batch_number).toLowerCase().includes(q)) ||
-                (inv.purchase_invoice && (inv.refurbishment ? 'refurbishment' : 'purchase').includes(q))
+                (inv.purchase_invoice && (inv.refurbishment ? 'refurbishment' : 'purchase').includes(q)) ||
+                (inv.purchase_invoice && formatPurchaseNumber(inv.purchase_invoice.purchase_number).toLowerCase().includes(q))
             )
         })
 

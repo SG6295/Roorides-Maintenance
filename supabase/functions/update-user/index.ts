@@ -33,6 +33,10 @@ const MANAGEABLE_BY: Record<string, string[]> = {
 
 const MIN_PASSWORD_LENGTH = 8
 
+// Mirrors the generated users.employee_key column (MAIN-143): "NVS 1234", "nvs-1234"
+// and "NVS1234" are the same employee ID.
+const employeeKey = (id: string) => id.toLowerCase().replace(/[\s-]/g, '')
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
@@ -198,7 +202,23 @@ serve(async (req) => {
             return json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`, code: 'VALIDATION' }, 400)
         }
 
-        // 12. Cheap pre-flight on email collisions. auth.users is the authoritative
+        // 12. Employee ID is mandatory and unique ignoring case, spaces and hyphens
+        //     (MAIN-143) — users.employee_key enforces it; this check names the clash.
+        const nextEmployeeId = String(employee_id ?? '').trim()
+        if (!nextEmployeeId) {
+            return json({ error: 'Employee ID is required', code: 'VALIDATION' }, 400)
+        }
+        const { data: idClash } = await adminClient
+            .from('users')
+            .select('id, name')
+            .eq('employee_key', employeeKey(nextEmployeeId))
+            .neq('id', user_id)
+            .maybeSingle()
+        if (idClash) {
+            return json({ error: `Employee ID ${nextEmployeeId} is already used by ${idClash.name}`, code: 'EMPLOYEE_ID_TAKEN' }, 409)
+        }
+
+        // 13. Cheap pre-flight on email collisions. auth.users is the authoritative
         //     uniqueness store, so step A still handles the conflict it can't see.
         const nextEmail = String(email).trim().toLowerCase()
         const emailChanged = nextEmail !== String(target.email ?? '').toLowerCase()
@@ -248,7 +268,7 @@ serve(async (req) => {
                 email: nextEmail,
                 name,
                 role,
-                employee_id: employee_id || null,
+                employee_id: nextEmployeeId,
                 contact: contact || null,
             })
             .eq('id', user_id)
@@ -264,6 +284,10 @@ serve(async (req) => {
                     email: target.email,
                     email_confirm: true,
                 })
+            }
+            // Another save took the same employee ID between step 12 and here.
+            if (profileError.code === '23505' && /employee_key/.test(profileError.message)) {
+                return json({ error: `Employee ID ${nextEmployeeId} is already in use`, code: 'EMPLOYEE_ID_TAKEN' }, 409)
             }
             return json({
                 error: emailChanged
@@ -340,7 +364,7 @@ serve(async (req) => {
         track('name', target.name, name)
         track('email', target.email, nextEmail)
         track('role', target.role, role)
-        track('employee_id', target.employee_id ?? null, employee_id || null)
+        track('employee_id', target.employee_id ?? null, nextEmployeeId)
         track('contact', target.contact ?? null, contact || null)
 
         if (oldSiteNames.join('|') !== newSiteNames.join('|')) {

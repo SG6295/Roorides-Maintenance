@@ -13,6 +13,10 @@ const CREATABLE_ROLES: Record<string, string[]> = {
     maintenance_exec: ['supervisor', 'mechanic', 'electrician'],
 }
 
+// Mirrors the generated users.employee_key column (MAIN-143): "NVS 1234", "nvs-1234"
+// and "NVS1234" are the same employee ID.
+const employeeKey = (id: string) => id.toLowerCase().replace(/[\s-]/g, '')
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
@@ -93,6 +97,27 @@ serve(async (req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         )
 
+        // Employee ID is mandatory and unique ignoring case, spaces and hyphens
+        // (MAIN-143). Checked before the auth user exists, so a clash leaves nothing behind.
+        const employeeId = String(employee_id ?? '').trim()
+        if (!employeeId) {
+            return new Response(
+                JSON.stringify({ error: 'Employee ID is required' }),
+                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+        const { data: idClash } = await adminClient
+            .from('users')
+            .select('id, name')
+            .eq('employee_key', employeeKey(employeeId))
+            .maybeSingle()
+        if (idClash) {
+            return new Response(
+                JSON.stringify({ error: `Employee ID ${employeeId} is already used by ${idClash.name}` }),
+                { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+        }
+
         // 1. Create auth user
         const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
             email,
@@ -114,13 +139,22 @@ serve(async (req) => {
                 name,
                 role,
                 site: null,
-                employee_id: employee_id || null,
+                employee_id: employeeId,
                 contact: contact || null,
                 is_active: true
             }])
 
         if (profileError) {
             console.error('Profile creation failed:', profileError)
+            // Another save took the same employee ID after the check above: remove the
+            // auth user so the address can be retried.
+            if (profileError.code === '23505' && /employee_key/.test(profileError.message)) {
+                await adminClient.auth.admin.deleteUser(userId)
+                return new Response(
+                    JSON.stringify({ error: `Employee ID ${employeeId} is already in use` }),
+                    { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                )
+            }
             return new Response(
                 JSON.stringify({ error: 'User created but profile sync failed', details: profileError }),
                 { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -166,7 +200,7 @@ serve(async (req) => {
                     name,
                     email,
                     role,
-                    employee_id: employee_id || null,
+                    employee_id: employeeId,
                     contact: contact || null,
                     sites: siteNames,
                 },

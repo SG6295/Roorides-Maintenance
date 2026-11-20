@@ -3,7 +3,7 @@ import EditRefurbishmentModal from './EditRefurbishmentModal'
 
 /**
  * Opens a purchase invoice in the form for its kind (MAIN-130): Purchase History's edit
- * button and /inventory?tab=history&invoice=<id>, which Invoices and the
+ * button and /inventory?tab=history&invoice=PI-257, which Invoices and the
  * supplier ledger link to, both come through here.
  */
 export default function PurchaseInvoiceEditor({ invoice, onClose }) {

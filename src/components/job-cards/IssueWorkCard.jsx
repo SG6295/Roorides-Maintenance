@@ -193,7 +193,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             {/* Header: number, title, category, SLA, status, completion date */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100">
                 <Link
-                    to={`/tickets/${issue.ticket_id}`}
+                    to={`/tickets/${issue.ticket?.ticket_number}`}
                     className="text-xs font-medium text-blue-600 hover:underline"
                 >
                     {issue.issue_number}

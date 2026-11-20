@@ -13,6 +13,8 @@ import {
 } from '../hooks/useSupplierLedger'
 import { LEDGER_WRITE_ROLES, advancePeopleNames } from '../constants/supplierLedger'
 import { describeLine } from '../utils/supplierLedger'
+import { formatSupplierNumber } from '../utils/supplierNumber'
+import { useSupplierIdByNumber } from '../hooks/useSuppliers'
 import { exportSupplierStatement } from '../utils/supplierLedgerExport'
 import { todayLocal } from '../utils/datetime'
 import { fmtMoney, fmtDate } from '../components/outsource-invoices/format'
@@ -24,10 +26,13 @@ import { fmtMoney, fmtDate } from '../components/outsource-invoices/format'
  * reconcile or reverse an adjustment, set credit days. Exec reads only.
  */
 export default function SupplierStatement() {
-    const { supplierId } = useParams()
+    const { supplierNumber } = useParams()
     const { userProfile } = useAuth()
     const canWrite = LEDGER_WRITE_ROLES.includes(userProfile?.role)
-    const { data: supplier, isLoading, error } = useSupplierBalance(supplierId)
+    // The address carries SUP-<n> (MAIN-143); the ledger readers take the id.
+    const { data: supplierId, isLoading: resolving } = useSupplierIdByNumber(supplierNumber)
+    const { data: supplier, isLoading: loadingBalance, error } = useSupplierBalance(supplierId)
+    const isLoading = resolving || loadingBalance
     const { data: lines = [], isLoading: linesLoading } = useSupplierStatement(supplierId)
     const { data: openItems = [] } = useSupplierOpenItems(supplierId)
     const recordPayment = useRecordSupplierPayment()
@@ -53,7 +58,10 @@ export default function SupplierStatement() {
         <Page name={supplier.entity_name}>
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">{supplier.entity_name}</h1>
+                    <h1 className="text-2xl font-bold text-gray-900">
+                        {supplier.entity_name}
+                        <span className="ml-2 text-base font-medium text-gray-500">{formatSupplierNumber(supplier.supplier_number)}</span>
+                    </h1>
                     <p className="text-sm text-gray-600 mt-1 flex flex-wrap items-center gap-x-1">
                         Credit period <CreditDaysEditor supplierId={supplier.supplier_id} value={supplier.credit_days} canEdit={canWrite} /> days
                         <span className="text-gray-400">·</span>

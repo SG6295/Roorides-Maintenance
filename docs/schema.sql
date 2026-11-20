@@ -1138,6 +1138,7 @@ CREATE FUNCTION public.advance_ledger_lines() RETURNS TABLE(person text, entry_a
              'supplier', s.entity_name, 'supplier_id', s.id,
              'approved', oi.approved_amount, 'to_supplier', oi.approved_amount - oi.advance_amount,
              'purchase_invoice_id', oi.purchase_invoice_id,
+             'purchase_invoice_number', pi.purchase_number,
              'purchase_invoice_kind', pi.kind)
   from   public.outsource_invoices oi
   left join public.job_cards         jc on jc.id = oi.job_card_id
@@ -2800,13 +2801,13 @@ ALTER FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id uuid) OW
 -- Name: get_labour_report(date, date); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_labour_report(p_from date, p_to date) RETURNS TABLE(issue_id uuid, issue_number text, description text, category text, completed_on date, site text, vehicle_number text, job_card_number integer, technician_id uuid, technician_name text, technician_role text, hours numeric, attributed boolean)
+CREATE FUNCTION public.get_labour_report(p_from date, p_to date) RETURNS TABLE(issue_id uuid, issue_number text, description text, category text, completed_on date, site text, vehicle_number text, job_card_number integer, technician_id uuid, technician_employee_id text, technician_name text, technician_role text, hours numeric, attributed boolean)
     LANGUAGE sql STABLE
     SET search_path TO 'public'
     AS $$
     SELECT i.id, i.issue_number, i.description, i.category::text, i.completed_on,
            jc.site, jc.vehicle_number, jc.job_card_number,
-           il.technician_id, u.name, u.role, il.hours, true
+           il.technician_id, u.employee_id, u.name, u.role, il.hours, true
     FROM   public.issue_labour il
     JOIN   public.issues    i  ON i.id  = il.issue_id
     JOIN   public.job_cards jc ON jc.id = i.job_card_id
@@ -2818,7 +2819,7 @@ CREATE FUNCTION public.get_labour_report(p_from date, p_to date) RETURNS TABLE(i
 
     SELECT i.id, i.issue_number, i.description, i.category::text, i.completed_on,
            jc.site, jc.vehicle_number, jc.job_card_number,
-           NULL, NULL, NULL, i.labour_hours, false
+           NULL, NULL, NULL, NULL, i.labour_hours, false
     FROM   public.issues    i
     JOIN   public.job_cards jc ON jc.id = i.job_card_id
     WHERE  jc.type = 'InHouse'
@@ -3082,7 +3083,8 @@ CREATE FUNCTION public.get_outsource_invoice_rows(p_filters jsonb DEFAULT '{}'::
           from public.batch_services bs where bs.id = p.batch_service_id),
         'purchase_invoice', (
           select jsonb_build_object(
-                   'id', pi.id, 'kind', pi.kind, 'invoice_number', pi.invoice_number,
+                   'id', pi.id, 'purchase_number', pi.purchase_number,
+                   'kind', pi.kind, 'invoice_number', pi.invoice_number,
                    'invoice_file_url', pi.invoice_file_url, 'total_amount', pi.total_amount,
                    'supplier', (select jsonb_build_object('id', s.id, 'entity_name', s.entity_name)
                                 from public.suppliers s where s.id = pi.supplier_id))
@@ -3131,7 +3133,7 @@ ALTER FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment_status
 -- Name: get_supplier_balances(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_supplier_balances(p_supplier_id uuid DEFAULT NULL::uuid) RETURNS TABLE(supplier_id uuid, entity_name text, credit_days integer, outstanding numeric, overdue numeric, due_this_wednesday numeric, due_next_wednesday numeric, later numeric, this_wednesday date, last_payment_on date, last_reconciled_on date, awaiting_acceptance bigint)
+CREATE FUNCTION public.get_supplier_balances(p_supplier_id uuid DEFAULT NULL::uuid) RETURNS TABLE(supplier_id uuid, supplier_number integer, entity_name text, credit_days integer, outstanding numeric, overdue numeric, due_this_wednesday numeric, due_next_wednesday numeric, later numeric, this_wednesday date, last_payment_on date, last_reconciled_on date, awaiting_acceptance bigint)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -3169,7 +3171,7 @@ BEGIN
           AND  (bs.id IS NULL OR bs.status = 'Active')
         GROUP  BY 1
     )
-    SELECT s.id, s.entity_name, s.payment_terms_days,
+    SELECT s.id, s.supplier_number, s.entity_name, s.payment_terms_days,
            coalesce(bal.total, 0),
            coalesce(oi.overdue, 0), coalesce(oi.this_wed, 0),
            coalesce(oi.next_wed, 0), coalesce(oi.later, 0),
@@ -7140,7 +7142,8 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
              coalesce(oi.accepted_at, oi.updated_at)        as entered_at,
              oi.paid_by = any(public.advance_people()) as by_person,
              jc.job_card_number, bs.batch_number,
-             pi.kind as purchase_invoice_kind
+             pi.kind as purchase_invoice_kind,
+             pi.purchase_number as purchase_invoice_number
       from   public.outsource_invoices oi
       left join public.job_cards         jc on jc.id = oi.job_card_id
       left join public.batch_services    bs on bs.id = oi.batch_service_id
@@ -7160,6 +7163,7 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
              'to_supplier',     inv.approved_amount - inv.advance_amount,
              'advance_by_person', inv.by_person,
              'purchase_invoice_id', inv.purchase_invoice_id,
+             'purchase_invoice_number', inv.purchase_invoice_number,
              'purchase_invoice_kind', inv.purchase_invoice_kind)
   from   inv join public.suppliers s on s.id = inv.sup_id
 
@@ -7170,6 +7174,7 @@ CREATE FUNCTION public.supplier_ledger_lines() RETURNS TABLE(supplier_id uuid, e
          inv.id, inv.invoice_no, inv.job_card_number, inv.batch_number,
          jsonb_build_object('paid_by', inv.paid_by, 'advance_by_person', inv.by_person,
                             'purchase_invoice_id', inv.purchase_invoice_id,
+                            'purchase_invoice_number', inv.purchase_invoice_number,
                             'purchase_invoice_kind', inv.purchase_invoice_kind)
   from   inv
   where  inv.advance_amount > 0
@@ -12024,6 +12029,7 @@ CREATE TABLE public.purchase_invoices (
     location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
     supplier_id uuid,
     kind text DEFAULT 'purchase'::text NOT NULL,
+    purchase_number integer NOT NULL,
     CONSTRAINT purchase_invoices_kind_check CHECK ((kind = ANY (ARRAY['purchase'::text, 'refurbishment'::text])))
 );
 
@@ -12042,6 +12048,27 @@ COMMENT ON COLUMN public.purchase_invoices.location_id IS 'Workshop all line ite
 --
 
 COMMENT ON COLUMN public.purchase_invoices.supplier_id IS 'The supplier, where one was chosen from the list. supplier_name holds its name at the time, so Purchase History reads the same either way.';
+
+
+--
+-- Name: COLUMN purchase_invoices.purchase_number; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.purchase_invoices.purchase_number IS 'Running number shown as PI-<n> and used in the invoice''s address (MAIN-143). Purchases and refurbishments share it; suppliers reuse their own invoice numbers, so this is ours.';
+
+
+--
+-- Name: purchase_invoices_purchase_number_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.purchase_invoices ALTER COLUMN purchase_number ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.purchase_invoices_purchase_number_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -12752,6 +12779,7 @@ CREATE TABLE public.suppliers (
     submitted_by text,
     created_via text DEFAULT 'registration'::text NOT NULL,
     created_by uuid,
+    supplier_number integer NOT NULL,
     CONSTRAINT suppliers_created_via_check CHECK ((created_via = ANY (ARRAY['registration'::text, 'quick_add'::text]))),
     CONSTRAINT suppliers_payment_terms_days_check CHECK (((payment_terms_days IS NULL) OR ((payment_terms_days >= 0) AND (payment_terms_days <= 365)))),
     CONSTRAINT suppliers_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))
@@ -12759,6 +12787,27 @@ CREATE TABLE public.suppliers (
 
 
 ALTER TABLE public.suppliers OWNER TO postgres;
+
+--
+-- Name: COLUMN suppliers.supplier_number; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.suppliers.supplier_number IS 'Running number shown as SUP-<n> and used in /suppliers/SUP-<n> and /supplier-ledger/SUP-<n> (MAIN-143).';
+
+
+--
+-- Name: suppliers_supplier_number_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.suppliers ALTER COLUMN supplier_number ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.suppliers_supplier_number_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
 
 --
 -- Name: system_settings; Type: TABLE; Schema: public; Owner: postgres
@@ -12847,17 +12896,26 @@ CREATE TABLE public.users (
     id uuid NOT NULL,
     email text NOT NULL,
     name text NOT NULL,
-    employee_id text,
+    employee_id text NOT NULL,
     contact text,
     role text NOT NULL,
     site text,
     is_active boolean DEFAULT true,
     created_at timestamp without time zone DEFAULT now(),
+    employee_key text GENERATED ALWAYS AS (lower(regexp_replace(employee_id, '[[:space:]-]'::text, ''::text, 'g'::text))) STORED,
+    CONSTRAINT users_employee_id_trimmed_check CHECK (((employee_id <> ''::text) AND (employee_id = regexp_replace(employee_id, '^[[:space:]]+|[[:space:]]+$'::text, ''::text, 'g'::text)))),
     CONSTRAINT users_role_check CHECK ((role = ANY (ARRAY['supervisor'::text, 'maintenance_exec'::text, 'finance'::text, 'mechanic'::text, 'electrician'::text, 'super_admin'::text])))
 );
 
 
 ALTER TABLE public.users OWNER TO postgres;
+
+--
+-- Name: COLUMN users.employee_key; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.users.employee_key IS 'employee_id in lower case with spaces and hyphens removed — what uniqueness and the /mechanics/<employee ID> address match on (MAIN-143).';
+
 
 --
 -- Name: vehicle_sites; Type: TABLE; Schema: public; Owner: postgres
@@ -13734,6 +13792,14 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
+-- Name: purchase_invoices purchase_invoices_purchase_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.purchase_invoices
+    ADD CONSTRAINT purchase_invoices_purchase_number_key UNIQUE (purchase_number);
+
+
+--
 -- Name: refurbished_part_links refurbished_part_links_original_part_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13966,6 +14032,14 @@ ALTER TABLE ONLY public.suppliers
 
 
 --
+-- Name: suppliers suppliers_supplier_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_supplier_number_key UNIQUE (supplier_number);
+
+
+--
 -- Name: system_settings system_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -13979,6 +14053,14 @@ ALTER TABLE ONLY public.system_settings
 
 ALTER TABLE ONLY public.tickets
     ADD CONSTRAINT tickets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tickets tickets_ticket_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tickets
+    ADD CONSTRAINT tickets_ticket_number_key UNIQUE (ticket_number);
 
 
 --
@@ -15203,6 +15285,13 @@ CREATE INDEX user_audit_logs_performed_at_idx ON public.user_audit_logs USING bt
 --
 
 CREATE INDEX user_audit_logs_target_idx ON public.user_audit_logs USING btree (target_user_id);
+
+
+--
+-- Name: users_employee_key_key; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX users_employee_key_key ON public.users USING btree (employee_key);
 
 
 --
@@ -19103,7 +19192,7 @@ GRANT ALL ON FUNCTION public.get_blocking_scrap_for_issue_part(p_issue_part_id u
 -- Name: FUNCTION get_labour_report(p_from date, p_to date); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) TO anon;
+REVOKE ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) TO authenticated;
 GRANT ALL ON FUNCTION public.get_labour_report(p_from date, p_to date) TO service_role;
 
@@ -19148,7 +19237,7 @@ GRANT ALL ON FUNCTION public.get_outsource_invoice_summary(p_maintenance_payment
 -- Name: FUNCTION get_supplier_balances(p_supplier_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_supplier_balances(p_supplier_id uuid) TO anon;
+REVOKE ALL ON FUNCTION public.get_supplier_balances(p_supplier_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.get_supplier_balances(p_supplier_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.get_supplier_balances(p_supplier_id uuid) TO service_role;
 
@@ -20589,6 +20678,15 @@ GRANT ALL ON TABLE public.purchase_invoices TO service_role;
 
 
 --
+-- Name: SEQUENCE purchase_invoices_purchase_number_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.purchase_invoices_purchase_number_seq TO anon;
+GRANT ALL ON SEQUENCE public.purchase_invoices_purchase_number_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.purchase_invoices_purchase_number_seq TO service_role;
+
+
+--
 -- Name: TABLE refurbished_part_links; Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -20802,6 +20900,15 @@ GRANT ALL ON TABLE public.supplier_payments TO service_role;
 GRANT ALL ON TABLE public.suppliers TO anon;
 GRANT ALL ON TABLE public.suppliers TO authenticated;
 GRANT ALL ON TABLE public.suppliers TO service_role;
+
+
+--
+-- Name: SEQUENCE suppliers_supplier_number_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.suppliers_supplier_number_seq TO anon;
+GRANT ALL ON SEQUENCE public.suppliers_supplier_number_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.suppliers_supplier_number_seq TO service_role;
 
 
 --

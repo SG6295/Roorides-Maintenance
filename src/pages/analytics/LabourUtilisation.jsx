@@ -17,6 +17,7 @@ import { ROLE_LABELS } from '../../constants/userRoles'
 import DateRangeFilter from '../../components/tickets/DateRangeFilter'
 import MultiFilterSelect from '../../components/shared/MultiFilterSelect'
 import FilterSelect from '../../components/shared/FilterSelect'
+import { mechanicPath } from '../../utils/employeeId'
 
 // Categorical slice colours; "Other" is always the grey.
 const SLICE_COLORS = ['#2563eb', '#d97706', '#059669', '#7c3aed', '#db2777', '#0891b2']
@@ -270,7 +271,7 @@ function LabourGrid({ grid, days }) {
                     {grid.technicians.map(t => (
                         <tr key={t.id}>
                             <td className="sticky left-0 z-10 bg-white pr-3 py-0.5 whitespace-nowrap">
-                                <Link to={`/mechanics/${t.id}`} className="block text-sm text-blue-600 hover:underline">{t.name}</Link>
+                                <Link to={mechanicPath(t.employeeId)} className="block text-sm text-blue-600 hover:underline">{t.name}</Link>
                                 <span className="text-[11px] text-gray-500">{ROLE_LABELS[t.role] || t.role}</span>
                             </td>
                             {t.cells.map(c => (

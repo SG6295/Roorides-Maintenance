@@ -57,6 +57,7 @@ export default function EditRefurbishmentModal({ invoice, onClose }) {
     return (
         <PurchaseInvoiceModal
             title={form.isFinanceRole ? 'Refurbishment' : 'Edit Refurbishment'}
+            number={invoice.purchase_number}
             form={form}
             loading={isLoading || !lines}
             error={error}

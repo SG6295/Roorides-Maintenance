@@ -10,6 +10,7 @@ import { upcomingRuns } from '../utils/paymentRuns'
 import { exportSupplierBalances } from '../utils/supplierLedgerExport'
 import { todayLocal, formatAs } from '../utils/datetime'
 import { fmtMoney, fmtDate } from '../components/outsource-invoices/format'
+import { formatSupplierNumber, supplierLedgerPath } from '../utils/supplierNumber'
 
 const FILTERS = [
     { key: 'balance', label: 'With a balance', test: r => r.outstanding !== 0 },
@@ -131,9 +132,10 @@ export default function SupplierLedger() {
                                 {visible.map(r => (
                                     <tr key={r.supplier_id} className="hover:bg-gray-50">
                                         <td className="px-3 py-3 whitespace-nowrap">
-                                            <Link to={`/supplier-ledger/${r.supplier_id}`} className="font-semibold text-blue-600 hover:underline">
+                                            <Link to={supplierLedgerPath(r.supplier_number)} className="font-semibold text-blue-600 hover:underline">
                                                 {r.entity_name}
                                             </Link>
+                                            <span className="ml-1.5 text-xs text-gray-500">{formatSupplierNumber(r.supplier_number)}</span>
                                             {r.awaiting_acceptance > 0 && (
                                                 <span className="block text-xs text-gray-500">
                                                     {r.awaiting_acceptance} invoice{r.awaiting_acceptance === 1 ? '' : 's'} awaiting acceptance

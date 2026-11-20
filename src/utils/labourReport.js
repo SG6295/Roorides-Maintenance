@@ -108,6 +108,7 @@ export function buildGrid(rows, days) {
         if (!people.has(r.technician_id)) {
             people.set(r.technician_id, {
                 id: r.technician_id,
+                employeeId: r.technician_employee_id,
                 name: r.technician_name || 'Unknown',
                 role: r.technician_role,
                 cells: days.map(day => ({ day, hours: 0, items: [] })),

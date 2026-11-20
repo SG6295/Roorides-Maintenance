@@ -13,7 +13,7 @@ export default function TicketCard({ ticket, currentDate }) {
 
     return (
         <Link
-            to={`/tickets/${ticket.id}`}
+            to={`/tickets/${ticket.ticket_number}`}
             className="block bg-white rounded-lg shadow border border-gray-200 card-hover p-4 sm:p-5 active:scale-[0.99] transition-transform relative"
         >
             {/* SLA Timer - Absolute Top Right */}

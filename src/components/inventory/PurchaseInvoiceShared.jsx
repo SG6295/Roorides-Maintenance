@@ -4,6 +4,7 @@ import InvoiceFileLink from '../outsource-invoices/InvoiceFileLink'
 import SupplierPicker from '../suppliers/SupplierPicker'
 import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../outsource-invoices/InvoiceDetailsFields'
 import { financeStatusColor } from '../outsource-invoices/format'
+import { formatPurchaseNumber } from '../../utils/purchaseInvoice'
 
 /**
  * The pieces the purchase and refurbishment forms share (MAIN-130), driven by
@@ -11,15 +12,18 @@ import { financeStatusColor } from '../outsource-invoices/format'
  * notes, finance details and file. Each form supplies its own workshop and lines.
  */
 
-/** The modal: title and finance badge, the form body, and a footer with Save for execs. */
-export function PurchaseInvoiceModal({ title, form, loading, error, onClose, onSubmit, footer, children }) {
+/** The modal: title, PI number (MAIN-143) and finance badge, the form body, and a footer with Save for execs. */
+export function PurchaseInvoiceModal({ title, number, form, loading, error, onClose, onSubmit, footer, children }) {
     const { finance, isFinanceRole, rejected, saving } = form
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
                 <div className="flex items-center justify-between px-6 py-4 border-b">
                     <div className="flex items-center gap-3">
-                        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+                        <h2 className="text-lg font-semibold text-gray-900">
+                            {title}
+                            {number != null && <span className="ml-2 text-gray-500 font-medium">{formatPurchaseNumber(number)}</span>}
+                        </h2>
                         {finance && (
                             <span
                                 title={finance.finance_remark || undefined}
