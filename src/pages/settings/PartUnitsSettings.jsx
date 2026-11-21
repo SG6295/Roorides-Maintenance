@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { usePartUnits, useAddPartUnit, useDeletePartUnit } from '../../hooks/useInventory'
+import { useConfirm } from '../../hooks/useFeedback'
 
 export default function PartUnitsSettings() {
+    const confirm = useConfirm()
     const { data: units = [], isLoading } = usePartUnits()
     const addUnit = useAddPartUnit()
     const deleteUnit = useDeletePartUnit()
@@ -27,7 +29,11 @@ export default function PartUnitsSettings() {
     }
 
     async function handleDelete(unit) {
-        if (!window.confirm(`Remove "${unit.name}"? Parts already using this unit are unaffected.`)) return
+        if (!(await confirm({
+            title: `Remove "${unit.name}"?`,
+            message: 'Parts already using this unit are unaffected.',
+            confirmLabel: 'Remove',
+        }))) return
         try {
             await deleteUnit.mutateAsync(unit.id)
         } catch (err) {

@@ -2,8 +2,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useToast } from '../../hooks/useFeedback'
+import PasswordInput from '../../components/shared/PasswordInput'
 
 export default function UpdatePassword() {
+    const toast = useToast()
     const [password, setPassword] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
@@ -19,7 +22,7 @@ export default function UpdatePassword() {
 
             if (error) throw error
 
-            alert('Password updated successfully! Redirecting to dashboard...')
+            toast.success('Password updated successfully! Redirecting to dashboard...')
             navigate('/dashboard')
         } catch (err) {
             setError(err.message)
@@ -50,10 +53,9 @@ export default function UpdatePassword() {
                                 New Password
                             </label>
                             <div className="mt-1">
-                                <input
+                                <PasswordInput
                                     id="password"
                                     name="password"
-                                    type="password"
                                     required
                                     minLength={6}
                                     className="block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"

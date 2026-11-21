@@ -11,7 +11,9 @@ import { logAuditEvent } from '../../utils/auditLogger'
 import { issueLabourHours, formatHours, initials } from '../../utils/labour'
 import { ROLE_LABELS } from '../../constants/userRoles'
 import SearchableSelect from '../shared/SearchableSelect'
+import CustomSelect from '../shared/CustomSelect'
 import SLAStatusBadge from '../shared/SLAStatusBadge'
+import { useToast } from '../../hooks/useFeedback'
 
 /**
  * IssueWorkCard - displays a single issue within a Job Card with labour, parts, and status controls
@@ -43,6 +45,7 @@ const parseHours = (value) => {
 }
 
 export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMechanic, parts, technicians = [], userProfile, jobCardType }) {
+    const toast = useToast()
     const updateIssue = useUpdateIssue()
     const addIssuePart = useAddIssuePart(jobCardId)
     const deleteIssuePart = useDeleteIssuePart(jobCardId)
@@ -63,6 +66,10 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
     const [newPartUnit, setNewPartUnit] = useState('')
     const [newPartNumber, setNewPartNumber] = useState('')
     const [editingDate, setEditingDate] = useState(false)
+    // Form checks, shown next to their fields (MAIN-144).
+    const [addPartError, setAddPartError] = useState(null)
+    const [newPartError, setNewPartError] = useState(null)
+    const [dateError, setDateError] = useState(null)
 
     const isPending = updateIssue.isPending || addIssuePart.isPending || deleteIssuePart.isPending
 
@@ -81,21 +88,22 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             if (e instanceof ScrapRPCError && e.errorCode === 'SCRAP_BLOCKING_DELETE') {
                 setDeleteError({ partId: issuePartId, message: e.message })
             } else {
-                alert('Failed to remove part: ' + e.message)
+                toast.error('Failed to remove part: ' + e.message)
             }
         }
     }
 
     const handleAddPart = async () => {
         if (!form.selectedPartId) {
-            alert('Please select a part.')
+            setAddPartError('Please select a part.')
             return
         }
         const qty = parseFloat(form.partQty)
         if (!qty || qty <= 0) {
-            alert('Please enter a valid quantity greater than 0.')
+            setAddPartError('Please enter a valid quantity greater than 0.')
             return
         }
+        setAddPartError(null)
         try {
             await addIssuePart.mutateAsync({
                 issue_id: issue.id,
@@ -107,7 +115,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
         } catch (e) {
             // The database refuses to issue more than this workshop holds, and its
             // message already names the part, the quantity and the workshop.
-            alert(e.message)
+            toast.error(e.message)
         }
     }
 
@@ -116,19 +124,21 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             setShowCreateForm(true)
             return
         }
+        setAddPartError(null)
         setForm(prev => ({ ...prev, selectedPartId: val }))
     }
 
     const handleCreatePart = async () => {
-        if (!newPartName.trim()) { alert('Part name is required.'); return }
-        if (!newPartUnit) { alert('Unit is required.'); return }
+        if (!newPartName.trim()) { setNewPartError('Part name is required.'); return }
+        if (!newPartUnit) { setNewPartError('Unit is required.'); return }
         const duplicate = parts.find(
             p => p.name.trim().toLowerCase() === newPartName.trim().toLowerCase()
         )
         if (duplicate) {
-            alert('This part already exists — please select it from the dropdown.')
+            setNewPartError('This part already exists — please select it from the dropdown.')
             return
         }
+        setNewPartError(null)
         try {
             const created = await createPart.mutateAsync({
                 name: newPartName,
@@ -141,7 +151,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             setNewPartUnit('')
             setNewPartNumber('')
         } catch (e) {
-            alert('Failed to create part: ' + e.message)
+            toast.error('Failed to create part: ' + e.message)
         }
     }
 
@@ -154,7 +164,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                 oldData: issue,
             })
         } catch (e) {
-            alert('Failed to update status: ' + e.message)
+            toast.error('Failed to update status: ' + e.message)
         }
     }
 
@@ -166,7 +176,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
         // A date-time string with no zone is read as the viewer's local time.
         const picked = new Date(value)
         if (isNaN(picked) || picked.getFullYear() < 2020 || picked > new Date()) {
-            alert('Please pick a time between 2020 and now.')
+            setDateError('Please pick a time between 2020 and now.')
             return
         }
         try {
@@ -177,7 +187,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                 oldData: issue,
             })
         } catch (e) {
-            alert('Failed to change the activity complete time: ' + e.message)
+            toast.error('Failed to change the activity complete time: ' + e.message)
         }
     }
 
@@ -232,7 +242,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                         ) : isExec ? (
                             <button
                                 type="button"
-                                onClick={() => setEditingDate(true)}
+                                onClick={() => { setDateError(null); setEditingDate(true) }}
                                 title="Change the activity complete time"
                                 className="inline-flex items-center gap-1 text-xs text-gray-700 border border-gray-200 rounded-md px-2 py-1 hover:border-blue-300 hover:text-blue-700 transition-colors"
                             >
@@ -246,6 +256,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                             </span>
                         )
                     )}
+                    {dateError && <span className="text-xs text-red-600">{dateError}</span>}
                 </span>
             </div>
 
@@ -331,21 +342,19 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                     <input
                                         type="text"
                                         value={newPartName}
-                                        onChange={e => setNewPartName(e.target.value)}
+                                        onChange={e => { setNewPartName(e.target.value); setNewPartError(null) }}
                                         placeholder="Part name *"
                                         className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
                                     <div className="flex gap-2">
-                                        <select
-                                            value={newPartUnit}
-                                            onChange={e => setNewPartUnit(e.target.value)}
-                                            className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                                        >
-                                            <option value="">Unit *</option>
-                                            {partUnits.map(u => (
-                                                <option key={u.id} value={u.name}>{u.name}</option>
-                                            ))}
-                                        </select>
+                                        <div className="flex-1 min-w-0">
+                                            <CustomSelect
+                                                value={newPartUnit}
+                                                onChange={v => { setNewPartUnit(v); setNewPartError(null) }}
+                                                options={partUnits.map(u => ({ value: u.name, label: u.name }))}
+                                                placeholder="Unit *"
+                                            />
+                                        </div>
                                         <input
                                             type="text"
                                             value={newPartNumber}
@@ -354,6 +363,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                             className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         />
                                     </div>
+                                    {newPartError && <p className="text-xs text-red-600">{newPartError}</p>}
                                     <div className="flex gap-2">
                                         <button
                                             onClick={handleCreatePart}
@@ -363,7 +373,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                             {createPart.isPending ? 'Creating…' : 'Create & select'}
                                         </button>
                                         <button
-                                            onClick={() => { setShowCreateForm(false); setNewPartName(''); setNewPartUnit(''); setNewPartNumber('') }}
+                                            onClick={() => { setShowCreateForm(false); setNewPartName(''); setNewPartUnit(''); setNewPartNumber(''); setNewPartError(null) }}
                                             className="text-sm px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                                         >
                                             Cancel
@@ -378,7 +388,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                     min="0.01"
                                     step="0.01"
                                     value={form.partQty}
-                                    onChange={e => setForm(prev => ({ ...prev, partQty: e.target.value }))}
+                                    onChange={e => { setForm(prev => ({ ...prev, partQty: e.target.value })); setAddPartError(null) }}
                                     placeholder="Qty"
                                     className="w-20 text-sm border border-gray-300 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
@@ -390,6 +400,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                     {addIssuePart.isPending ? 'Adding...' : 'Add'}
                                 </button>
                             </div>
+                            {addPartError && <p className="text-xs text-red-600">{addPartError}</p>}
                         </div>
                     )}
                 </div>
@@ -446,12 +457,14 @@ const AVATAR_COLORS = {
  * adding a person, editing hours (Enter or leaving the box), removing a person.
  */
 function LabourSection({ issue, jobCardId, canEdit, technicians }) {
+    const toast = useToast()
     const addLabour = useAddIssueLabour(jobCardId)
     const updateLabour = useUpdateIssueLabour(jobCardId)
     const deleteLabour = useDeleteIssueLabour(jobCardId)
 
     const [technicianId, setTechnicianId] = useState('')
     const [newHours, setNewHours] = useState('')
+    const [addError, setAddError] = useState(null)
 
     const rows = issue.issue_labour || []
     const { hours: total, unattributed } = issueLabourHours(issue)
@@ -460,15 +473,16 @@ function LabourSection({ issue, jobCardId, canEdit, technicians }) {
     const available = technicians.filter(t => !rows.some(r => r.technician?.id === t.id))
 
     const handleAdd = async () => {
-        if (!technicianId) { alert('Please pick a technician.'); return }
+        if (!technicianId) { setAddError('Please pick a technician.'); return }
         const hours = parseHours(newHours)
-        if (hours == null) { alert('Hours must be more than 0 and at most 24.'); return }
+        if (hours == null) { setAddError('Hours must be more than 0 and at most 24.'); return }
+        setAddError(null)
         try {
             await addLabour.mutateAsync({ issue_id: issue.id, technician_id: technicianId, hours })
             setTechnicianId('')
             setNewHours('')
         } catch (e) {
-            alert('Failed to add labour: ' + e.message)
+            toast.error('Failed to add labour: ' + e.message)
         }
     }
 
@@ -511,7 +525,7 @@ function LabourSection({ issue, jobCardId, canEdit, technicians }) {
                         <div className="flex-1 min-w-0">
                             <SearchableSelect
                                 value={technicianId}
-                                onChange={setTechnicianId}
+                                onChange={v => { setTechnicianId(v); setAddError(null) }}
                                 options={available.map(t => ({ value: t.id, label: `${t.name} · ${ROLE_LABELS[t.role] || t.role}` }))}
                                 placeholder="+ Technician"
                                 showAllOnFocus={true}
@@ -523,7 +537,7 @@ function LabourSection({ issue, jobCardId, canEdit, technicians }) {
                             max="24"
                             step="0.25"
                             value={newHours}
-                            onChange={e => setNewHours(e.target.value)}
+                            onChange={e => { setNewHours(e.target.value); setAddError(null) }}
                             onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
                             placeholder="hrs"
                             aria-label="Hours"
@@ -538,15 +552,18 @@ function LabourSection({ issue, jobCardId, canEdit, technicians }) {
                         </button>
                     </div>
                 )}
+                {addError && <p className="text-xs text-red-600">{addError}</p>}
             </div>
         </div>
     )
 }
 
 function LabourRow({ row, canEdit, busy, onSave, onRemove }) {
+    const toast = useToast()
     const saved = formatHours(parseFloat(row.hours))
     const [value, setValue] = useState(saved)
     const [prevSaved, setPrevSaved] = useState(saved)
+    const [hoursError, setHoursError] = useState(null)
 
     // Follow the saved value when it changes underneath us (refetch after a save).
     if (saved !== prevSaved) {
@@ -558,14 +575,15 @@ function LabourRow({ row, canEdit, busy, onSave, onRemove }) {
         if (value === saved) return
         const hours = parseHours(value)
         if (hours == null) {
-            alert('Hours must be more than 0 and at most 24.')
+            setHoursError('Hours must be more than 0 and at most 24.')
             setValue(saved)
             return
         }
+        setHoursError(null)
         try {
             await onSave(hours)
         } catch (e) {
-            alert('Failed to save hours: ' + e.message)
+            toast.error('Failed to save hours: ' + e.message)
             setValue(saved)
         }
     }
@@ -574,7 +592,7 @@ function LabourRow({ row, canEdit, busy, onSave, onRemove }) {
         try {
             await onRemove()
         } catch (e) {
-            alert('Failed to remove labour: ' + e.message)
+            toast.error('Failed to remove labour: ' + e.message)
         }
     }
 
@@ -582,46 +600,49 @@ function LabourRow({ row, canEdit, busy, onSave, onRemove }) {
     const role = row.technician?.role
 
     return (
-        <div className="flex items-center gap-2.5">
-            <span className={`w-7 h-7 shrink-0 rounded-full text-[11px] font-semibold flex items-center justify-center ${AVATAR_COLORS[role] || 'bg-gray-100 text-gray-700'}`}>
-                {initials(name)}
-            </span>
-            <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-900 truncate">{name}</p>
-                <p className="text-xs text-gray-500">{ROLE_LABELS[role] || role}</p>
+        <div>
+            <div className="flex items-center gap-2.5">
+                <span className={`w-7 h-7 shrink-0 rounded-full text-[11px] font-semibold flex items-center justify-center ${AVATAR_COLORS[role] || 'bg-gray-100 text-gray-700'}`}>
+                    {initials(name)}
+                </span>
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-900 truncate">{name}</p>
+                    <p className="text-xs text-gray-500">{ROLE_LABELS[role] || role}</p>
+                </div>
+                {canEdit ? (
+                    <>
+                        <input
+                            type="number"
+                            min="0.25"
+                            max="24"
+                            step="0.25"
+                            value={value}
+                            onChange={e => { setValue(e.target.value); setHoursError(null) }}
+                            onBlur={commit}
+                            onKeyDown={e => {
+                                if (e.key === 'Enter') e.currentTarget.blur()
+                                if (e.key === 'Escape') setValue(saved)
+                            }}
+                            aria-label={`Hours for ${name}`}
+                            className="w-16 text-sm text-right border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="text-xs text-gray-500">h</span>
+                        <button
+                            type="button"
+                            onClick={remove}
+                            disabled={busy}
+                            aria-label={`Remove ${name}`}
+                            title="Remove"
+                            className="p-1.5 text-gray-400 hover:text-red-500 rounded-md disabled:opacity-50 transition-colors"
+                        >
+                            <XMarkIcon className="w-4 h-4" />
+                        </button>
+                    </>
+                ) : (
+                    <span className="text-sm text-gray-900">{saved} h</span>
+                )}
             </div>
-            {canEdit ? (
-                <>
-                    <input
-                        type="number"
-                        min="0.25"
-                        max="24"
-                        step="0.25"
-                        value={value}
-                        onChange={e => setValue(e.target.value)}
-                        onBlur={commit}
-                        onKeyDown={e => {
-                            if (e.key === 'Enter') e.currentTarget.blur()
-                            if (e.key === 'Escape') setValue(saved)
-                        }}
-                        aria-label={`Hours for ${name}`}
-                        className="w-16 text-sm text-right border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-xs text-gray-500">h</span>
-                    <button
-                        type="button"
-                        onClick={remove}
-                        disabled={busy}
-                        aria-label={`Remove ${name}`}
-                        title="Remove"
-                        className="p-1.5 text-gray-400 hover:text-red-500 rounded-md disabled:opacity-50 transition-colors"
-                    >
-                        <XMarkIcon className="w-4 h-4" />
-                    </button>
-                </>
-            ) : (
-                <span className="text-sm text-gray-900">{saved} h</span>
-            )}
+            {hoursError && <p className="text-xs text-red-600 mt-1 text-right">{hoursError}</p>}
         </div>
     )
 }

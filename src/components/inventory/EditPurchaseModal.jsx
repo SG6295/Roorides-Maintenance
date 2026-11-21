@@ -17,6 +17,7 @@ import {
     syncLineDiscount,
     distributeTotalDiscount,
 } from '../../lib/invoiceDiscount'
+import { useConfirm } from '../../hooks/useFeedback'
 
 const NEW_PART_SENTINEL = '__NEW__'
 const GST_RATES = [
@@ -26,6 +27,9 @@ const GST_RATES = [
     { label: '18%', value: 18 },
     { label: '28%', value: 28 },
 ]
+// CustomSelect can't show a selected value of 0 (it reads `opt.value || …`), so the
+// dropdown works in strings — as Record Refurbishment's does — and the line keeps a number.
+const GST_OPTIONS = GST_RATES.map(r => ({ label: r.label, value: String(r.value) }))
 // Line-item columns. Qty needs more than a 12th of the row so 2-decimal
 // quantities aren't clipped by the in-field unit suffix; the trailing
 // remove-button column needs less.
@@ -39,6 +43,7 @@ const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving
  * EditRefurbishmentModal instead (MAIN-130).
  */
 export default function EditPurchaseModal({ invoice, onClose }) {
+    const confirm = useConfirm()
     const form = usePurchaseInvoiceForm(invoice)
     const { frozen, isFinanceRole } = form
     const { data: existingItems, isLoading: itemsLoading } = usePurchaseInvoiceItems(invoice.id)
@@ -167,9 +172,12 @@ export default function EditPurchaseModal({ invoice, onClose }) {
             setError('Choose which workshop this invoice is being inwarded to.')
             return
         }
-        if (locationChanged && !window.confirm(
-            `Move everything on this invoice from ${originalLocationName} to ${newLocationName}?`
-        )) {
+        if (locationChanged && !(await confirm({
+            title: 'Change workshop?',
+            message: `Move everything on this invoice from ${originalLocationName} to ${newLocationName}?`,
+            confirmLabel: 'Move',
+            tone: 'primary',
+        }))) {
             return
         }
 
@@ -441,16 +449,13 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
                                 {/* GST */}
                                 <div className="pt-1">
-                                    <select
+                                    <CustomSelect
+                                        compact
                                         disabled={frozen}
-                                        className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
-                                        value={line.gst_rate}
-                                        onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
-                                    >
-                                        {GST_RATES.map(r => (
-                                            <option key={r.value} value={r.value}>{r.label}</option>
-                                        ))}
-                                    </select>
+                                        value={String(line.gst_rate)}
+                                        onChange={v => updateLine(i, 'gst_rate', Number(v))}
+                                        options={GST_OPTIONS}
+                                    />
                                 </div>
 
                                 {/* Line Total */}

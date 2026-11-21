@@ -6,8 +6,10 @@ import {
     useUpdateWorkshopLocation,
     useToggleWorkshopLocation,
 } from '../../hooks/useWorkshopLocations'
+import { useConfirm } from '../../hooks/useFeedback'
 
 export default function WorkshopLocationSettings() {
+    const confirm = useConfirm()
     const { data: locations = [], isLoading } = useWorkshopLocations({ includeInactive: true })
     const createLocation = useCreateWorkshopLocation()
     const updateLocation = useUpdateWorkshopLocation()
@@ -58,7 +60,12 @@ export default function WorkshopLocationSettings() {
 
     async function handleToggle(location) {
         const verb = location.is_active ? 'Deactivate' : 'Reactivate'
-        if (!window.confirm(`${verb} "${location.name}"? Existing job cards and invoices keep their location either way.`)) return
+        if (!(await confirm({
+            title: `${verb} "${location.name}"?`,
+            message: 'Existing job cards and invoices keep their location either way.',
+            confirmLabel: verb,
+            tone: location.is_active ? 'danger' : 'primary',
+        }))) return
         setError(null)
         try {
             await toggleLocation.mutateAsync({ id: location.id, is_active: !location.is_active })

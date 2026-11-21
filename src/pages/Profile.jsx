@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import Navigation from '../components/shared/Navigation'
 import { ROLE_LABELS } from '../constants/userRoles'
+import PasswordInput from '../components/shared/PasswordInput'
 
 /**
  * Self-service profile. Password only.
@@ -90,8 +91,7 @@ export default function Profile() {
           <form onSubmit={handlePasswordSave} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
@@ -100,8 +100,7 @@ export default function Profile() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required

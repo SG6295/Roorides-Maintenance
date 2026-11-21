@@ -3,6 +3,7 @@ import { useSupplierById, useSupplierIdByNumber, useUpdateSupplierStatus } from 
 import { formatSupplierNumber } from '../utils/supplierNumber'
 import Navigation from '../components/shared/Navigation'
 import { useAuth } from '../hooks/useAuth'
+import { useToast } from '../hooks/useFeedback'
 
 const STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-800 border-yellow-200',
@@ -37,6 +38,7 @@ function Row({ label, value, mono = false, link = false }) {
 }
 
 export default function SupplierDetail() {
+  const toast = useToast()
   const { supplierNumber } = useParams()
   const navigate = useNavigate()
   const { userProfile } = useAuth()
@@ -53,7 +55,7 @@ export default function SupplierDetail() {
       await updateStatus({ id, status })
       navigate('/suppliers')
     } catch (err) {
-      alert('Failed to update status: ' + err.message)
+      toast.error('Failed to update status: ' + err.message)
     }
   }
 

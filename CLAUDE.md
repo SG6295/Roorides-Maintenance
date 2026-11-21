@@ -291,12 +291,22 @@ Switching a card In-house → Outsource deletes its labour in the same statement
 
 ### Component Directory Structure
 `src/components/` is organized by domain:
-- `shared/` — reusable UI primitives: `Navigation`, `SLATimer`, `SearchableSelect`, `CustomInput`, `CustomSelect`, `FilterSelect`, `LoadingSkeleton`
+- `shared/` — reusable UI primitives: `Navigation`, `SLATimer`, `SearchableSelect`, `CustomInput`, `CustomSelect`, `FilterSelect`, `LoadingSkeleton`, `Feedback` (messages + confirm popup), `PasswordInput`
 - `tickets/` — `TicketCard`, `TicketForm`, `TicketList`, `TicketTimeline`, `StatusAccordion`, `DateRangeFilter`, `PhotoUpload`, `FeedbackModal`, `RejectTicketModal`
 - `job-cards/` — `IssueWorkCard` (inline issue editing within a job card)
 - `inventory/` — `PurchaseModal`, `EditPartModal`, `PurchaseInvoiceEditor` (→ `EditPurchaseModal` / `EditRefurbishmentModal`, sharing `PurchaseInvoiceShared`), `BulkUploadModal`
 - `users/` — `AddUserModal`, `DocumentUpload`
 - `suppliers/` — supplier-related modals
+
+### UI conventions
+- **No browser pop-ups (MAIN-144).** `alert()`, `confirm()` and `prompt()` freeze the whole page — and automated testing on staging — until someone clicks OK, so none are left in the app; don't add one. Use `useToast()` / `useConfirm()` from `src/hooks/useFeedback.js` (provider: `FeedbackProvider` in `src/components/shared/Feedback.jsx`, mounted once in `App.jsx` above the router, so a message survives the navigation after a save):
+  - **Success** → `toast.success(…)`, fades after 4 s. **Error** → `toast.error(…)`, stays until closed; keep the server's message in it.
+  - **Form checks** (a missing or out-of-range field) → red text next to the field, cleared on the next edit — not a toast. `invoiceForm.js` / `InvoiceDetailsFields` and `IssueWorkCard` are the pattern.
+  - **"Are you sure?"** → `if (!(await confirm({ title, message, confirmLabel, tone }))) return` — styled like `RejectInvoiceModal`; `tone: 'danger'` (default, red) for anything destructive, `'primary'` otherwise. Esc and the backdrop count as Cancel. With `reason: { label, required? }` it also asks for a reason and resolves to the text, or `null` when cancelled (Stock Audit's Cancel count).
+  - A **new or reset password** is never a toast: Add User / Edit User hand it to User Management, which shows `PasswordPanel` (Copy button) until it is closed.
+  - A component test that renders something using these hooks must wrap it in `<FeedbackProvider>`.
+- **No native `<select>` (MAIN-145).** `CustomSelect` in forms, modals and tables; `FilterSelect` in filter bars. `CustomSelect` matches the selected option with `opt.value || …`, so it cannot show a value of `0` as selected — give it string values and convert on change, as the purchase and refurbishment GST dropdowns do.
+- **Password boxes use `PasswordInput` (MAIN-146)** — the eye button, hidden by default. Add User / Edit User have their own toggle (shown by default, with Generate and Copy).
 
 ### Debug Utilities
 `window.testResend(email)` is exposed in App.jsx for testing email via the `send-email` edge function from the browser console.

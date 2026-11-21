@@ -1,36 +1,43 @@
 import { useState, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useToast } from '../../hooks/useFeedback'
 
 export default function PhotoUpload({ onPhotosChange, maxPhotos = 5 }) {
   const [photos, setPhotos] = useState([])
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState({})
+  // Problems with the picked files, shown under the photos (MAIN-144).
+  const [fileErrors, setFileErrors] = useState([])
+  const toast = useToast()
   const fileInputRef = useRef(null)
   const cameraInputRef = useRef(null)
 
   const handleFileSelect = async (e, source = 'gallery') => {
     const files = Array.from(e.target.files || [])
+    setFileErrors([])
 
     if (photos.length + files.length > maxPhotos) {
-      alert(`You can only upload up to ${maxPhotos} photos`)
+      setFileErrors([`You can only upload up to ${maxPhotos} photos`])
       return
     }
 
     // Validate file types and sizes
+    const problems = []
     const validFiles = files.filter(file => {
       const isImage = file.type.startsWith('image/')
       const isUnder10MB = file.size <= 10 * 1024 * 1024 // 10MB limit
 
       if (!isImage) {
-        alert(`${file.name} is not an image file`)
+        problems.push(`${file.name} is not an image file`)
         return false
       }
       if (!isUnder10MB) {
-        alert(`${file.name} is larger than 10MB`)
+        problems.push(`${file.name} is larger than 10MB`)
         return false
       }
       return true
     })
+    setFileErrors(problems)
 
     if (validFiles.length === 0) return
 
@@ -111,7 +118,7 @@ export default function PhotoUpload({ onPhotosChange, maxPhotos = 5 }) {
 
     } catch (error) {
       console.error('Error uploading photos:', error)
-      alert('Failed to upload some photos. Please try again.')
+      toast.error('Failed to upload some photos. Please try again.')
     } finally {
       setUploading(false)
     }
@@ -234,6 +241,10 @@ export default function PhotoUpload({ onPhotosChange, maxPhotos = 5 }) {
           <p className="text-xs text-gray-600">Use Camera or Gallery buttons to add photos</p>
         </div>
       )}
+
+      {fileErrors.map(msg => (
+        <p key={msg} className="mt-2 text-sm text-red-600">{msg}</p>
+      ))}
 
       <p className="mt-2 text-xs text-gray-600">
         💡 Max {maxPhotos} photos, up to 10MB each. Photos are uploaded to Google Drive.

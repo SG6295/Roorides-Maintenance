@@ -40,6 +40,7 @@ import {
 import { Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/react'
 import { Fragment } from 'react'
 import { ISSUE_CATEGORIES, categoryOptions } from '../constants/issueCategories'
+import { useToast, useConfirm } from '../hooks/useFeedback'
 
 // The address carries the ticket number (MAIN-143); the page below works by id.
 export default function TicketDetail() {
@@ -52,6 +53,7 @@ export default function TicketDetail() {
 }
 
 function TicketDetailById({ id }) {
+  const toast = useToast()
   const navigate = useNavigate()
   const { userProfile } = useAuth()
 
@@ -91,7 +93,7 @@ function TicketDetailById({ id }) {
       })
       setIsRejectModalOpen(false)
     } catch (e) {
-      alert('Failed to reject ticket: ' + e.message)
+      toast.error('Failed to reject ticket: ' + e.message)
     }
   }
 
@@ -503,6 +505,8 @@ function OverviewTab({ ticket }) {
 }
 
 function IssuesTab({ ticket, issues, canEdit, userProfile }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const navigate = useNavigate()
   const createIssue = useCreateIssue()
   const updateIssue = useUpdateIssue()
@@ -560,13 +564,17 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       })
       setNewIssue({ description: '', category: null, severity: null, work_type: 'InHouse' })
     } catch (e) {
-      alert(e.message)
+      toast.error(e.message)
     }
   }
 
   // Handle Bulk Delete
   const handleDeleteSelected = async () => {
-    if (!window.confirm(`Are you sure you want to delete ${selectedIssueIds.size} issues?`)) return
+    if (!(await confirm({
+      title: `Delete ${selectedIssueIds.size} issues?`,
+      message: 'Are you sure you want to delete the selected issues?',
+      confirmLabel: 'Delete',
+    }))) return
 
     try {
       // Execute all deletes
@@ -581,7 +589,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       setSelectedIssueIds(new Set())
     } catch (e) {
       console.error("Delete error:", e)
-      alert("Failed to delete issues")
+      toast.error("Failed to delete issues")
     }
   }
 
@@ -610,12 +618,12 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       })
 
       setSelectedIssueIds(new Set()) // Clear selection
-      alert('Job Card created successfully!')
+      toast.success('Job Card created successfully!')
       // Optionally navigate to it
       // navigate(`/job-cards/${newJC.id}`)
     } catch (e) {
       console.error("Job Card Error:", e)
-      alert(e.message || 'Failed to create Job Card')
+      toast.error(e.message || 'Failed to create Job Card')
     }
   }
 
@@ -634,10 +642,10 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
         issues: selectedIssues
       })
       setSelectedIssueIds(new Set())
-      alert('Issues added to Job Card successfully!')
+      toast.success('Issues added to Job Card successfully!')
     } catch (e) {
       console.error("Link Error", e)
-      alert(e.message || 'Failed to link issues')
+      toast.error(e.message || 'Failed to link issues')
     }
   }
 
@@ -693,13 +701,17 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       })
       cancelEditing()
     } catch (e) {
-      alert(e.message)
+      toast.error(e.message)
     }
   }
 
   // Handle unassign from job card (only in edit mode)
   const handleUnassignInEditMode = async (issue) => {
-    if (!window.confirm('Are you sure you want to remove this issue from the Job Card?')) return
+    if (!(await confirm({
+      title: 'Remove from job card?',
+      message: 'Are you sure you want to remove this issue from the Job Card?',
+      confirmLabel: 'Remove',
+    }))) return
 
     try {
       await updateIssue.mutateAsync({
@@ -710,7 +722,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
       })
       cancelEditing()
     } catch (e) {
-      alert(e.message)
+      toast.error(e.message)
     }
   }
 

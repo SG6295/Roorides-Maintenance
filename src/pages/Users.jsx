@@ -10,6 +10,8 @@ import FilterSelect from '../components/shared/FilterSelect'
 import AddUserModal from '../components/users/AddUserModal'
 import EditUserModal from '../components/users/EditUserModal'
 import UserAuditLog from '../components/users/UserAuditLog'
+import PasswordPanel from '../components/users/PasswordPanel'
+import { useToast } from '../hooks/useFeedback'
 import { USER_AUDIT_LOGS_KEY } from '../hooks/useUserAuditLogs'
 import { ROLE_LABELS, ROLE_COLORS, MANAGEABLE_BY } from '../constants/userRoles'
 import { PlusIcon, UserIcon, WrenchIcon, BriefcaseIcon, CurrencyDollarIcon, MagnifyingGlassIcon, ShieldCheckIcon, BoltIcon, PencilSquareIcon } from '@heroicons/react/24/outline'
@@ -32,6 +34,9 @@ export default function Users({ embedded = false }) {
     const [editingUser, setEditingUser] = useState(null)
     const [filterRole, setFilterRole] = useState('')
     const [searchQuery, setSearchQuery] = useState('')
+    // A new or reset password stays on screen until closed (MAIN-144).
+    const [shownPassword, setShownPassword] = useState(null)
+    const toast = useToast()
 
     const isSuperAdmin = currentUserProfile?.role === 'super_admin'
 
@@ -65,7 +70,7 @@ export default function Users({ embedded = false }) {
             refreshAuditLog()
         } catch (error) {
             console.error('Error toggling status:', error)
-            alert(error.message || 'Failed to update status')
+            toast.error(error.message || 'Failed to update status')
         }
     }
 
@@ -131,6 +136,12 @@ export default function Users({ embedded = false }) {
                                 Add User
                             </button>
                         </div>
+                    </div>
+                )}
+
+                {shownPassword && (
+                    <div className="mb-6">
+                        <PasswordPanel {...shownPassword} onClose={() => setShownPassword(null)} />
                     </div>
                 )}
 
@@ -257,6 +268,7 @@ export default function Users({ embedded = false }) {
                 isOpen={isAddModalOpen}
                 onClose={() => setIsAddModalOpen(false)}
                 onSuccess={() => { refetch(); refreshAuditLog() }}
+                onPassword={setShownPassword}
             />
 
             <EditUserModal
@@ -264,6 +276,7 @@ export default function Users({ embedded = false }) {
                 user={editingUser}
                 onClose={() => setEditingUser(null)}
                 onSuccess={() => { refetch(); refreshAuditLog() }}
+                onPassword={setShownPassword}
             />
         </div>
     )

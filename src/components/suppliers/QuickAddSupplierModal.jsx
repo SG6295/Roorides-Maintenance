@@ -4,6 +4,7 @@ import { XMarkIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../../hooks/useAuth'
 import { useQuickAddSupplier } from '../../hooks/useSuppliers'
 import { supabase } from '../../lib/supabase'
+import { useConfirm } from '../../hooks/useFeedback'
 
 const EMPTY_FORM = {
   entity_name: '',
@@ -22,6 +23,7 @@ function isFormDirty(form, initial) {
  * before choosing to add one. It is read when the modal mounts.
  */
 export default function QuickAddSupplierModal({ isOpen, onClose, onSuccess, initialName = '' }) {
+  const confirm = useConfirm()
   const { userProfile } = useAuth()
   const quickAdd = useQuickAddSupplier()
 
@@ -49,8 +51,12 @@ export default function QuickAddSupplierModal({ isOpen, onClose, onSuccess, init
 
   const allFilled = Object.values(form).every((v) => v.trim() !== '')
 
-  const handleClose = () => {
-    if (isFormDirty(form, initialForm) && !window.confirm('Discard changes?')) return
+  const handleClose = async () => {
+    if (isFormDirty(form, initialForm) && !(await confirm({
+      title: 'Discard changes?',
+      message: 'The supplier details you typed will be lost.',
+      confirmLabel: 'Discard',
+    }))) return
     setForm(initialForm)
     setSubmitError(null)
     onClose()

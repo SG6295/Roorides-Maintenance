@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useScrapInventory, useRecordScrapWriteoff } from '../../hooks/useScrap'
 import { logAuditEvent } from '../../utils/auditLogger'
 import { supabase } from '../../lib/supabase'
+import CustomSelect from '../shared/CustomSelect'
 
 const REASON_OPTIONS = [
     { value: 'lost',                 label: 'Lost' },
@@ -167,16 +168,11 @@ export default function RecordWriteoffModal({ onClose }) {
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
                                         Reason <span className="text-red-500">*</span>
                                     </label>
-                                    <select
-                                        required
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                    <CustomSelect
                                         value={header.reason}
-                                        onChange={e => setHeader(p => ({ ...p, reason: e.target.value }))}
-                                    >
-                                        {REASON_OPTIONS.map(o => (
-                                            <option key={o.value} value={o.value}>{o.label}</option>
-                                        ))}
-                                    </select>
+                                        onChange={v => setHeader(p => ({ ...p, reason: v }))}
+                                        options={REASON_OPTIONS}
+                                    />
                                 </div>
                                 <div className="sm:col-span-2">
                                     <label className="block text-xs font-medium text-gray-600 mb-1">

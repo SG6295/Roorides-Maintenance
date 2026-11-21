@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useRegisterSupplier, checkPanExists } from '../hooks/useSuppliers'
 import DocumentUpload from '../components/suppliers/DocumentUpload'
+import CustomSelect from '../components/shared/CustomSelect'
 
 const STEPS = [
   'Basic Details',
@@ -374,16 +375,12 @@ export default function SupplierRegistration() {
             </Field>
 
             <Field label="GST Registration Type" required>
-              <select
+              <CustomSelect
                 value={form.gst_registration_type}
-                onChange={(e) => set('gst_registration_type', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-              >
-                <option value="">Select type</option>
-                {GST_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+                onChange={(v) => set('gst_registration_type', v)}
+                options={GST_TYPES}
+                placeholder="Select type"
+              />
               {errors.gst_registration_type && <p className="mt-1 text-xs text-red-500">{errors.gst_registration_type}</p>}
             </Field>
 

@@ -19,7 +19,7 @@ const EMPTY_FORM = {
     contact: '',
 }
 
-export default function EditUserModal({ isOpen, user, onClose, onSuccess }) {
+export default function EditUserModal({ isOpen, user, onClose, onSuccess, onPassword }) {
     const { userProfile } = useAuth()
     // All sites — an existing assignment to a deactivated site has to stay visible,
     // otherwise there is no way to remove it.
@@ -147,7 +147,7 @@ export default function EditUserModal({ isOpen, user, onClose, onSuccess }) {
             onSuccess()
             onClose()
             if (changedPassword) {
-                alert(`Password updated!\nEmail: ${formData.email}\nNew password: ${password}`)
+                onPassword({ heading: 'Password updated', email: formData.email, password })
             }
         } catch (err) {
             console.error('Error updating user:', err)
