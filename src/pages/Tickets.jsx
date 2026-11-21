@@ -11,8 +11,10 @@ import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import FilterSelect from '../components/shared/FilterSelect'
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 import { exportTicketsToExcel } from '../utils/ticketExport'
+import { useToast } from '../hooks/useFeedback'
 
 export default function Tickets() {
+  const toast = useToast()
   const { userProfile } = useAuth()
   const canExport = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
   const [exporting, setExporting] = useState(false)
@@ -102,7 +104,7 @@ export default function Tickets() {
     try {
       await exportTicketsToExcel(filteredTickets, dateRange)
     } catch (err) {
-      alert('Export failed: ' + err.message)
+      toast.error('Export failed: ' + err.message)
     } finally {
       setExporting(false)
     }

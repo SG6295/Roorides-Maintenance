@@ -22,6 +22,7 @@ vi.mock('../../../../hooks/useStockAudits', () => ({
 }))
 
 import AuditReviewTable from '../AuditReviewTable'
+import { FeedbackProvider } from '../../../shared/Feedback'
 
 const item = over => ({
     id: 'item-1',
@@ -40,7 +41,9 @@ const item = over => ({
 
 const savedLine = (quantity, reason, sort_order = 0, notes = null) => ({ id: `l${sort_order}`, quantity, reason, notes, sort_order })
 
-const renderTable = items => render(<AuditReviewTable audit={{ id: 'audit-1' }} items={items} />)
+const renderTable = items => render(
+    <FeedbackProvider><AuditReviewTable audit={{ id: 'audit-1' }} items={items} /></FeedbackProvider>,
+)
 const completeButton = () => screen.getByRole('button', { name: /Accept losses/ })
 const quantities = () => screen.getAllByLabelText('Quantity')
 

@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useScrapInventory, useRecordScrapDisposal } from '../../hooks/useScrap'
 import { logAuditEvent } from '../../utils/auditLogger'
 import { supabase } from '../../lib/supabase'
+import CustomSelect from '../shared/CustomSelect'
 
 const PAYMENT_OPTIONS = [
     { value: 'cash',          label: 'Cash' },
@@ -220,16 +221,11 @@ export default function RecordSaleModal({ onClose }) {
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
                                         Payment Mode <span className="text-red-500">*</span>
                                     </label>
-                                    <select
-                                        required
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                    <CustomSelect
                                         value={header.payment_mode}
-                                        onChange={e => setHeader(p => ({ ...p, payment_mode: e.target.value, payment_reference: '' }))}
-                                    >
-                                        {PAYMENT_OPTIONS.map(o => (
-                                            <option key={o.value} value={o.value}>{o.label}</option>
-                                        ))}
-                                    </select>
+                                        onChange={v => setHeader(p => ({ ...p, payment_mode: v, payment_reference: '' }))}
+                                        options={PAYMENT_OPTIONS}
+                                    />
                                 </div>
                                 {header.payment_mode !== 'cash' && (
                                     <div className="sm:col-span-2">

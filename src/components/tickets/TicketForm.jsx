@@ -10,8 +10,10 @@ import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
 import SearchableSelect from '../shared/SearchableSelect'
 import { logSLAEvent, SLA_EVENTS } from '../../utils/slaLogger'
+import { useToast } from '../../hooks/useFeedback'
 
 export default function TicketForm() {
+  const toast = useToast()
   const { userProfile } = useAuth()
   const navigate = useNavigate()
 
@@ -115,10 +117,10 @@ export default function TicketForm() {
       const body = await resp.json()
       if (!resp.ok) throw new Error(body?.error || `HTTP ${resp.status}`)
       await queryClient.invalidateQueries({ queryKey: ['vehicles'] })
-      alert('Vehicle list refreshed successfully!')
+      toast.success('Vehicle list refreshed successfully!')
     } catch (err) {
       console.error('Vehicle refresh failed:', err)
-      alert(`Could not refresh vehicle list: ${err.message}`)
+      toast.error(`Could not refresh vehicle list: ${err.message}`)
     } finally {
       setSyncing(false)
     }
@@ -146,11 +148,11 @@ export default function TicketForm() {
         await logSLAEvent(newTicket.id, SLA_EVENTS.CREATED, userProfile.id)
       }
 
-      alert('Ticket submitted successfully!')
+      toast.success('Ticket submitted successfully!')
       navigate('/tickets')
     } catch (error) {
       console.error('Error creating ticket:', error)
-      alert(error.message || 'Failed to submit ticket. Please try again.')
+      toast.error(error.message || 'Failed to submit ticket. Please try again.')
     }
   }
 

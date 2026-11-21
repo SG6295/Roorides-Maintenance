@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { Switch } from '@headlessui/react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
+import { useToast } from '../../hooks/useFeedback'
 
 function Toggle({ label, description, enabled, onChange }) {
     return (
@@ -32,6 +33,7 @@ function Toggle({ label, description, enabled, onChange }) {
 }
 
 export default function NotificationSettings() {
+    const toast = useToast()
     const { user } = useAuth()
     const [loading, setLoading] = useState(true)
     const [digestEnabled, setDigestEnabled] = useState(false)
@@ -79,7 +81,7 @@ export default function NotificationSettings() {
 
         if (error) {
             console.error('Error saving settings:', error)
-            alert('Failed to save settings')
+            toast.error('Failed to save settings')
         }
     }
 

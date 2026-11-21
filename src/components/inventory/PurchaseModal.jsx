@@ -30,6 +30,9 @@ const GST_RATES = [
     { label: '18%', value: 18 },
     { label: '28%', value: 28 },
 ]
+// CustomSelect can't show a selected value of 0 (it reads `opt.value || …`), so the
+// dropdown works in strings — as Record Refurbishment's does — and the line keeps a number.
+const GST_OPTIONS = GST_RATES.map(r => ({ label: r.label, value: String(r.value) }))
 // Line-item columns. Qty needs more than a 12th of the row so 2-decimal
 // quantities aren't clipped by the in-field unit suffix; the trailing
 // remove-button column needs less.
@@ -361,15 +364,12 @@ export default function PurchaseModal({ onClose }) {
                                                 />
                                             </div>
                                             <div className="pt-1">
-                                                <select
-                                                    className="w-full border rounded-lg px-1 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
-                                                    value={line.gst_rate}
-                                                    onChange={e => updateLine(i, 'gst_rate', Number(e.target.value))}
-                                                >
-                                                    {GST_RATES.map(r => (
-                                                        <option key={r.value} value={r.value}>{r.label}</option>
-                                                    ))}
-                                                </select>
+                                                <CustomSelect
+                                                    compact
+                                                    value={String(line.gst_rate)}
+                                                    onChange={v => updateLine(i, 'gst_rate', Number(v))}
+                                                    options={GST_OPTIONS}
+                                                />
                                             </div>
                                             <div className="text-sm text-gray-700 text-right pr-1 pt-3">
                                                 {lineTotal > 0 ? lineTotal.toFixed(2) : '—'}

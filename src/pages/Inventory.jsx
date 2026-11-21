@@ -41,6 +41,7 @@ import {
     Squares2X2Icon,
     ArrowsRightLeftIcon,
 } from '@heroicons/react/24/outline'
+import { useToast } from '../hooks/useFeedback'
 
 // Sentinel for the company-wide roll-up card, which is not a real location id.
 const ALL_LOCATIONS = '__all__'
@@ -548,6 +549,7 @@ function InvoiceRow({ invoice, onEdit }) {
 
 // ── Purchase History Tab ───────────────────────────────────────────────────────
 function PurchaseHistory() {
+    const toast = useToast()
     const [filters, setFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
     const search = useDebouncedValue(filters.search)
     const { data: invoices = [], isLoading } = usePurchaseInvoices({ ...filters, search })
@@ -618,7 +620,7 @@ function PurchaseHistory() {
             const dateSuffix = new Date().toISOString().slice(0, 10)
             XLSX.writeFile(wb, `purchase_history_${dateSuffix}.xlsx`)
         } catch (err) {
-            alert('Export failed: ' + err.message)
+            toast.error('Export failed: ' + err.message)
         } finally {
             setExporting(false)
         }

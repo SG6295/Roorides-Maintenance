@@ -10,7 +10,7 @@ import { useAllSites } from '../../hooks/useSites'
 import { useAuth } from '../../hooks/useAuth'
 import { roleOptions, generatePassword } from '../../constants/userRoles'
 
-export default function AddUserModal({ isOpen, onClose, onSuccess }) {
+export default function AddUserModal({ isOpen, onClose, onSuccess, onPassword }) {
     const { userProfile } = useAuth()
     // All sites — SiteCheckboxList greys out and disables the inactive ones itself.
     const { data: sites = [], isLoading: sitesLoading } = useAllSites()
@@ -92,7 +92,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }) {
             onSuccess()
             onClose()
             resetForm()
-            alert(`User created!\nEmail: ${formData.email}\nPassword: ${formData.password}`)
+            onPassword({ heading: 'User created', email: formData.email, password: formData.password })
         } catch (err) {
             console.error('Error creating user:', err)
             setError(err.message || 'Failed to create user')

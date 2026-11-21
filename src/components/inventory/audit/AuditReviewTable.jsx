@@ -21,6 +21,7 @@ import {
     isMismatchExplained,
     savableAuditLines,
 } from '../../../utils/auditReasons'
+import { useConfirm } from '../../../hooks/useFeedback'
 
 const SOURCE_LABELS = {
     consumption: 'Used on job card',
@@ -54,6 +55,7 @@ function signed(n) {
  * to it.
  */
 export default function AuditReviewTable({ audit, items }) {
+    const confirm = useConfirm()
     const { data: movements = {} } = useStockAuditMovements(audit.id)
     const saveReasons = useSetStockAuditReasons()
     const completeAudit = useCompleteStockAudit()
@@ -116,9 +118,12 @@ export default function AuditReviewTable({ audit, items }) {
 
     async function handleComplete() {
         setError(null)
-        if (!window.confirm(
-            'Completing this audit corrects stock at this workshop and cannot be undone. Continue?'
-        )) return
+        if (!(await confirm({
+            title: 'Complete audit?',
+            message: 'Completing this audit corrects stock at this workshop and cannot be undone.',
+            confirmLabel: 'Complete audit',
+            tone: 'primary',
+        }))) return
         try {
             await persistReasons()
             await completeAudit.mutateAsync({ auditId: audit.id })

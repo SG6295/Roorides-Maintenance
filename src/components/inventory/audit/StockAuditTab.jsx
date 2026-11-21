@@ -26,6 +26,7 @@ import { buildCountSheet } from '../../../utils/auditSheet'
 import UploadCountSheetModal from './UploadCountSheetModal'
 import AuditReviewTable from './AuditReviewTable'
 import AuditSummary from './AuditSummary'
+import { useConfirm } from '../../../hooks/useFeedback'
 
 function StatusBadge({ status }) {
     return (
@@ -143,12 +144,19 @@ function StartAuditCard({ location, canAudit }) {
 // ── Counting ──────────────────────────────────────────────────────────────────
 
 function CountingCard({ audit, items, parts, canAudit }) {
+    const confirm = useConfirm()
     const cancelAudit = useCancelStockAudit()
     const [showUpload, setShowUpload] = useState(false)
     const [error, setError] = useState(null)
 
     async function handleCancel() {
-        const reason = window.prompt('Cancelling abandons this count without changing any stock.\n\nWhy is it being cancelled?')
+        const reason = await confirm({
+            title: 'Cancel this count?',
+            message: 'Cancelling abandons this count without changing any stock.',
+            reason: { label: 'Why is it being cancelled?' },
+            confirmLabel: 'Cancel count',
+            cancelLabel: 'Keep counting',
+        })
         if (reason === null) return
         setError(null)
         try {

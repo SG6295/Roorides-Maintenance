@@ -42,6 +42,7 @@ import {
     LockClosedIcon,
 } from '@heroicons/react/24/outline'
 import { ChevronUpDownIcon, CheckIcon } from '@heroicons/react/20/solid'
+import { useToast, useConfirm } from '../hooks/useFeedback'
 
 const JOB_LOCATION_OPTIONS = [
     { value: 'InHouse', label: 'In-house' },
@@ -51,6 +52,8 @@ const JOB_LOCATION_OPTIONS = [
 const QUICK_ADD_SENTINEL = '__quick_add__'
 
 export default function JobCardDetail() {
+    const toast = useToast()
+    const confirm = useConfirm()
     const { id } = useParams()
     const { userProfile } = useAuth()
 
@@ -133,7 +136,11 @@ export default function JobCardDetail() {
         }
         try {
             if (pendingType === 'InHouse' && (jobCard.supplier_id || jobCard.invoice_url)) {
-                if (!window.confirm('This will clear the assigned supplier and invoice. Continue?')) return
+                if (!(await confirm({
+                    title: 'Switch to In-house?',
+                    message: 'This will clear the assigned supplier and invoice.',
+                    confirmLabel: 'Switch to In-house',
+                }))) return
                 await updateJobCard.mutateAsync({
                     id: jobCard.id,
                     updates: { type: 'InHouse', supplier_id: null, invoice_url: null },
@@ -142,10 +149,12 @@ export default function JobCardDetail() {
                 // The database removes the labour with the switch (clear_labour_on_outsource).
                 const people = new Set(labourRows.map(r => r.technician?.id)).size
                 const hours = formatHours(labourRows.reduce((s, r) => s + parseFloat(r.hours), 0))
-                if (!window.confirm(
-                    `This job card has ${hours} labour hours recorded against ${people} technician${people === 1 ? '' : 's'}. ` +
-                    'Switching to Outsource will permanently remove them. Continue?'
-                )) return
+                if (!(await confirm({
+                    title: 'Switch to Outsource?',
+                    message: `This job card has ${hours} labour hours recorded against ${people} technician${people === 1 ? '' : 's'}. ` +
+                        'Switching to Outsource will permanently remove them.',
+                    confirmLabel: 'Switch and remove labour',
+                }))) return
                 await updateJobCard.mutateAsync({
                     id: jobCard.id,
                     updates: { type: 'Outsource' },
@@ -158,7 +167,7 @@ export default function JobCardDetail() {
             }
             setEditingJobLocation(false)
         } catch (e) {
-            alert('Failed to update job location: ' + e.message)
+            toast.error('Failed to update job location: ' + e.message)
         }
     }
 
@@ -175,7 +184,7 @@ export default function JobCardDetail() {
             setEditingWorkshop(false)
         } catch (e) {
             // The DB refuses the move once parts have been issued from the old workshop.
-            alert(e.message)
+            toast.error(e.message)
         }
     }
 
@@ -195,7 +204,7 @@ export default function JobCardDetail() {
             })
             setEditingSupplier(false)
         } catch (e) {
-            alert('Failed to assign supplier: ' + e.message)
+            toast.error('Failed to assign supplier: ' + e.message)
         }
     }
 
@@ -207,7 +216,7 @@ export default function JobCardDetail() {
             })
             setEditingSupplier(false)
         } catch (e) {
-            alert('Failed to link supplier: ' + e.message)
+            toast.error('Failed to link supplier: ' + e.message)
         }
     }
 
@@ -227,7 +236,7 @@ export default function JobCardDetail() {
             })
             return true
         } catch (e) {
-            alert('Failed to save invoice details: ' + e.message)
+            toast.error('Failed to save invoice details: ' + e.message)
             return false
         }
     }
@@ -243,28 +252,33 @@ export default function JobCardDetail() {
         try {
             await finalizeInvoice.mutateAsync({ jobCardId: jobCard.id })
         } catch (e) {
-            alert('Failed to finalize invoice: ' + e.message)
+            toast.error('Failed to finalize invoice: ' + e.message)
         }
     }
 
     const handleReopenJobCard = async () => {
-        if (!window.confirm('Reopen this Job Card? This will allow parts and labour to be updated.')) return
+        if (!(await confirm({
+            title: 'Reopen this Job Card?',
+            message: 'This will allow parts and labour to be updated.',
+            confirmLabel: 'Reopen',
+            tone: 'primary',
+        }))) return
         try {
             await updateJobCard.mutateAsync({
                 id: jobCard.id,
                 updates: { status: 'Open', completed_at: null },
             })
         } catch (e) {
-            alert('Failed to reopen job card')
+            toast.error('Failed to reopen job card')
         }
     }
 
     const handleSaveRemarks = async () => {
         try {
             await updateJobCard.mutateAsync({ id: jobCard.id, updates: { remarks } })
-            alert('Remarks saved')
+            toast.success('Remarks saved')
         } catch (e) {
-            alert('Failed to save')
+            toast.error('Failed to save')
         }
     }
 
@@ -275,7 +289,7 @@ export default function JobCardDetail() {
             await updateJobCard.mutateAsync({ id: jobCard.id, updates: { odometer: parsed } })
             setEditingOdometer(false)
         } catch (e) {
-            alert('Failed to save odometer: ' + e.message)
+            toast.error('Failed to save odometer: ' + e.message)
         }
     }
 
@@ -770,8 +784,12 @@ export default function JobCardDetail() {
                                     }
                                     // The file is optional and only editable before the card is
                                     // Completed, so clearing it can't leave a Completed card without one.
-                                    onRemove={() => {
-                                        if (!window.confirm('Remove the uploaded invoice from this job card?')) return
+                                    onRemove={async () => {
+                                        if (!(await confirm({
+                                            title: 'Remove invoice?',
+                                            message: 'Remove the uploaded invoice from this job card?',
+                                            confirmLabel: 'Remove',
+                                        }))) return
                                         updateJobCard.mutate({ id: jobCard.id, updates: { invoice_url: null } })
                                     }}
                                     accept=".pdf,.jpg,.jpeg,.png"

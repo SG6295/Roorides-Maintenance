@@ -32,6 +32,7 @@ import { formatBatchNumber, batchPath, parseBatchNumber } from '../utils/batchNu
 import { lineAmount, linesSummary } from '../utils/batchSplit'
 import { BATCH_WORK_TYPES, OTHER_WORK_TYPE, workTypeLabel } from '../constants/batchWorkTypes'
 import { isLockedByFinance, isRejectedInvoice } from '../constants/outsourceInvoices'
+import { useToast } from '../hooks/useFeedback'
 
 const EXEC_ROLES = ['maintenance_exec', 'super_admin']
 
@@ -99,6 +100,7 @@ export default function BatchServiceDetail() {
 
 
 function BatchForm({ batch }) {
+    const toast = useToast()
     const navigate = useNavigate()
     const { userProfile } = useAuth()
     const save = useSaveBatchService()
@@ -236,7 +238,7 @@ function BatchForm({ batch }) {
             if (batch) setSaved(true)
             else {
                 // Same pattern as a new ticket: confirm, then back to the list (MAIN-126).
-                alert(`Multi-vehicle invoice ${formatBatchNumber(savedNumber)} submitted successfully!`)
+                toast.success(`Multi-vehicle invoice ${formatBatchNumber(savedNumber)} submitted successfully!`)
                 navigate('/invoices', { replace: true })
             }
         } catch (e) {
