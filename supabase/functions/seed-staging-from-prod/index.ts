@@ -81,7 +81,16 @@ serve(async (req) => {
 
         const startTime = Date.now()
 
-        // ── Phase A: Auth Users ──────────────────────────────────────────────
+        // Order matters (MAIN-139):
+        //   1. read prod's logins
+        //   2. empty staging's public tables — 29 FKs to public.users (and user_settings → auth.users)
+        //      have no delete action, so a login with history can't be deleted before this
+        //   3. delete staging logins, 4. recreate prod's, both skipping the caller
+        //   5. copy the tables through seed_insert_rows, which keeps rows exactly as prod has them
+        //      (no triggers, identities kept) — plain inserts re-derived stock, SLA and numbers
+        const failures: { phase: string; item: string; error: string }[] = []
+
+        // ── Phase A: read prod logins ────────────────────────────────────────
 
         const prodUsers: any[] = []
         let page = 1
@@ -93,18 +102,57 @@ serve(async (req) => {
             page++
         }
 
-        const { data: stagingUsersData, error: listError } = await stagingAdmin.auth.admin.listUsers({ perPage: 1000 })
-        if (listError) throw new Error(`Failed to list staging users: ${listError.message}`)
+        // ── Phase B: staging metadata, then empty the public tables ──────────
 
-        const deleteErrors: { id: string; email: string; error: string }[] = []
-        for (const user of stagingUsersData.users) {
+        const { data: stagingColRows, error: stagingColErr } = await stagingAdmin.rpc('seed_get_table_columns')
+        if (stagingColErr) throw new Error(`Failed to get staging columns: ${stagingColErr.message}`)
+
+        const stagingTables = new Set<string>()
+        for (const { table_name } of stagingColRows ?? []) stagingTables.add(table_name)
+
+        const { data: fkRows, error: fkErr } = await stagingAdmin.rpc('seed_get_fk_deps')
+        if (fkErr) throw new Error(`Failed to get FK deps: ${fkErr.message}`)
+
+        const fkDeps = new Map<string, Set<string>>()
+        for (const { child_table, parent_table } of fkRows ?? []) {
+            if (!fkDeps.has(child_table)) fkDeps.set(child_table, new Set())
+            fkDeps.get(child_table)!.add(parent_table)
+        }
+
+        const { data: pkRows, error: pkErr } = await stagingAdmin.rpc('seed_get_primary_keys')
+        if (pkErr) throw new Error(`Failed to get primary keys: ${pkErr.message}`)
+
+        const primaryKeys = new Map<string, string[]>()
+        for (const { table_name, column_name } of pkRows ?? []) {
+            if (!primaryKeys.has(table_name)) primaryKeys.set(table_name, [])
+            primaryKeys.get(table_name)!.push(column_name)
+        }
+
+        const orderedTables = topoSort([...stagingTables], fkDeps)
+
+        // Refuses unless this database is marked as staging (seed_assert_staging)
+        const { error: truncateErr } = await stagingAdmin.rpc('seed_truncate_public_tables')
+        if (truncateErr) throw new Error(`Truncate failed: ${truncateErr.message}`)
+
+        // ── Phase C: replace staging logins ──────────────────────────────────
+
+        const stagingUsers: any[] = []
+        page = 1
+        while (true) {
+            const { data, error } = await stagingAdmin.auth.admin.listUsers({ page, perPage: 1000 })
+            if (error) throw new Error(`Failed to list staging users: ${error.message}`)
+            stagingUsers.push(...data.users)
+            if (data.users.length < 1000) break
+            page++
+        }
+
+        for (const user of stagingUsers) {
             // Skip the caller — deleting their account would invalidate their session
             if (user.id === callerUser.id) continue
             const { error } = await stagingAdmin.auth.admin.deleteUser(user.id)
-            if (error) deleteErrors.push({ id: user.id, email: user.email ?? '', error: error.message })
+            if (error) failures.push({ phase: 'login delete', item: user.email ?? user.id, error: error.message })
         }
 
-        const createErrors: { id: string; email: string; error: string }[] = []
         let usersCreated = 0
         for (const user of prodUsers) {
             // Skip the caller — their account already exists and session is active
@@ -117,81 +165,49 @@ serve(async (req) => {
                 user_metadata: user.user_metadata ?? {},
             })
             if (error) {
-                createErrors.push({ id: user.id, email: user.email ?? '', error: error.message })
+                failures.push({ phase: 'login create', item: user.email ?? user.id, error: error.message })
             } else {
                 usersCreated++
             }
         }
 
-        // ── Phase B: Public Tables ───────────────────────────────────────────
+        // ── Phase D: copy public tables ──────────────────────────────────────
 
-        // 1. Get staging column map and FK deps via helper RPCs (staging only)
-        const { data: stagingColRows, error: stagingColErr } = await stagingAdmin.rpc('seed_get_table_columns')
-        if (stagingColErr) throw new Error(`Failed to get staging columns: ${stagingColErr.message}`)
-
-        const stagingColMap = new Map<string, Set<string>>()
-        for (const { table_name, column_name } of stagingColRows ?? []) {
-            if (!stagingColMap.has(table_name)) stagingColMap.set(table_name, new Set())
-            stagingColMap.get(table_name)!.add(column_name)
-        }
-
-        const { data: fkRows, error: fkErr } = await stagingAdmin.rpc('seed_get_fk_deps')
-        if (fkErr) throw new Error(`Failed to get FK deps: ${fkErr.message}`)
-
-        const fkDeps = new Map<string, Set<string>>()
-        for (const { child_table, parent_table } of fkRows ?? []) {
-            if (!fkDeps.has(child_table)) fkDeps.set(child_table, new Set())
-            fkDeps.get(child_table)!.add(parent_table)
-        }
-
-        const allStagingTables = [...stagingColMap.keys()]
-        const orderedTables = topoSort(allStagingTables, fkDeps)
-
-        // 2. Truncate all staging public tables
-        const { error: truncateErr } = await stagingAdmin.rpc('seed_truncate_public_tables')
-        if (truncateErr) throw new Error(`Truncate failed: ${truncateErr.message}`)
-
-        // 3. Insert prod data table by table in FK-safe order.
-        //    select('*') from prod and filter to staging columns client-side —
-        //    this way no helper functions are needed on prod.
+        // Parent-before-child order is kept even though seed_insert_rows skips FK checks,
+        // so a half-finished copy never leaves orphans behind.
         const tableResults: { table: string; rows_copied: number; status: string; error?: string }[] = []
         let totalRows = 0
 
         for (const table of orderedTables) {
-            const stagingColumns = stagingColMap.get(table)!
-
+            let copied = 0
             try {
-                const allRows: any[] = []
                 let offset = 0
                 while (true) {
-                    const { data, error } = await prodAdmin
-                        .from(table)
-                        .select('*')
-                        .range(offset, offset + BATCH_SIZE - 1)
+                    // Ordered by primary key — paging an unordered read can skip or repeat rows
+                    let query = prodAdmin.from(table).select('*')
+                    for (const col of primaryKeys.get(table) ?? []) query = query.order(col, { ascending: true })
+                    const { data, error } = await query.range(offset, offset + BATCH_SIZE - 1)
 
                     if (error) throw new Error(error.message)
                     if (!data || data.length === 0) break
 
-                    // Filter each row to only columns that exist in staging
-                    const filtered = data.map((row: any) =>
-                        Object.fromEntries(
-                            Object.entries(row).filter(([col]) => stagingColumns.has(col))
-                        )
-                    )
-                    allRows.push(...filtered)
+                    // seed_insert_rows drops columns staging lacks and generated columns itself
+                    const { data: inserted, error: insertErr } = await stagingAdmin.rpc('seed_insert_rows', {
+                        p_table: table,
+                        p_rows: data,
+                    })
+                    if (insertErr) throw new Error(insertErr.message)
+                    copied += inserted ?? 0
+
                     if (data.length < BATCH_SIZE) break
                     offset += BATCH_SIZE
                 }
 
-                for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
-                    const { error } = await stagingAdmin.from(table).insert(allRows.slice(i, i + BATCH_SIZE))
-                    if (error) throw new Error(error.message)
-                }
-
-                tableResults.push({ table, rows_copied: allRows.length, status: 'ok' })
-                totalRows += allRows.length
+                tableResults.push({ table, rows_copied: copied, status: 'ok' })
+                totalRows += copied
             } catch (err) {
-                tableResults.push({ table, rows_copied: 0, status: 'error', error: err.message })
+                tableResults.push({ table, rows_copied: copied, status: 'error', error: err.message })
+                failures.push({ phase: 'table', item: table, error: err.message })
             }
         }
 
@@ -201,12 +217,11 @@ serve(async (req) => {
                     users_found_in_prod: prodUsers.length,
                     users_copied: usersCreated,
                     test_password: TEST_PASSWORD,
-                    errors: [...deleteErrors, ...createErrors],
                 },
                 public: tableResults,
+                failures,
                 summary: {
                     tables_ok: tableResults.filter(t => t.status === 'ok').length,
-                    tables_skipped: tableResults.filter(t => t.status === 'skipped').length,
                     tables_failed: tableResults.filter(t => t.status === 'error').length,
                     total_rows_copied: totalRows,
                     duration_ms: Date.now() - startTime,

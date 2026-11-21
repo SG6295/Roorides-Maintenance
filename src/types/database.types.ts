@@ -3134,11 +3134,19 @@ export type Database = {
         Args: { p_invoice: Json; p_invoice_id: string; p_items: Json }
         Returns: string
       }
+      seed_assert_staging: { Args: never; Returns: undefined }
       seed_get_fk_deps: {
         Args: never
         Returns: {
           child_table: string
           parent_table: string
+        }[]
+      }
+      seed_get_primary_keys: {
+        Args: never
+        Returns: {
+          column_name: string
+          table_name: string
         }[]
       }
       seed_get_table_columns: {
@@ -3147,6 +3155,10 @@ export type Database = {
           column_name: string
           table_name: string
         }[]
+      }
+      seed_insert_rows: {
+        Args: { p_rows: Json; p_table: string }
+        Returns: number
       }
       seed_truncate_public_tables: { Args: never; Returns: undefined }
       set_stock_audit_reasons: {
