@@ -803,6 +803,7 @@ export type Database = {
             | null
           id: string
           name: string
+          name_key: string | null
           part_number: string | null
           quantity_in_stock: number
           unit: string | null
@@ -816,6 +817,7 @@ export type Database = {
             | null
           id?: string
           name: string
+          name_key?: string | null
           part_number?: string | null
           quantity_in_stock?: number
           unit?: string | null
@@ -829,6 +831,7 @@ export type Database = {
             | null
           id?: string
           name?: string
+          name_key?: string | null
           part_number?: string | null
           quantity_in_stock?: number
           unit?: string | null
@@ -980,7 +983,7 @@ export type Database = {
           {
             foreignKeyName: "refurbished_part_links_refurbished_part_id_fkey"
             columns: ["refurbished_part_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "parts"
             referencedColumns: ["id"]
           },
@@ -3067,6 +3070,7 @@ export type Database = {
         }
         Returns: string
       }
+      part_name_key: { Args: { p_name: string }; Returns: string }
       payment_run_for: { Args: { p_date: string }; Returns: string }
       preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
       purchase_invoice_file_missing: {

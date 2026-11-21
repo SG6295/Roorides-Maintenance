@@ -4210,6 +4210,24 @@ $$;
 ALTER FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) OWNER TO postgres;
 
 --
+-- Name: part_name_key(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.part_name_key(p_name text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$ SELECT lower(btrim(regexp_replace(p_name, '[[:space:]]+', ' ', 'g'))) $$;
+
+
+ALTER FUNCTION public.part_name_key(p_name text) OWNER TO postgres;
+
+--
+-- Name: FUNCTION part_name_key(p_name text); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.part_name_key(p_name text) IS 'A part name in lower case with spaces trimmed and runs of spaces made one — what part-name uniqueness matches on (MAIN-148). Mirrored by partNameKey() in src/utils/partName.js.';
+
+
+--
 -- Name: payment_run_for(date); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4614,12 +4632,21 @@ BEGIN
         v_refurb_id := NULL;
         SELECT refurbished_part_id INTO v_refurb_id
         FROM   public.refurbished_part_links
-        WHERE  original_part_id = v_part_id OR refurbished_part_id = v_part_id;
+        WHERE  original_part_id = v_part_id OR refurbished_part_id = v_part_id
+        LIMIT  1;
 
         IF v_refurb_id IS NULL THEN
-            INSERT INTO public.parts (name, part_number, unit, quantity_in_stock)
-            VALUES (v_part_name || ' (Refurbished)', v_part_number, v_part_unit, 0)
-            RETURNING id INTO v_refurb_id;
+            -- A part already carrying the refurbished name is that part (MAIN-148), so
+            -- originals of the same name share one refurbished part.
+            SELECT id INTO v_refurb_id
+            FROM   public.parts
+            WHERE  name_key = public.part_name_key(v_part_name || ' (Refurbished)');
+
+            IF v_refurb_id IS NULL THEN
+                INSERT INTO public.parts (name, part_number, unit, quantity_in_stock)
+                VALUES (v_part_name || ' (Refurbished)', v_part_number, v_part_unit, 0)
+                RETURNING id INTO v_refurb_id;
+            END IF;
 
             INSERT INTO public.refurbished_part_links (refurbished_part_id, original_part_id)
             VALUES (v_refurb_id, v_part_id);
@@ -12079,6 +12106,7 @@ CREATE TABLE public.parts (
     created_via text DEFAULT 'manual'::text NOT NULL,
     default_exclude_from_scrap boolean DEFAULT false NOT NULL,
     default_exclusion_reason public.scrap_exclusion_reason,
+    name_key text GENERATED ALWAYS AS (public.part_name_key(name)) STORED,
     CONSTRAINT parts_created_via_check CHECK ((created_via = ANY (ARRAY['manual'::text, 'outsource_jobcard'::text]))),
     CONSTRAINT parts_default_exclusion_reason_check CHECK (
 CASE
@@ -12102,6 +12130,13 @@ COMMENT ON COLUMN public.parts.default_exclude_from_scrap IS 'When true, the job
 --
 
 COMMENT ON COLUMN public.parts.default_exclusion_reason IS 'Exclusion reason pre-filled alongside default_exclude_from_scrap. Non-null exactly when the flag is set.';
+
+
+--
+-- Name: COLUMN parts.name_key; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.parts.name_key IS 'part_name_key(name): unique, so no two parts share a name ignoring capitals and extra spaces (MAIN-148).';
 
 
 --
@@ -13914,19 +13949,11 @@ ALTER TABLE ONLY public.purchase_invoices
 
 
 --
--- Name: refurbished_part_links refurbished_part_links_original_part_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.refurbished_part_links
-    ADD CONSTRAINT refurbished_part_links_original_part_id_key UNIQUE (original_part_id);
-
-
---
 -- Name: refurbished_part_links refurbished_part_links_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.refurbished_part_links
-    ADD CONSTRAINT refurbished_part_links_pkey PRIMARY KEY (refurbished_part_id);
+    ADD CONSTRAINT refurbished_part_links_pkey PRIMARY KEY (original_part_id);
 
 
 --
@@ -15262,10 +15289,24 @@ CREATE INDEX part_stock_location_idx ON public.part_stock USING btree (location_
 
 
 --
+-- Name: parts_name_key_key; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX parts_name_key_key ON public.parts USING btree (name_key);
+
+
+--
 -- Name: purchase_invoices_location_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
 CREATE INDEX purchase_invoices_location_idx ON public.purchase_invoices USING btree (location_id);
+
+
+--
+-- Name: refurbished_part_links_refurbished_part_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX refurbished_part_links_refurbished_part_id_idx ON public.refurbished_part_links USING btree (refurbished_part_id);
 
 
 --
@@ -19642,6 +19683,15 @@ GRANT ALL ON FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) TO se
 GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) TO anon;
 GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) TO authenticated;
 GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) TO service_role;
+
+
+--
+-- Name: FUNCTION part_name_key(p_name text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.part_name_key(p_name text) TO anon;
+GRANT ALL ON FUNCTION public.part_name_key(p_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.part_name_key(p_name text) TO service_role;
 
 
 --

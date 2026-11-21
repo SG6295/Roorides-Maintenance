@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react'
-import { usePurchaseInvoiceItems, useParts, useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import { useState } from 'react'
+import { usePurchaseInvoiceItems, useParts } from '../../hooks/useInventory'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
 import { usePurchaseInvoiceForm } from '../../hooks/usePurchaseInvoiceForm'
 import {
-    PlusIcon, TrashIcon, CheckIcon, ExclamationTriangleIcon,
+    PlusIcon, TrashIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
+import NewPartInlineForm from './NewPartInlineForm'
 import { PurchaseInvoiceModal, PurchaseInvoiceFields, InvoiceTotal } from './PurchaseInvoiceShared'
 import {
     round2,
@@ -35,7 +36,6 @@ const GST_OPTIONS = GST_RATES.map(r => ({ label: r.label, value: String(r.value)
 // remove-button column needs less.
 const LINE_GRID = 'grid gap-2 grid-cols-[minmax(0,3fr)_minmax(0,1.5fr)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.5fr)]'
 const emptyNewLine = () => ({ id: null, part_id: '', quantity: '', unit_price: '', gst_rate: 0, discount_amount: '', discount_pct: '', discount_mode: 'amount' })
-const emptyNewPartForm = () => ({ name: '', part_number: '', unit: 'pcs', saving: false, error: null })
 
 /**
  * Edit an ordinary purchase invoice: its lines, discounts and workshop, plus what every
@@ -48,9 +48,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const { frozen, isFinanceRole } = form
     const { data: existingItems, isLoading: itemsLoading } = usePurchaseInvoiceItems(invoice.id)
     const { data: parts = [] } = useParts()
-    const { data: partUnits = [] } = usePartUnits()
     const { data: locations = [] } = useWorkshopLocations()
-    const createPart = useCreatePart()
 
     const [locationId, setLocationId] = useState(invoice.location_id)
 
@@ -62,29 +60,26 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
     const [error, setError] = useState(null)
 
-    // Populate lines from loaded items (runs once)
-    useEffect(() => {
-        if (existingItems && lines === null) {
-            const mapped = existingItems.map(item => {
-                const disc = Number(item.discount_amount) || 0
-                const sub = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0)
-                return {
-                    id: item.id,
-                    part_id: item.part_id,
-                    part_name: item.part?.name || '',
-                    part_number: item.part?.part_number || '',
-                    part_unit: item.part?.unit || '',
-                    quantity: String(item.quantity),
-                    unit_price: String(item.unit_price),
-                    gst_rate: item.gst_rate ?? 0,
-                    discount_amount: disc ? String(disc) : '',
-                    discount_pct: disc && sub > 0 ? String(round2((disc / sub) * 100)) : '',
-                    discount_mode: 'amount',
-                }
-            })
-            setLines(mapped)
-        }
-    }, [existingItems, lines])
+    // Populate lines from loaded items (once), during render rather than in an effect.
+    if (existingItems && lines === null) {
+        setLines(existingItems.map(item => {
+            const disc = Number(item.discount_amount) || 0
+            const sub = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0)
+            return {
+                id: item.id,
+                part_id: item.part_id,
+                part_name: item.part?.name || '',
+                part_number: item.part?.part_number || '',
+                part_unit: item.part?.unit || '',
+                quantity: String(item.quantity),
+                unit_price: String(item.unit_price),
+                gst_rate: item.gst_rate ?? 0,
+                discount_amount: disc ? String(disc) : '',
+                discount_pct: disc && sub > 0 ? String(round2((disc / sub) * 100)) : '',
+                discount_mode: 'amount',
+            }
+        }))
+    }
 
     // ── Line helpers ───────────────────────────────────────────────────────────
     const invoiceTotal = calcInvoiceTotal(lines || [])
@@ -119,36 +114,11 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     // New-part form helpers (only for new lines, i.e. id === null)
     function handlePartSelect(index, value) {
         if (value === NEW_PART_SENTINEL) {
-            setNewPartForms(prev => ({ ...prev, [index]: emptyNewPartForm() }))
+            setNewPartForms(prev => ({ ...prev, [index]: true }))
             updateLine(index, 'part_id', '')
         } else {
             setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
             updateLine(index, 'part_id', value)
-        }
-    }
-
-    function updateNewPartForm(index, field, value) {
-        setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], [field]: value } }))
-    }
-
-    async function confirmNewPart(index) {
-        const form = newPartForms[index]
-        if (!form.name.trim()) {
-            setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], error: 'Part name is required.' } }))
-            return
-        }
-        setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], saving: true, error: null } }))
-        try {
-            const newPart = await createPart.mutateAsync({
-                name: form.name.trim(),
-                part_number: form.part_number.trim() || null,
-                unit: form.unit.trim() || 'pcs',
-                quantity_in_stock: 0,
-            })
-            updateLine(index, 'part_id', newPart.id)
-            setNewPartForms(prev => { const n = { ...prev }; delete n[index]; return n })
-        } catch (err) {
-            setNewPartForms(prev => ({ ...prev, [index]: { ...prev[index], saving: false, error: err.message } }))
         }
     }
 
@@ -318,55 +288,14 @@ export default function EditPurchaseModal({ invoice, onClose }) {
                                         </div>
                                     ) : npf ? (
                                         /* Inline new-part form */
-                                        <div className="border border-blue-300 rounded-lg p-2 bg-blue-50 space-y-1.5">
-                                            <p className="text-xs font-medium text-blue-700">New part</p>
-                                            <input
-                                                autoFocus
-                                                type="text"
-                                                placeholder="Part name *"
-                                                className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
-                                                value={npf.name}
-                                                onChange={e => updateNewPartForm(i, 'name', e.target.value)}
-                                            />
-                                            <div className="flex gap-1">
-                                                <input
-                                                    type="text"
-                                                    placeholder="Part # (optional)"
-                                                    className="flex-1 border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-400"
-                                                    value={npf.part_number}
-                                                    onChange={e => updateNewPartForm(i, 'part_number', e.target.value)}
-                                                />
-                                                <div className="w-24">
-                                                    <CustomSelect
-                                                        compact
-                                                        value={npf.unit}
-                                                        onChange={val => updateNewPartForm(i, 'unit', val)}
-                                                        options={partUnits.map(u => u.name)}
-                                                    />
-                                                </div>
-                                            </div>
-                                            {npf.error && (
-                                                <p className="text-xs text-red-600">{npf.error}</p>
-                                            )}
-                                            <div className="flex gap-2 pt-0.5">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => confirmNewPart(i)}
-                                                    disabled={npf.saving}
-                                                    className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                                                >
-                                                    <CheckIcon className="w-3 h-3" />
-                                                    {npf.saving ? 'Adding…' : 'Add part'}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => cancelNewPart(i)}
-                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
-                                                >
-                                                    Cancel
-                                                </button>
-                                            </div>
-                                        </div>
+                                        <NewPartInlineForm
+                                            parts={parts}
+                                            onCreated={part => {
+                                                updateLine(i, 'part_id', part.id)
+                                                cancelNewPart(i)
+                                            }}
+                                            onCancel={() => cancelNewPart(i)}
+                                        />
                                     ) : (
                                         /* Part dropdown for new lines */
                                         <SearchableSelect

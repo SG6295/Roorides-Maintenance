@@ -290,6 +290,7 @@ export default function PurchaseModal({ onClose }) {
                                                 {npf ? (
                                                     /* ── Inline new-part form ── */
                                                     <NewPartInlineForm
+                                                        parts={parts}
                                                         onCreated={part => {
                                                             updateLine(i, 'part_id', part.id)
                                                             cancelNewPart(i)
