@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { useUpdatePart, usePartUnits } from '../../hooks/useInventory'
+import { useParts, useUpdatePart, usePartUnits } from '../../hooks/useInventory'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+import { findSameNamePart, isDuplicatePartNameError, duplicatePartMessage } from '../../utils/partName'
 import CustomSelect from '../shared/CustomSelect'
+import DuplicatePartNotice from './DuplicatePartNotice'
 
 export default function EditPartModal({ part, onClose }) {
     const updatePart = useUpdatePart()
     const { data: partUnits = [] } = usePartUnits()
+    const { data: parts = [] } = useParts()
 
     const [form, setForm] = useState({
         name: part.name,
@@ -14,6 +17,10 @@ export default function EditPartModal({ part, onClose }) {
     })
     const [error, setError] = useState(null)
 
+    // A rename onto another part's name is refused (MAIN-148). There is no line to pick
+    // the other part for here, so only the message shows.
+    const sameNamePart = findSameNamePart(parts, form.name, part.id)
+
     async function handleSubmit(e) {
         e.preventDefault()
         setError(null)
@@ -21,6 +28,7 @@ export default function EditPartModal({ part, onClose }) {
             setError('Part name is required.')
             return
         }
+        if (sameNamePart) return
         try {
             await updatePart.mutateAsync({
                 id: part.id,
@@ -30,7 +38,7 @@ export default function EditPartModal({ part, onClose }) {
             })
             onClose()
         } catch (err) {
-            setError(err.message)
+            setError(isDuplicatePartNameError(err) ? duplicatePartMessage(null) : err.message)
         }
     }
 
@@ -56,6 +64,11 @@ export default function EditPartModal({ part, onClose }) {
                             value={form.name}
                             onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
                         />
+                        {sameNamePart && (
+                            <div className="mt-1">
+                                <DuplicatePartNotice part={sameNamePart} />
+                            </div>
+                        )}
                     </div>
 
                     <div>
@@ -95,7 +108,7 @@ export default function EditPartModal({ part, onClose }) {
                         </button>
                         <button
                             type="submit"
-                            disabled={updatePart.isPending}
+                            disabled={updatePart.isPending || !!sameNamePart}
                             className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                         >
                             {updatePart.isPending ? 'Saving…' : 'Save Changes'}

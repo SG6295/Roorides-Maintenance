@@ -1,22 +1,36 @@
 import { useState } from 'react'
 import { CheckIcon } from '@heroicons/react/24/outline'
 import { useCreatePart, usePartUnits } from '../../hooks/useInventory'
+import { findSameNamePart, isDuplicatePartNameError } from '../../utils/partName'
 import CustomSelect from '../shared/CustomSelect'
+import DuplicatePartNotice from './DuplicatePartNotice'
 
-/** Adds a part to the catalog from inside a line item, without leaving the form. */
-export default function NewPartInlineForm({ onCreated, onCancel }) {
+/**
+ * Adds a part to the catalog from inside a line item, without leaving the form.
+ * `parts` is the catalog, so a name already in it is caught as it is typed (MAIN-148);
+ * picking the existing part hands it to `onCreated` like a new one.
+ */
+export default function NewPartInlineForm({ parts = [], onCreated, onCancel }) {
     const { data: partUnits = [] } = usePartUnits()
     const createPart = useCreatePart()
     const [form, setForm] = useState({ name: '', part_number: '', unit: 'pcs' })
     const [error, setError] = useState(null)
+    const [takenBy, setTakenBy] = useState(null)
 
-    const setField = (field, value) => setForm(prev => ({ ...prev, [field]: value }))
+    const sameName = findSameNamePart(parts, form.name)
+    const duplicate = sameName ?? takenBy
+
+    const setField = (field, value) => {
+        setForm(prev => ({ ...prev, [field]: value }))
+        if (field === 'name') setTakenBy(null)
+    }
 
     async function confirm() {
         if (!form.name.trim()) {
             setError('Part name is required.')
             return
         }
+        if (duplicate) return
         setError(null)
         try {
             const newPart = await createPart.mutateAsync({
@@ -27,7 +41,9 @@ export default function NewPartInlineForm({ onCreated, onCancel }) {
             })
             onCreated(newPart)
         } catch (err) {
-            setError(err.message)
+            // Someone added the same name since the catalog loaded.
+            if (isDuplicatePartNameError(err)) setTakenBy({ id: null, name: form.name })
+            else setError(err.message)
         }
     }
 
@@ -42,6 +58,7 @@ export default function NewPartInlineForm({ onCreated, onCancel }) {
                 value={form.name}
                 onChange={e => setField('name', e.target.value)}
             />
+            {duplicate && <DuplicatePartNotice part={sameName} onUse={onCreated} />}
             <div className="flex gap-1">
                 <input
                     type="text"
@@ -64,7 +81,7 @@ export default function NewPartInlineForm({ onCreated, onCancel }) {
                 <button
                     type="button"
                     onClick={confirm}
-                    disabled={createPart.isPending}
+                    disabled={createPart.isPending || !!duplicate}
                     className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
                     <CheckIcon className="w-3 h-3" />

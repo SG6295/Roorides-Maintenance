@@ -10,7 +10,9 @@ import { ScrapRPCError } from '../../hooks/useScrap'
 import { logAuditEvent } from '../../utils/auditLogger'
 import { issueLabourHours, formatHours, initials } from '../../utils/labour'
 import { ROLE_LABELS } from '../../constants/userRoles'
+import { findSameNamePart, isDuplicatePartNameError, duplicatePartMessage } from '../../utils/partName'
 import SearchableSelect from '../shared/SearchableSelect'
+import DuplicatePartNotice from '../inventory/DuplicatePartNotice'
 import CustomSelect from '../shared/CustomSelect'
 import SLAStatusBadge from '../shared/SLAStatusBadge'
 import { useToast } from '../../hooks/useFeedback'
@@ -128,16 +130,26 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
         setForm(prev => ({ ...prev, selectedPartId: val }))
     }
 
+    // A name already in the catalog, ignoring capitals and extra spaces (MAIN-148).
+    const sameNamePart = showCreateForm ? findSameNamePart(parts, newPartName) : null
+
+    const closeCreateForm = () => {
+        setShowCreateForm(false)
+        setNewPartName('')
+        setNewPartUnit('')
+        setNewPartNumber('')
+        setNewPartError(null)
+    }
+
+    const pickExistingPart = (part) => {
+        setForm(prev => ({ ...prev, selectedPartId: part.id }))
+        closeCreateForm()
+    }
+
     const handleCreatePart = async () => {
         if (!newPartName.trim()) { setNewPartError('Part name is required.'); return }
         if (!newPartUnit) { setNewPartError('Unit is required.'); return }
-        const duplicate = parts.find(
-            p => p.name.trim().toLowerCase() === newPartName.trim().toLowerCase()
-        )
-        if (duplicate) {
-            setNewPartError('This part already exists — please select it from the dropdown.')
-            return
-        }
+        if (sameNamePart) return
         setNewPartError(null)
         try {
             const created = await createPart.mutateAsync({
@@ -145,13 +157,11 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                 unit: newPartUnit,
                 part_number: newPartNumber || null,
             })
-            setForm(prev => ({ ...prev, selectedPartId: created.id }))
-            setShowCreateForm(false)
-            setNewPartName('')
-            setNewPartUnit('')
-            setNewPartNumber('')
+            pickExistingPart(created)
         } catch (e) {
-            toast.error('Failed to create part: ' + e.message)
+            // Someone added the same name since the catalog loaded.
+            if (isDuplicatePartNameError(e)) setNewPartError(duplicatePartMessage(null))
+            else toast.error('Failed to create part: ' + e.message)
         }
     }
 
@@ -346,6 +356,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                         placeholder="Part name *"
                                         className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
+                                    {sameNamePart && <DuplicatePartNotice part={sameNamePart} onUse={pickExistingPart} />}
                                     <div className="flex gap-2">
                                         <div className="flex-1 min-w-0">
                                             <CustomSelect
@@ -367,13 +378,13 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                     <div className="flex gap-2">
                                         <button
                                             onClick={handleCreatePart}
-                                            disabled={createPart.isPending}
+                                            disabled={createPart.isPending || !!sameNamePart}
                                             className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                                         >
                                             {createPart.isPending ? 'Creating…' : 'Create & select'}
                                         </button>
                                         <button
-                                            onClick={() => { setShowCreateForm(false); setNewPartName(''); setNewPartUnit(''); setNewPartNumber(''); setNewPartError(null) }}
+                                            onClick={closeCreateForm}
                                             className="text-sm px-3 py-1.5 bg-white border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                                         >
                                             Cancel

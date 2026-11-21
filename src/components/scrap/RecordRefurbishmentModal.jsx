@@ -364,6 +364,7 @@ export default function RecordRefurbishmentModal({ onClose }) {
                                                     <div>
                                                         {line.creatingPart ? (
                                                             <NewPartInlineForm
+                                                                parts={parts}
                                                                 onCreated={part => updateLine(line.key, { creatingPart: false, original_part_id: part.id })}
                                                                 onCancel={() => updateLine(line.key, { creatingPart: false })}
                                                             />

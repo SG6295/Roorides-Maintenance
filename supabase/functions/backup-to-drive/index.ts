@@ -31,7 +31,7 @@ const TABLES = [
 // Batches are ordered by primary key, so each table not keyed on `id` must be listed here.
 const PRIMARY_KEYS: Record<string, string[]> = {
   part_stock: ['part_id', 'location_id'],
-  refurbished_part_links: ['refurbished_part_id'],
+  refurbished_part_links: ['original_part_id'],
   site_workshops: ['site_id'],
   sla_version_turnaround: ['version_id', 'category', 'severity'],
   system_settings: ['key'],
