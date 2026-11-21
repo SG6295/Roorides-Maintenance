@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
+import { seedFailures } from '../../utils/seedResult'
 
 const CONFIRM_PHRASE = 'CONFIRM'
 
@@ -10,6 +12,7 @@ export default function SeedStaging() {
     const [error, setError] = useState(null)
 
     const confirmed = confirmInput === CONFIRM_PHRASE
+    const failures = seedFailures(result)
 
     const handleSeed = async () => {
         if (!confirmed) return
@@ -22,7 +25,12 @@ export default function SeedStaging() {
         setLoading(false)
 
         if (fnError) {
-            setError(fnError.message)
+            // invoke() returns data = null and a FunctionsHttpError for any non-2xx,
+            // so the function's own reason (e.g. NOT_STAGING) is in the response body
+            const body = fnError instanceof FunctionsHttpError
+                ? await fnError.context.json().catch(() => null)
+                : null
+            setError(body?.error ?? fnError.message)
             return
         }
         if (data?.error) {
@@ -95,41 +103,41 @@ export default function SeedStaging() {
             {result && (
                 <div className="mt-6 space-y-4">
                     {/* Summary */}
-                    <div className="rounded-md bg-green-50 border border-green-200 p-4">
-                        <p className="text-sm font-semibold text-green-800">Sync complete</p>
-                        <div className="mt-1 text-sm text-green-700 space-y-0.5">
-                            <p>{result.summary.total_rows_copied.toLocaleString()} rows copied across {result.summary.tables_ok} tables in {(result.summary.duration_ms / 1000).toFixed(1)}s</p>
-                            {result.summary.tables_failed > 0 && (
-                                <p className="text-amber-700">{result.summary.tables_failed} table(s) failed — see details below</p>
-                            )}
+                    {failures.length === 0 ? (
+                        <div className="rounded-md bg-green-50 border border-green-200 p-4">
+                            <p className="text-sm font-semibold text-green-800">Sync complete</p>
+                            <p className="mt-1 text-sm text-green-700">
+                                {result.summary.total_rows_copied.toLocaleString()} rows copied across {result.summary.tables_ok} tables in {(result.summary.duration_ms / 1000).toFixed(1)}s
+                            </p>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="rounded-md bg-red-50 border border-red-200 p-4">
+                            <p className="text-sm font-semibold text-red-800">Sync finished with {failures.length} failure{failures.length === 1 ? '' : 's'}</p>
+                            <p className="mt-1 text-sm text-red-700">
+                                Staging does not match production. {result.summary.total_rows_copied.toLocaleString()} rows copied across {result.summary.tables_ok} tables in {(result.summary.duration_ms / 1000).toFixed(1)}s — see the failures below.
+                            </p>
+                        </div>
+                    )}
 
                     {/* Auth summary */}
                     <div className="rounded-md bg-blue-50 border border-blue-200 p-4">
                         <p className="text-sm font-semibold text-blue-800">Auth users</p>
                         <p className="text-sm text-blue-700 mt-1">
-                            {result.auth.users_copied} of {result.auth.users_found_in_prod} users copied.
+                            {result.auth.users_copied} of {result.auth.users_found_in_prod} users copied (your own account is kept as it is).
                             Test password for all staging accounts: <span className="font-mono font-bold">{result.auth.test_password}</span>
                         </p>
-                        {result.auth.errors?.length > 0 && (
-                            <ul className="mt-2 text-sm text-amber-700 list-disc list-inside">
-                                {result.auth.errors.map((e, i) => (
-                                    <li key={i}>{e.email}: {e.error}</li>
-                                ))}
-                            </ul>
-                        )}
                     </div>
 
-                    {/* Per-table details */}
-                    {result.summary.tables_failed > 0 && (
+                    {/* Failure details */}
+                    {failures.length > 0 && (
                         <div>
-                            <p className="text-sm font-medium text-gray-700 mb-2">Failed tables</p>
+                            <p className="text-sm font-medium text-gray-700 mb-2">Failures</p>
                             <div className="rounded-md border border-red-200 divide-y divide-red-100">
-                                {result.public.filter(t => t.status === 'error').map(t => (
-                                    <div key={t.table} className="px-4 py-2 text-sm">
-                                        <span className="font-mono font-medium text-red-700">{t.table}</span>
-                                        <span className="text-red-600 ml-2">{t.error}</span>
+                                {failures.map((f, i) => (
+                                    <div key={i} className="px-4 py-2 text-sm">
+                                        <span className="text-red-500 mr-2">{f.phase}</span>
+                                        <span className="font-mono font-medium text-red-700">{f.item}</span>
+                                        <span className="text-red-600 ml-2">{f.error}</span>
                                     </div>
                                 ))}
                             </div>

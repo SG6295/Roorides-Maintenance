@@ -6134,6 +6134,28 @@ $$;
 ALTER FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice jsonb, p_items jsonb) OWNER TO postgres;
 
 --
+-- Name: seed_assert_staging(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_assert_staging() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM vault.decrypted_secrets
+    WHERE name = 'seed_target_environment' AND decrypted_secret = 'staging'
+  ) THEN
+    RAISE EXCEPTION 'NOT_STAGING: this database is not marked as staging; the seed refuses to run'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.seed_assert_staging() OWNER TO postgres;
+
+--
 -- Name: seed_get_fk_deps(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -6159,6 +6181,27 @@ $$;
 ALTER FUNCTION public.seed_get_fk_deps() OWNER TO postgres;
 
 --
+-- Name: seed_get_primary_keys(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_get_primary_keys() RETURNS TABLE(table_name text, column_name text)
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+  SELECT c.relname::text, a.attname::text
+  FROM pg_catalog.pg_constraint k
+  JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL unnest(k.conkey) WITH ORDINALITY AS u(attnum, ord)
+  JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum
+  WHERE n.nspname = 'public' AND k.contype = 'p'
+  ORDER BY c.relname, u.ord;
+$$;
+
+
+ALTER FUNCTION public.seed_get_primary_keys() OWNER TO postgres;
+
+--
 -- Name: seed_get_table_columns(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -6178,6 +6221,75 @@ $$;
 ALTER FUNCTION public.seed_get_table_columns() OWNER TO postgres;
 
 --
+-- Name: seed_insert_rows(text, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.seed_insert_rows(p_table text, p_rows jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $_$
+DECLARE
+  v_rel regclass;
+  v_cols text;
+  v_count integer;
+  v_ident record;
+BEGIN
+  PERFORM public.seed_assert_staging();
+
+  IF jsonb_typeof(p_rows) <> 'array' THEN
+    RAISE EXCEPTION 'seed_insert_rows: p_rows must be a jsonb array';
+  END IF;
+  IF jsonb_array_length(p_rows) = 0 THEN
+    RETURN 0;
+  END IF;
+
+  SELECT c.oid INTO v_rel
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = p_table AND c.relkind = 'r';
+  IF v_rel IS NULL THEN
+    RAISE EXCEPTION 'seed_insert_rows: no public table named %', p_table;
+  END IF;
+
+  SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) INTO v_cols
+  FROM pg_catalog.pg_attribute a
+  WHERE a.attrelid = v_rel
+    AND a.attnum > 0
+    AND NOT a.attisdropped
+    AND a.attgenerated = ''
+    AND p_rows -> 0 ? a.attname;
+
+  IF v_cols IS NULL THEN
+    RAISE EXCEPTION 'seed_insert_rows: no matching columns for %', p_table;
+  END IF;
+
+  SET LOCAL session_replication_role = replica;
+
+  EXECUTE format(
+    'INSERT INTO %s (%s) OVERRIDING SYSTEM VALUE SELECT %s FROM jsonb_populate_recordset(NULL::%s, $1)',
+    v_rel, v_cols, v_cols, v_rel
+  ) USING p_rows;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+
+  FOR v_ident IN
+    SELECT a.attname
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = v_rel AND a.attidentity <> '' AND NOT a.attisdropped
+  LOOP
+    EXECUTE format(
+      'SELECT setval(pg_get_serial_sequence(%L, %L), max(%I)) FROM %s HAVING max(%I) IS NOT NULL',
+      v_rel::text, v_ident.attname, v_ident.attname, v_rel, v_ident.attname
+    );
+  END LOOP;
+
+  RETURN v_count;
+END;
+$_$;
+
+
+ALTER FUNCTION public.seed_insert_rows(p_table text, p_rows jsonb) OWNER TO postgres;
+
+--
 -- Name: seed_truncate_public_tables(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -6187,12 +6299,14 @@ CREATE FUNCTION public.seed_truncate_public_tables() RETURNS void
 DECLARE
   tbl text;
 BEGIN
+  PERFORM public.seed_assert_staging();
+
   FOR tbl IN
     SELECT tablename
     FROM pg_tables
     WHERE schemaname = 'public'
   LOOP
-    EXECUTE format('TRUNCATE TABLE public.%I CASCADE', tbl);
+    EXECUTE format('TRUNCATE TABLE public.%I RESTART IDENTITY CASCADE', tbl);
   END LOOP;
 END;
 $$;
@@ -19711,6 +19825,14 @@ GRANT ALL ON FUNCTION public.save_purchase_invoice(p_invoice_id uuid, p_invoice 
 
 
 --
+-- Name: FUNCTION seed_assert_staging(); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.seed_assert_staging() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.seed_assert_staging() TO service_role;
+
+
+--
 -- Name: FUNCTION seed_get_fk_deps(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -19719,11 +19841,27 @@ GRANT ALL ON FUNCTION public.seed_get_fk_deps() TO service_role;
 
 
 --
+-- Name: FUNCTION seed_get_primary_keys(); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.seed_get_primary_keys() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.seed_get_primary_keys() TO service_role;
+
+
+--
 -- Name: FUNCTION seed_get_table_columns(); Type: ACL; Schema: public; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION public.seed_get_table_columns() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.seed_get_table_columns() TO service_role;
+
+
+--
+-- Name: FUNCTION seed_insert_rows(p_table text, p_rows jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.seed_insert_rows(p_table text, p_rows jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.seed_insert_rows(p_table text, p_rows jsonb) TO service_role;
 
 
 --
