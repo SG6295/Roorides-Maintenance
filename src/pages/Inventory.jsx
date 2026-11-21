@@ -8,7 +8,6 @@ import Navigation from '../components/shared/Navigation'
 import FilterSelect from '../components/shared/FilterSelect'
 import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
 import PurchaseModal from '../components/inventory/PurchaseModal'
-import BulkUploadModal from '../components/inventory/BulkUploadModal'
 import EditPartModal from '../components/inventory/EditPartModal'
 import ScrapDefaultCell from '../components/inventory/ScrapDefaultCell'
 import PurchaseInvoiceEditor from '../components/inventory/PurchaseInvoiceEditor'
@@ -31,7 +30,6 @@ import { supabase } from '../lib/supabase'
 import {
     MagnifyingGlassIcon,
     PlusIcon,
-    ArrowUpTrayIcon,
     ArrowDownTrayIcon,
     ChevronDownIcon,
     ChevronUpIcon,
@@ -906,7 +904,6 @@ export default function Inventory() {
     const setTab = key => setSearchParams(key === 'parts' ? {} : { tab: key })
 
     const [showPurchaseModal, setShowPurchaseModal] = useState(false)
-    const [showBulkModal, setShowBulkModal] = useState(false)
 
     // The audit belongs to finance. maintenance_exec can see what an audit did to stock —
     // its write-offs show up in Consumption History — but takes no part in running one.
@@ -924,13 +921,6 @@ export default function Inventory() {
                     <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
                     {canPurchase && (
                     <div className="flex gap-3">
-                        <button
-                            onClick={() => setShowBulkModal(true)}
-                            className="flex items-center gap-2 px-4 py-2 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50 shadow-sm"
-                        >
-                            <ArrowUpTrayIcon className="w-4 h-4" />
-                            Bulk Upload
-                        </button>
                         <button
                             onClick={() => setShowPurchaseModal(true)}
                             className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm"
@@ -972,9 +962,6 @@ export default function Inventory() {
 
             {showPurchaseModal && (
                 <PurchaseModal onClose={() => setShowPurchaseModal(false)} />
-            )}
-            {showBulkModal && (
-                <BulkUploadModal onClose={() => setShowBulkModal(false)} />
             )}
         </div>
     )

@@ -151,7 +151,7 @@ export function validateCountSheet(rows, { audit, items, parts }) {
         if (untouchedFoundRow) return { ...rec, _skip: true, _errors: [] }
 
         // Resolve the part. Printed rows already know it; found rows are matched on part
-        // number first, then name — the same order BulkUploadModal uses.
+        // number first, then name.
         let resolved = null
         if (isPrinted) {
             resolved = { id: partId, name: itemsByPartId.get(partId).part_name_snapshot }
