@@ -573,7 +573,7 @@ export function useMechanicActivity(mechanicId) {
 }
 
 /**
- * Create a new part (used during bulk upload when a part isn't in the catalog).
+ * Create a new part (used when a purchase or work item names a part that isn't in the catalog).
  */
 export function useCreatePart() {
     const queryClient = useQueryClient()
