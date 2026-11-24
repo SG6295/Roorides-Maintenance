@@ -41,6 +41,9 @@ import { Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/r
 import { Fragment } from 'react'
 import { ISSUE_CATEGORIES, categoryOptions } from '../constants/issueCategories'
 import { useToast, useConfirm } from '../hooks/useFeedback'
+import { useVehicleCompany } from '../hooks/useVehicleCompany'
+import { isUnassignedVehicle } from '../constants/vehicleCompanies'
+import UnassignedVehicleBanner from '../components/vehicles/UnassignedVehicleBanner'
 
 // The address carries the ticket number (MAIN-143); the page below works by id.
 export default function TicketDetail() {
@@ -60,6 +63,8 @@ function TicketDetailById({ id }) {
   // Queries
   const { data: ticket, isLoading: ticketLoading } = useTicket(id)
   const { data: issues, isLoading: issuesLoading } = useIssues({ ticket_id: id })
+  // MAIN-155: nothing on a ticket can change while its vehicle is Unknown.
+  const { data: vehicleRecord } = useVehicleCompany(ticket?.vehicle_number)
 
   // Mutations
   const updateTicket = useUpdateTicket()
@@ -78,6 +83,8 @@ function TicketDetailById({ id }) {
 
   const isSupervisor = userProfile?.role === 'supervisor'
   const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+  const vehicleBlocked = isUnassignedVehicle(vehicleRecord)
+  const canAct = isExec && !vehicleBlocked
 
   // Handle ticket rejection
   const handleRejectTicket = async ({ rejection_reason, rejection_comment }) => {
@@ -127,7 +134,7 @@ function TicketDetailById({ id }) {
 
             <div className="flex items-center gap-2">
               {/* Status Actions Dropdown */}
-              {isExec && ticket.status !== 'Rejected' && ticket.status !== 'Closed' && (
+              {canAct && ticket.status !== 'Rejected' && ticket.status !== 'Closed' && (
                 <Menu as="div" className="relative inline-block text-left">
                   <MenuButton className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors">
                     Actions
@@ -172,6 +179,11 @@ function TicketDetailById({ id }) {
 
           {/* SLA Warning Banner */}
           <SLAWarning ticket={ticket} issues={issues} />
+          {vehicleBlocked && (
+            <div className="mt-3">
+              <UnassignedVehicleBanner registrationNumber={ticket.vehicle_number} />
+            </div>
+          )}
         </div>
       </header>
 
@@ -197,7 +209,7 @@ function TicketDetailById({ id }) {
               Issues ({issues?.length || 0})
             </h2>
           </div>
-          <IssuesTab ticket={ticket} issues={issues} canEdit={isExec} userProfile={userProfile} />
+          <IssuesTab ticket={ticket} issues={issues} canEdit={canAct} blocked={vehicleBlocked} userProfile={userProfile} />
         </section>
 
         {/* Section 3: Job Cards */}
@@ -257,7 +269,7 @@ function StatusBadge({ status }) {
 
 // Feedback Smileys Component - Enhanced with hover, creator-only, and modal
 // Uses database columns: rating ('Good', 'Ok', 'Bad'), rating_remarks, rated_at
-function FeedbackSmileys({ issue, ticket, userProfile, onUpdateFeedback, isUpdating }) {
+function FeedbackSmileys({ issue, ticket, blocked = false, userProfile, onUpdateFeedback, isUpdating }) {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [hoveredSmiley, setHoveredSmiley] = useState(null)
 
@@ -304,8 +316,9 @@ function FeedbackSmileys({ issue, ticket, userProfile, onUpdateFeedback, isUpdat
     )
   }
 
-  // Not ticket creator - show read-only (greyed if no rating, or show selected)
-  if (!isTicketCreator) {
+  // Not ticket creator, or the vehicle is Unknown (MAIN-155) - show read-only
+  // (greyed if no rating, or show selected)
+  if (!isTicketCreator || blocked) {
     return (
       <div className="flex items-center gap-1">
         {smileys.map((s) => (
@@ -317,7 +330,7 @@ function FeedbackSmileys({ issue, ticket, userProfile, onUpdateFeedback, isUpdat
               }`}
             title={hasRating && issue.rating === s.value
               ? `${s.label}${issue.rating_remarks ? `: ${issue.rating_remarks}` : ''}`
-              : 'Only ticket creator can provide feedback'}
+              : blocked ? 'Feedback waits until finance assigns this vehicle' : 'Only ticket creator can provide feedback'}
           >
             {s.emoji}
           </span>
@@ -504,7 +517,7 @@ function OverviewTab({ ticket }) {
   )
 }
 
-function IssuesTab({ ticket, issues, canEdit, userProfile }) {
+function IssuesTab({ ticket, issues, canEdit, blocked = false, userProfile }) {
   const toast = useToast()
   const confirm = useConfirm()
   const navigate = useNavigate()
@@ -915,6 +928,7 @@ function IssuesTab({ ticket, issues, canEdit, userProfile }) {
                       <FeedbackSmileys
                         issue={issue}
                         ticket={ticket}
+                        blocked={blocked}
                         userProfile={userProfile}
                         isUpdating={updateIssue.isPending}
                         onUpdateFeedback={(feedbackData) => {

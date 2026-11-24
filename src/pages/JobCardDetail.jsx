@@ -18,6 +18,9 @@ import CustomSelect from '../components/shared/CustomSelect'
 import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../components/outsource-invoices/InvoiceDetailsFields'
 import ResubmitInvoiceModal from '../components/outsource-invoices/ResubmitInvoiceModal'
 import { isLockedByFinance, isRejectedInvoice } from '../constants/outsourceInvoices'
+import { useVehicleCompany } from '../hooks/useVehicleCompany'
+import { isUnassignedVehicle } from '../constants/vehicleCompanies'
+import UnassignedVehicleBanner from '../components/vehicles/UnassignedVehicleBanner'
 import {
     EMPTY_INVOICE_FORM,
     invoiceFormFromRow,
@@ -66,6 +69,11 @@ export default function JobCardDetail() {
     const { data: workshopLocations = [] } = useWorkshopLocations()
 
     const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    // MAIN-155: nothing on a job card can change while its vehicle is Unknown. The queries
+    // below still load on isExec; every action is gated on canAct instead.
+    const { data: vehicleRecord } = useVehicleCompany(jobCard?.vehicle_number)
+    const vehicleBlocked = isUnassignedVehicle(vehicleRecord)
+    const canAct = isExec && !vehicleBlocked
     // Multi-vehicle invoice lines linked to this card (MAIN-112). While any exist the
     // card must stay outsourced; the database refuses the switch too.
     const { data: linkedBatchLines = [], isLoading: batchLinesLoading } = useJobCardBatchLines(jobCard?.id, { enabled: isExec })
@@ -311,7 +319,7 @@ export default function JobCardDetail() {
     const isBatchLinked = linkedBatchLines.length > 0
     const closesAsInvoicePending = isOutsource && !hasOwnInvoice && !isBatchLinked
     const hasSupplier = isOutsource ? !!jobCard.supplier_id : true
-    const supplierMissing = isExec && jobCard.status === 'Open' && !hasSupplier
+    const supplierMissing = canAct && jobCard.status === 'Open' && !hasSupplier
     // Once finance has accepted the invoice it is in the supplier ledger (MAIN-118);
     // finance moving it back to Hold, or on to Reject, lifts the lock.
     const lockedByFinance = isOutsource && jobCard.status === 'Completed' && isLockedByFinance(existingInvoice)
@@ -337,7 +345,7 @@ export default function JobCardDetail() {
         : 'Fill in all required invoice details'
     // Only an exec can save the invoice details or upload the file (finance can view
     // the card but not write to it), so everyone else sees both read-only.
-    const invoiceReadOnly = jobCard.status === 'Completed' || !isExec
+    const invoiceReadOnly = jobCard.status === 'Completed' || !canAct
 
     const jobLocationLabel = jobCard.type === 'InHouse' ? 'In-house' : 'Outsource'
 
@@ -360,6 +368,8 @@ export default function JobCardDetail() {
             />
 
             <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
+
+                {vehicleBlocked && <UnassignedVehicleBanner registrationNumber={jobCard.vehicle_number} />}
 
                 {scrapRaceError && (
                     <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 flex items-start justify-between gap-3">
@@ -466,7 +476,7 @@ export default function JobCardDetail() {
                                     }`}>
                                         {jobLocationLabel}
                                     </span>
-                                    {isExec && jobCard.status === 'Open' && (
+                                    {canAct && jobCard.status === 'Open' && (
                                         typeLockedBy ? (
                                             <LockClosedIcon
                                                 className="w-3.5 h-3.5 text-gray-400"
@@ -542,7 +552,7 @@ export default function JobCardDetail() {
                             ) : (
                                 <span className="flex items-center gap-1.5">
                                     {jobCard.location?.name || '—'}
-                                    {isExec && jobCard.status === 'Open' && workshopLocations.length > 1 && (
+                                    {canAct && jobCard.status === 'Open' && workshopLocations.length > 1 && (
                                         workshopLocked ? (
                                             <LockClosedIcon
                                                 className="w-3.5 h-3.5 text-gray-400"
@@ -600,7 +610,7 @@ export default function JobCardDetail() {
                                     <span className="flex items-center gap-1">
                                         {jobCard.supplier?.entity_name || 'No supplier'}
                                         {supplierMissing && <span className="text-red-500">*</span>}
-                                        {isExec && jobCard.status === 'Open' && (
+                                        {canAct && jobCard.status === 'Open' && (
                                             <button
                                                 onClick={() => setEditingSupplier(true)}
                                                 className="ml-1 text-gray-500 hover:text-blue-600"
@@ -651,7 +661,7 @@ export default function JobCardDetail() {
                                 <span className="text-gray-900">
                                     {jobCard.odometer != null ? `${jobCard.odometer.toLocaleString('en-IN')} km` : <span className="text-gray-400 italic">Not recorded</span>}
                                 </span>
-                                {isMechanic && jobCard.status === 'Open' && (
+                                {isMechanic && !vehicleBlocked && jobCard.status === 'Open' && (
                                     <button
                                         onClick={() => setEditingOdometer(true)}
                                         className="text-gray-500 hover:text-blue-600"
@@ -704,6 +714,7 @@ export default function JobCardDetail() {
                                     technicians={technicians}
                                     userProfile={userProfile}
                                     jobCardType={jobCard.type}
+                                    blocked={vehicleBlocked}
                                 />
                             ))}
                         </div>
@@ -722,7 +733,7 @@ export default function JobCardDetail() {
                                 <p className="text-red-800">
                                     Rejected by finance: {existingInvoice.finance_remark || '—'}
                                 </p>
-                                {isExec && (
+                                {canAct && (
                                     <button
                                         onClick={() => setResubmitting(true)}
                                         className="text-xs px-3 py-1.5 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
@@ -819,7 +830,7 @@ export default function JobCardDetail() {
                     <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-3">
                         Execution Remarks
                     </h2>
-                    {isMechanic && jobCard.status === 'Open' ? (
+                    {isMechanic && !vehicleBlocked && jobCard.status === 'Open' ? (
                         <>
                             <textarea
                                 value={remarks}
@@ -843,7 +854,7 @@ export default function JobCardDetail() {
                 {/* ── Complete Job Card — exec only, Open status only. An outsourced
                      card with no invoice (and no multi-vehicle invoice line) closes as
                      Invoice Pending instead. ─────────────────────────────────── */}
-                {isExec && jobCard.status === 'Open' && (
+                {canAct && jobCard.status === 'Open' && (
                     <div>
                         <button
                             onClick={handleCompleteJobCard}
@@ -869,7 +880,7 @@ export default function JobCardDetail() {
                 )}
 
                 {/* ── Invoice Pending banner + Finalize button ─────────────── */}
-                {isExec && isInvoicePending && (
+                {canAct && isInvoicePending && (
                     <>
                         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
                             <p className="text-sm text-amber-800 font-medium">Invoice not yet received</p>
@@ -897,7 +908,7 @@ export default function JobCardDetail() {
                 )}
 
                 {/* ── Reopen Job Card — exec only ──────────────────────────── */}
-                {isExec && (jobCard.status === 'Completed' || isInvoicePending) && (
+                {canAct && (jobCard.status === 'Completed' || isInvoicePending) && (
                     <>
                         {lockedByFinance && (
                             <p className="text-sm text-red-600 text-center px-4">

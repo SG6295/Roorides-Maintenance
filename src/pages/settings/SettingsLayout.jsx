@@ -1,7 +1,7 @@
 
 import { useState } from 'react'
 import { Link, useLocation, Outlet } from 'react-router-dom'
-import { BellIcon, UsersIcon, ClockIcon, CubeIcon, CircleStackIcon, BuildingOffice2Icon, MapIcon } from '@heroicons/react/24/outline'
+import { BellIcon, UsersIcon, ClockIcon, CubeIcon, CircleStackIcon, BuildingOffice2Icon, MapIcon, TruckIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../../hooks/useAuth'
 
 const tabs = [
@@ -9,6 +9,8 @@ const tabs = [
     { name: 'User Management', href: '/settings/users', icon: UsersIcon, roles: ['maintenance_exec', 'super_admin'] },
     { name: 'SLA Automation', href: '/settings/sla', icon: ClockIcon, roles: ['maintenance_exec', 'super_admin'] },
     { name: 'Part Units', href: '/settings/units', icon: CubeIcon, roles: ['maintenance_exec', 'super_admin'] },
+    // MAIN-155: everyone views; finance and super_admin edit (checked on the page and in the database)
+    { name: 'Vehicle Registration Master', href: '/settings/vehicle-registration', icon: TruckIcon, roles: [] },
     { name: 'Workshop Locations', href: '/settings/workshops', icon: BuildingOffice2Icon, roles: ['super_admin'] },
     { name: 'Workshop Hub Mapping', href: '/settings/workshop-hubs', icon: MapIcon, roles: ['super_admin'] },
     ...(import.meta.env.VITE_ENABLE_DANGER_ZONE === 'true'

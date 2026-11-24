@@ -37,6 +37,7 @@ import UpdatePassword from './pages/auth/UpdatePassword'
 import SettingsLayout from './pages/settings/SettingsLayout'
 import NotificationSettings from './pages/settings/NotificationSettings'
 import PartUnitsSettings from './pages/settings/PartUnitsSettings'
+import VehicleRegistrationMaster from './pages/settings/VehicleRegistrationMaster'
 import WorkshopLocationSettings from './pages/settings/WorkshopLocationSettings'
 import WorkshopHubMappingSettings from './pages/settings/WorkshopHubMappingSettings'
 import SeedStaging from './pages/settings/SeedStaging'
@@ -347,6 +348,7 @@ function App() {
               <Route path="users" element={<Users embedded={true} />} />
               <Route path="sla" element={<SLASettings embedded={true} />} />
               <Route path="units" element={<PartUnitsSettings />} />
+              <Route path="vehicle-registration" element={<VehicleRegistrationMaster />} />
               <Route path="workshops" element={<WorkshopLocationSettings />} />
               <Route path="workshop-hubs" element={<WorkshopHubMappingSettings />} />
               {import.meta.env.VITE_ENABLE_DANGER_ZONE === 'true' && (

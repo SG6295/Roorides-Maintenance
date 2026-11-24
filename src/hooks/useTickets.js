@@ -167,14 +167,14 @@ export function useVehicles(site = null) {
       if (site) {
         return supabase
           .from('vehicles')
-          .select('id, registration_number, make, model, is_active, vehicle_sites!inner(site_name)')
+          .select('id, registration_number, make, model, is_active, company, vehicle_sites!inner(site_name)')
           .eq('vehicle_sites.site_name', site)
           .order('registration_number')
       }
 
       return supabase
         .from('vehicles')
-        .select('id, registration_number, make, model, is_active')
+        .select('id, registration_number, make, model, is_active, company')
         .order('registration_number')
     }),
   })

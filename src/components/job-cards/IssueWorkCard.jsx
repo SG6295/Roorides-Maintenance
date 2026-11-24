@@ -46,7 +46,7 @@ const parseHours = (value) => {
     return h > 0 && h <= 24 ? h : null
 }
 
-export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMechanic, parts, technicians = [], userProfile, jobCardType }) {
+export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMechanic, parts, technicians = [], userProfile, jobCardType, blocked = false }) {
     const toast = useToast()
     const updateIssue = useUpdateIssue()
     const addIssuePart = useAddIssuePart(jobCardId)
@@ -55,7 +55,8 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
     const { data: partUnits = [] } = usePartUnits()
 
     const isOutsource = jobCardType === 'Outsource'
-    const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    // MAIN-155: `blocked` = the vehicle is Unknown, so nothing here can change.
+    const isExec = ['maintenance_exec', 'super_admin'].includes(userProfile?.role) && !blocked
 
     const [form, setForm] = useState({
         showAddPart: false,
@@ -204,7 +205,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
     // A rated issue can't leave Done (MAIN-135); the database refuses it too.
     const isRated = issue.status === 'Done' && !!issue.rating
 
-    const canEdit = isMechanic && jobCardStatus === 'Open'
+    const canEdit = isMechanic && jobCardStatus === 'Open' && !blocked
     // Labour is written by execs only (RLS: "Execs manage issue labour").
     const canEditLabour = isExec && jobCardStatus === 'Open'
 

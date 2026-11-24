@@ -14,7 +14,7 @@ export function useVehicles(filters = {}) {
             const joinType = filters.site ? '!inner' : ''
             let query = supabase
                 .from('vehicles')
-                .select(`id, registration_number, make, model, year, notes, is_active, created_at, vehicle_sites${joinType}(site_name)`)
+                .select(`id, registration_number, make, model, year, notes, is_active, company, created_at, vehicle_sites${joinType}(site_name)`)
                 .order('registration_number')
 
             if (filters.search) {
@@ -29,6 +29,10 @@ export function useVehicles(filters = {}) {
                 query = query.eq('is_active', true)
             } else if (filters.active === 'inactive') {
                 query = query.eq('is_active', false)
+            }
+            // MAIN-155: nvs_travels | nvs_travel_solutions | unknown
+            if (filters.company) {
+                query = query.eq('company', filters.company)
             }
 
             return query

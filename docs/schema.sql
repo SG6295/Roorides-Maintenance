@@ -843,9 +843,18 @@ CREATE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
     AS $$
 DECLARE
   cmd record;
+  obj_schema text;
 BEGIN
   FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
   LOOP
+    -- triggers and rules have no schema of their own (schema_name is NULL),
+    -- so use the schema of the table they belong to
+    obj_schema := CASE
+      WHEN cmd.object_type IN ('trigger', 'rule')
+        THEN (pg_identify_object_as_address(cmd.classid, cmd.objid, cmd.objsubid)).object_names[1]
+      ELSE cmd.schema_name
+    END;
+
     IF cmd.command_tag IN (
       'CREATE SCHEMA', 'ALTER SCHEMA'
     , 'CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO', 'ALTER TABLE'
@@ -859,7 +868,8 @@ BEGIN
     , 'COMMENT'
     )
     -- don't notify in case of CREATE TEMP table or other objects created on pg_temp
-    AND cmd.schema_name is distinct from 'pg_temp'
+    -- also exclude any objects inside Supabase schemas
+    AND COALESCE(obj_schema, '') NOT IN ('pg_temp', 'auth', 'realtime', '_realtime', 'storage')
     THEN
       NOTIFY pgrst, 'reload schema';
     END IF;
@@ -879,9 +889,17 @@ CREATE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
     AS $$
 DECLARE
   obj record;
+  obj_schema text;
 BEGIN
   FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects()
   LOOP
+    -- triggers and rules have no schema of their own (schema_name is NULL),
+    -- so use the schema of the table they belonged to
+    obj_schema := CASE
+      WHEN obj.object_type IN ('trigger', 'rule') THEN obj.address_names[1]
+      ELSE obj.schema_name
+    END;
+
     IF obj.object_type IN (
       'schema'
     , 'table'
@@ -894,6 +912,8 @@ BEGIN
     , 'rule'
     )
     AND obj.is_temporary IS false -- no pg_temp objects
+    -- also exclude any objects inside Supabase schemas
+    AND COALESCE(obj_schema, '') NOT IN ('pg_temp', 'auth', 'realtime', '_realtime', 'storage')
     THEN
       NOTIFY pgrst, 'reload schema';
     END IF;
@@ -1377,6 +1397,28 @@ $$;
 
 
 ALTER FUNCTION public.assert_ledger_writer() OWNER TO postgres;
+
+--
+-- Name: assert_vehicle_assigned(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.assert_vehicle_assigned(p_registration text) RETURNS void
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF p_registration IS NOT NULL AND EXISTS (
+        SELECT 1 FROM public.vehicles
+        WHERE registration_number = p_registration AND company = 'unknown'
+    ) THEN
+        RAISE EXCEPTION 'Kindly contact finance to assign vehicle % in order to proceed.', p_registration
+            USING HINT = 'VEHICLE_UNASSIGNED';
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.assert_vehicle_assigned(p_registration text) OWNER TO postgres;
 
 --
 -- Name: calculate_issue_sla_dynamic(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -3736,6 +3778,100 @@ $$;
 
 
 ALTER FUNCTION public.guard_ticket_reject_with_issues() OWNER TO postgres;
+
+--
+-- Name: guard_unassigned_vehicle(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_unassigned_vehicle() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    -- Columns only the SLA functions write (refresh_ticket_sla, the hourly refresh, a
+    -- holiday change). Those keep running for an Unknown vehicle's tickets.
+    c_ticket_sla constant text[] := ARRAY['final_sla_end_date', 'overall_sla_status',
+                                          'acceptance_sla_status', 'acceptance_sla_end_date'];
+    c_issue_sla  constant text[] := ARRAY['sla_end_date', 'sla_status', 'sla_days'];
+    v_regs text[] := ARRAY[]::text[];
+    v_reg  text;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN coalesce(NEW, OLD);
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+        IF TG_TABLE_NAME = 'tickets'
+           AND (to_jsonb(NEW) - c_ticket_sla) = (to_jsonb(OLD) - c_ticket_sla) THEN
+            RETURN NEW;
+        END IF;
+        IF TG_TABLE_NAME = 'issues'
+           AND (to_jsonb(NEW) - c_issue_sla) = (to_jsonb(OLD) - c_issue_sla) THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+
+    IF TG_TABLE_NAME IN ('tickets', 'job_cards', 'batch_service_vehicles') THEN
+        IF TG_OP <> 'DELETE' THEN v_regs := v_regs || NEW.vehicle_number; END IF;
+        IF TG_OP <> 'INSERT' THEN v_regs := v_regs || OLD.vehicle_number; END IF;
+    ELSIF TG_TABLE_NAME = 'issues' THEN
+        IF TG_OP <> 'DELETE' THEN
+            v_regs := v_regs || (SELECT vehicle_number FROM public.tickets WHERE id = NEW.ticket_id);
+        END IF;
+        IF TG_OP <> 'INSERT' THEN
+            v_regs := v_regs || (SELECT vehicle_number FROM public.tickets WHERE id = OLD.ticket_id);
+        END IF;
+    ELSE  -- issue_parts, issue_labour: through the work item's ticket
+        IF TG_OP <> 'DELETE' THEN
+            v_regs := v_regs || (SELECT t.vehicle_number FROM public.issues i
+                                 JOIN public.tickets t ON t.id = i.ticket_id
+                                 WHERE i.id = NEW.issue_id);
+        END IF;
+        IF TG_OP <> 'INSERT' THEN
+            v_regs := v_regs || (SELECT t.vehicle_number FROM public.issues i
+                                 JOIN public.tickets t ON t.id = i.ticket_id
+                                 WHERE i.id = OLD.issue_id);
+        END IF;
+    END IF;
+
+    FOREACH v_reg IN ARRAY v_regs LOOP
+        PERFORM public.assert_vehicle_assigned(v_reg);
+    END LOOP;
+
+    RETURN coalesce(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_unassigned_vehicle() OWNER TO postgres;
+
+--
+-- Name: guard_vehicle_company(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_vehicle_company() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NULL
+       OR current_setting('app.vehicle_company_change', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.company <> 'unknown' THEN
+            RAISE EXCEPTION 'A new vehicle starts as Unknown; finance assigns its company in the Vehicle Registration Master.';
+        END IF;
+    ELSIF NEW.company IS DISTINCT FROM OLD.company THEN
+        RAISE EXCEPTION 'Only finance can change a vehicle''s company, from the Vehicle Registration Master.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_vehicle_company() OWNER TO postgres;
 
 --
 -- Name: has_labour_on_job_card(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -6559,6 +6695,120 @@ $$;
 ALTER FUNCTION public.set_updated_at() OWNER TO postgres;
 
 --
+-- Name: set_vehicle_company(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.set_vehicle_company(p_vehicle_id uuid, p_change jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+    v_vehicle   public.vehicles%ROWTYPE;
+    v_new       text := p_change->>'company';
+    v_kind      text;
+    v_sale      numeric;
+    v_gst       numeric;
+    v_open      text;
+    v_name      text;
+    v_row       public.vehicle_company_changes%ROWTYPE;
+BEGIN
+    IF NOT (public.is_finance() OR public.is_super_admin()) THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'UNAUTHORIZED',
+            'error_message', 'Only finance can change a vehicle''s company.'
+        )::text;
+    END IF;
+
+    SELECT * INTO v_vehicle FROM public.vehicles WHERE id = p_vehicle_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'VEHICLE_NOT_FOUND',
+            'error_message', 'Vehicle not found.'
+        )::text;
+    END IF;
+
+    IF v_new = 'unknown' THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'CANNOT_UNASSIGN',
+            'error_message', 'A vehicle can''t be changed back to Unknown.'
+        )::text;
+    END IF;
+
+    IF v_new IS NULL OR v_new NOT IN ('nvs_travels', 'nvs_travel_solutions') THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'INVALID_COMPANY',
+            'error_message', 'Choose NVS Travels or NVS Travel Solutions Pvt Ltd.'
+        )::text;
+    END IF;
+
+    IF v_new = v_vehicle.company THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'NO_CHANGE',
+            'error_message', 'The vehicle already belongs to that company.'
+        )::text;
+    END IF;
+
+    IF v_vehicle.company = 'unknown' THEN
+        -- First assignment: the vehicle always belonged to this company. Not a sale, and
+        -- open work does not stop it (that work is blocked until it is assigned).
+        v_kind := 'assignment';
+        IF nullif(p_change->>'sale_value', '') IS NOT NULL
+           OR nullif(p_change->>'gst_percent', '') IS NOT NULL THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'SALE_NOT_ALLOWED',
+                'error_message', 'Assigning an Unknown vehicle is not a sale, so it takes no sale value.'
+            )::text;
+        END IF;
+    ELSE
+        v_kind := 'sale';
+        IF coalesce(p_change->>'sale_value', '') !~ '^[0-9]{1,12}(\.[0-9]{1,2})?$'
+           OR (p_change->>'sale_value')::numeric <= 0 THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'SALE_VALUE_REQUIRED',
+                'error_message', 'Enter the sale value, including GST.'
+            )::text;
+        END IF;
+        IF coalesce(p_change->>'gst_percent', '') !~ '^[0-9]{1,3}(\.[0-9]{1,2})?$'
+           OR (p_change->>'gst_percent')::numeric > 100 THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'GST_PERCENT_REQUIRED',
+                'error_message', 'Enter the GST % of the sale, between 0 and 100.'
+            )::text;
+        END IF;
+        v_sale := (p_change->>'sale_value')::numeric;
+        v_gst  := (p_change->>'gst_percent')::numeric;
+
+        v_open := public.vehicle_open_work(v_vehicle.registration_number);
+        IF v_open IS NOT NULL THEN
+            RAISE EXCEPTION '%', json_build_object(
+                'error_code',    'OPEN_WORK',
+                'error_message', 'Close ' || v_open || ' first.'
+            )::text;
+        END IF;
+    END IF;
+
+    SELECT name INTO v_name FROM public.users WHERE id = auth.uid();
+
+    PERFORM set_config('app.vehicle_company_change', 'on', true);
+    UPDATE public.vehicles SET company = v_new WHERE id = p_vehicle_id;
+    PERFORM set_config('app.vehicle_company_change', 'off', true);
+
+    INSERT INTO public.vehicle_company_changes
+        (vehicle_id, registration_number, old_company, new_company, kind,
+         sale_value, gst_percent, performed_by, performed_by_name)
+    VALUES
+        (p_vehicle_id, v_vehicle.registration_number, v_vehicle.company, v_new, v_kind,
+         v_sale, v_gst, auth.uid(), v_name)
+    RETURNING * INTO v_row;
+
+    RETURN to_jsonb(v_row);
+END;
+$_$;
+
+
+ALTER FUNCTION public.set_vehicle_company(p_vehicle_id uuid, p_change jsonb) OWNER TO postgres;
+
+--
 -- Name: sla_assert_change_allowed(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -7605,6 +7855,38 @@ $$;
 
 
 ALTER FUNCTION public.update_ticket_status_on_issue_change() OWNER TO postgres;
+
+--
+-- Name: vehicle_open_work(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.vehicle_open_work(p_registration text) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT CASE
+        WHEN cardinality(items) = 0 THEN NULL
+        WHEN cardinality(items) = 1 THEN items[1]
+        ELSE array_to_string(items[1:cardinality(items) - 1], ', ') || ' and ' || items[cardinality(items)]
+    END
+    FROM (
+    SELECT coalesce(array_agg(label ORDER BY ord, num), ARRAY[]::text[]) AS items
+    FROM (
+        SELECT 1 AS ord, ticket_number AS num, 'ticket ' || ticket_number AS label
+        FROM tickets
+        WHERE vehicle_number = p_registration
+          AND status IN ('New', 'Accepted', 'Work In Progress')
+        UNION ALL
+        SELECT 2, job_card_number, 'job card ' || job_card_number
+        FROM job_cards
+        WHERE vehicle_number = p_registration
+          AND status = 'Open'
+    ) w
+    ) a;
+$$;
+
+
+ALTER FUNCTION public.vehicle_open_work(p_registration text) OWNER TO postgres;
 
 --
 -- Name: apply_rls(jsonb, integer); Type: FUNCTION; Schema: realtime; Owner: supabase_realtime_admin
@@ -13067,6 +13349,41 @@ COMMENT ON COLUMN public.users.employee_key IS 'employee_id in lower case with s
 
 
 --
+-- Name: vehicle_company_changes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.vehicle_company_changes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    vehicle_id uuid NOT NULL,
+    registration_number text NOT NULL,
+    old_company text NOT NULL,
+    new_company text NOT NULL,
+    kind text NOT NULL,
+    sale_value numeric(14,2),
+    gst_percent numeric(5,2),
+    performed_by uuid,
+    performed_by_name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT vehicle_company_changes_company_check CHECK (((old_company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text, 'unknown'::text])) AND (new_company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text])) AND (old_company <> new_company))),
+    CONSTRAINT vehicle_company_changes_kind_check CHECK ((kind = ANY (ARRAY['initial_load'::text, 'assignment'::text, 'sale'::text]))),
+    CONSTRAINT vehicle_company_changes_sale_check CHECK (
+CASE
+    WHEN (kind = 'sale'::text) THEN ((old_company <> 'unknown'::text) AND (sale_value > (0)::numeric) AND (gst_percent >= (0)::numeric) AND (gst_percent <= (100)::numeric))
+    ELSE ((old_company = 'unknown'::text) AND (sale_value IS NULL) AND (gst_percent IS NULL))
+END)
+);
+
+
+ALTER TABLE public.vehicle_company_changes OWNER TO postgres;
+
+--
+-- Name: TABLE vehicle_company_changes; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.vehicle_company_changes IS 'MAIN-155: every change of vehicles.company. Written only by set_vehicle_company (and the MAIN-155 first load); readable by every signed-in user.';
+
+
+--
 -- Name: vehicle_sites; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -13092,11 +13409,20 @@ CREATE TABLE public.vehicles (
     model text,
     year integer,
     notes text,
-    raw_data jsonb
+    raw_data jsonb,
+    company text DEFAULT 'unknown'::text NOT NULL,
+    CONSTRAINT vehicles_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text, 'unknown'::text])))
 );
 
 
 ALTER TABLE public.vehicles OWNER TO postgres;
+
+--
+-- Name: COLUMN vehicles.company; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.vehicles.company IS 'MAIN-155: nvs_travels | nvs_travel_solutions | unknown. Changed only through set_vehicle_company (finance, super_admin); the Roorides sync never writes it.';
+
 
 --
 -- Name: workshop_locations; Type: TABLE; Schema: public; Owner: postgres
@@ -14250,6 +14576,14 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vehicle_company_changes vehicle_company_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.vehicle_company_changes
+    ADD CONSTRAINT vehicle_company_changes_pkey PRIMARY KEY (id);
 
 
 --
@@ -15450,6 +15784,20 @@ CREATE UNIQUE INDEX users_employee_key_key ON public.users USING btree (employee
 
 
 --
+-- Name: vehicle_company_changes_created_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX vehicle_company_changes_created_idx ON public.vehicle_company_changes USING btree (created_at DESC);
+
+
+--
+-- Name: vehicle_company_changes_vehicle_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX vehicle_company_changes_vehicle_idx ON public.vehicle_company_changes USING btree (vehicle_id, created_at DESC);
+
+
+--
 -- Name: workshop_locations_name_lower_key; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -15741,6 +16089,55 @@ CREATE TRIGGER trg_guard_ticket_reject_with_issues BEFORE UPDATE OF status ON pu
 --
 
 CREATE TRIGGER trg_guard_ticket_sla_version BEFORE UPDATE OF sla_version_id ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.guard_sla_version_change();
+
+
+--
+-- Name: batch_service_vehicles trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_unassigned_vehicle BEFORE INSERT OR DELETE OR UPDATE ON public.batch_service_vehicles FOR EACH ROW EXECUTE FUNCTION public.guard_unassigned_vehicle();
+
+
+--
+-- Name: issue_labour trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_unassigned_vehicle BEFORE INSERT OR DELETE OR UPDATE ON public.issue_labour FOR EACH ROW EXECUTE FUNCTION public.guard_unassigned_vehicle();
+
+
+--
+-- Name: issue_parts trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_unassigned_vehicle BEFORE INSERT OR DELETE OR UPDATE ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.guard_unassigned_vehicle();
+
+
+--
+-- Name: issues trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_unassigned_vehicle BEFORE INSERT OR DELETE OR UPDATE ON public.issues FOR EACH ROW EXECUTE FUNCTION public.guard_unassigned_vehicle();
+
+
+--
+-- Name: job_cards trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_unassigned_vehicle BEFORE INSERT OR DELETE OR UPDATE ON public.job_cards FOR EACH ROW EXECUTE FUNCTION public.guard_unassigned_vehicle();
+
+
+--
+-- Name: tickets trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_unassigned_vehicle BEFORE INSERT OR DELETE OR UPDATE ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.guard_unassigned_vehicle();
+
+
+--
+-- Name: vehicles trg_guard_vehicle_company; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_vehicle_company BEFORE INSERT OR UPDATE OF company ON public.vehicles FOR EACH ROW EXECUTE FUNCTION public.guard_vehicle_company();
 
 
 --
@@ -16938,6 +17335,14 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: vehicle_company_changes vehicle_company_changes_vehicle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.vehicle_company_changes
+    ADD CONSTRAINT vehicle_company_changes_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id);
+
+
+--
 -- Name: vehicle_sites vehicle_sites_site_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -17697,6 +18102,13 @@ CREATE POLICY "Readers view their outsource invoices" ON public.outsource_invoic
 
 
 --
+-- Name: vehicle_company_changes Signed-in users view vehicle company changes; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Signed-in users view vehicle company changes" ON public.vehicle_company_changes FOR SELECT USING ((auth.uid() IS NOT NULL));
+
+
+--
 -- Name: system_settings Super admins can insert settings; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -18285,6 +18697,12 @@ CREATE POLICY user_sites_select ON public.user_sites FOR SELECT USING (((user_id
 --
 
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: vehicle_company_changes; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.vehicle_company_changes ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: vehicle_sites; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -19128,6 +19546,15 @@ GRANT ALL ON FUNCTION public.assert_ledger_writer() TO service_role;
 
 
 --
+-- Name: FUNCTION assert_vehicle_assigned(p_registration text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.assert_vehicle_assigned(p_registration text) TO anon;
+GRANT ALL ON FUNCTION public.assert_vehicle_assigned(p_registration text) TO authenticated;
+GRANT ALL ON FUNCTION public.assert_vehicle_assigned(p_registration text) TO service_role;
+
+
+--
 -- Name: FUNCTION calculate_issue_sla_dynamic(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -19539,6 +19966,24 @@ GRANT ALL ON FUNCTION public.guard_sla_version_change() TO service_role;
 GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO anon;
 GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO authenticated;
 GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_unassigned_vehicle(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_unassigned_vehicle() TO anon;
+GRANT ALL ON FUNCTION public.guard_unassigned_vehicle() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_unassigned_vehicle() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_vehicle_company(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_vehicle_company() TO anon;
+GRANT ALL ON FUNCTION public.guard_vehicle_company() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_vehicle_company() TO service_role;
 
 
 --
@@ -19968,6 +20413,15 @@ GRANT ALL ON FUNCTION public.set_updated_at() TO service_role;
 
 
 --
+-- Name: FUNCTION set_vehicle_company(p_vehicle_id uuid, p_change jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.set_vehicle_company(p_vehicle_id uuid, p_change jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.set_vehicle_company(p_vehicle_id uuid, p_change jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.set_vehicle_company(p_vehicle_id uuid, p_change jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION sla_assert_change_allowed(p_change jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -20186,6 +20640,15 @@ GRANT ALL ON FUNCTION public.trg_stamp_acceptance_deadline() TO service_role;
 GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO anon;
 GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO authenticated;
 GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO service_role;
+
+
+--
+-- Name: FUNCTION vehicle_open_work(p_registration text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.vehicle_open_work(p_registration text) TO anon;
+GRANT ALL ON FUNCTION public.vehicle_open_work(p_registration text) TO authenticated;
+GRANT ALL ON FUNCTION public.vehicle_open_work(p_registration text) TO service_role;
 
 
 --
@@ -21151,6 +21614,15 @@ GRANT ALL ON TABLE public.user_sites TO service_role;
 GRANT ALL ON TABLE public.users TO anon;
 GRANT ALL ON TABLE public.users TO authenticated;
 GRANT ALL ON TABLE public.users TO service_role;
+
+
+--
+-- Name: TABLE vehicle_company_changes; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.vehicle_company_changes TO anon;
+GRANT ALL ON TABLE public.vehicle_company_changes TO authenticated;
+GRANT ALL ON TABLE public.vehicle_company_changes TO service_role;
 
 
 --
