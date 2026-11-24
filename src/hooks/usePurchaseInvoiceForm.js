@@ -68,7 +68,8 @@ export function usePurchaseInvoiceForm(invoice) {
 
     // An invoice with a finance invoice takes its number and date from the invoice
     // details; its other details travel alongside.
-    function save({ locationId, lines }) {
+    // Billed to is required (MAIN-157); an invoice from before then reads NVS Travels.
+    function save({ locationId, billedTo, lines }) {
         const { invoice_no, date_of_activity, ...details } = finance ? invoiceFormToRow(invoiceForm) : {}
         return updateInvoice.mutateAsync({
             invoiceId: invoice.id,
@@ -77,6 +78,7 @@ export function usePurchaseInvoiceForm(invoice) {
                 ...(finance ? { invoice_number: invoice_no, invoice_date: date_of_activity } : {}),
                 invoice_file_url: invoiceFile?.url || null,
                 location_id: locationId,
+                billed_to: billedTo,
             },
             lineItems: lines,
             finance: finance ? details : null,

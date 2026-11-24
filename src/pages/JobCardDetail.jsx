@@ -63,7 +63,7 @@ export default function JobCardDetail() {
     const { data: jobCard, isLoading } = useJobCard(id)
     const updateJobCard = useUpdateJobCard()
     // In-house work draws from this card's workshop, so the picker must show that
-    // workshop's stock rather than the company-wide total.
+    // workshop's stock rather than every workshop's total.
     const { data: parts = [] } = usePartStock(jobCard?.location_id)
     const { data: approvedSuppliers = [] } = useApprovedSuppliers()
     const { data: workshopLocations = [] } = useWorkshopLocations()

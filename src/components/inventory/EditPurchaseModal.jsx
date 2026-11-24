@@ -8,6 +8,8 @@ import {
 import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import NewPartInlineForm from './NewPartInlineForm'
+import BilledToField from './BilledToField'
+import { companyLabel } from '../../constants/vehicleCompanies'
 import { PurchaseInvoiceModal, PurchaseInvoiceFields, InvoiceTotal } from './PurchaseInvoiceShared'
 import {
     round2,
@@ -51,6 +53,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const { data: locations = [] } = useWorkshopLocations()
 
     const [locationId, setLocationId] = useState(invoice.location_id)
+    const [billedTo, setBilledTo] = useState(invoice.billed_to || '')
 
     // lines = mix of existing items (have id) and new items (id: null)
     const [lines, setLines] = useState(null)
@@ -131,6 +134,8 @@ export default function EditPurchaseModal({ invoice, onClose }) {
     const locationName = id => locations.find(l => l.id === id)?.name || 'the previous workshop'
     const originalLocationName = locationName(invoice.location_id)
     const newLocationName = locationName(locationId)
+    // Changing Billed to moves the invoice's stock to the other company (MAIN-157).
+    const billedToChanged = billedTo !== invoice.billed_to
 
     // ── Submit ─────────────────────────────────────────────────────────────────
     async function handleSubmit(e) {
@@ -140,6 +145,18 @@ export default function EditPurchaseModal({ invoice, onClose }) {
 
         if (!locationId) {
             setError('Choose which workshop this invoice is being inwarded to.')
+            return
+        }
+        if (!billedTo) {
+            setError('Choose who the purchase is billed to.')
+            return
+        }
+        if (billedToChanged && !(await confirm({
+            title: 'Change Billed to?',
+            message: `Everything this invoice inwarded becomes ${companyLabel(billedTo)} stock instead of ${companyLabel(invoice.billed_to)} stock.`,
+            confirmLabel: 'Change',
+            tone: 'primary',
+        }))) {
             return
         }
         if (locationChanged && !(await confirm({
@@ -183,7 +200,7 @@ export default function EditPurchaseModal({ invoice, onClose }) {
         }
 
         try {
-            await form.save({ locationId, lines: activeLines })
+            await form.save({ locationId, billedTo, lines: activeLines })
             onClose()
         } catch (err) {
             setError(err.message)
@@ -221,6 +238,25 @@ export default function EditPurchaseModal({ invoice, onClose }) {
             <PurchaseInvoiceFields
                 form={form}
                 workshop={<>
+                    <div className="mb-3">
+                        <BilledToField
+                            value={billedTo}
+                            onChange={setBilledTo}
+                            readOnly={frozen}
+                            showError={form.showErrors}
+                        />
+                        {billedToChanged && invoice.billed_to && (
+                            <p className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-px" />
+                                <span>
+                                    Saving will make everything this invoice inwarded{' '}
+                                    <strong>{companyLabel(billedTo)}</strong> stock instead of{' '}
+                                    <strong>{companyLabel(invoice.billed_to)}</strong> stock.
+                                    If any of it has already been used, the change will be refused.
+                                </span>
+                            </p>
+                        )}
+                    </div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
                         Inward to Workshop <span className="text-red-500">*</span>
                     </label>

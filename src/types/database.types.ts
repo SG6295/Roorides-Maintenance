@@ -428,6 +428,7 @@ export type Database = {
           outsource_vendor_credit_amount: number | null
           part_id: string
           quantity_used: number
+          stock_draws: Json
         }
         Insert: {
           added_at?: string | null
@@ -440,6 +441,7 @@ export type Database = {
           outsource_vendor_credit_amount?: number | null
           part_id: string
           quantity_used: number
+          stock_draws?: Json
         }
         Update: {
           added_at?: string | null
@@ -452,6 +454,7 @@ export type Database = {
           outsource_vendor_credit_amount?: number | null
           part_id?: string
           quantity_used?: number
+          stock_draws?: Json
         }
         Relationships: [
           {
@@ -738,18 +741,21 @@ export type Database = {
       }
       part_stock: {
         Row: {
+          company: string
           location_id: string
           part_id: string
           quantity: number
           updated_at: string
         }
         Insert: {
+          company?: string
           location_id: string
           part_id: string
           quantity?: number
           updated_at?: string
         }
         Update: {
+          company?: string
           location_id?: string
           part_id?: string
           quantity?: number
@@ -888,6 +894,7 @@ export type Database = {
       }
       purchase_invoices: {
         Row: {
+          billed_to: string
           created_at: string | null
           created_by: string | null
           id: string
@@ -903,6 +910,7 @@ export type Database = {
           total_amount: number | null
         }
         Insert: {
+          billed_to?: string
           created_at?: string | null
           created_by?: string | null
           id?: string
@@ -918,6 +926,7 @@ export type Database = {
           total_amount?: number | null
         }
         Update: {
+          billed_to?: string
           created_at?: string | null
           created_by?: string | null
           id?: string
@@ -1163,6 +1172,7 @@ export type Database = {
       }
       scrap_inventory: {
         Row: {
+          company: string
           created_at: string
           created_by: string
           current_location: string | null
@@ -1194,6 +1204,7 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          company?: string
           created_at?: string
           created_by: string
           current_location?: string | null
@@ -1225,6 +1236,7 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          company?: string
           created_at?: string
           created_by?: string
           current_location?: string | null
@@ -1730,6 +1742,7 @@ export type Database = {
         Row: {
           applied_delta: number | null
           audit_id: string
+          company: string
           counted_qty: number | null
           final_qty: number | null
           id: string
@@ -1749,6 +1762,7 @@ export type Database = {
         Insert: {
           applied_delta?: number | null
           audit_id: string
+          company?: string
           counted_qty?: number | null
           final_qty?: number | null
           id?: string
@@ -1768,6 +1782,7 @@ export type Database = {
         Update: {
           applied_delta?: number | null
           audit_id?: string
+          company?: string
           counted_qty?: number | null
           final_qty?: number | null
           id?: string
@@ -1917,18 +1932,21 @@ export type Database = {
       }
       stock_transfer_items: {
         Row: {
+          company: string
           id: string
           part_id: string
           quantity: number
           transfer_id: string
         }
         Insert: {
+          company?: string
           id?: string
           part_id: string
           quantity: number
           transfer_id: string
         }
         Update: {
+          company?: string
           id?: string
           part_id?: string
           quantity?: number
@@ -2839,7 +2857,12 @@ export type Database = {
       }
       advance_people: { Args: never; Returns: string[] }
       apply_part_stock_delta: {
-        Args: { p_delta: number; p_location_id: string; p_part_id: string }
+        Args: {
+          p_company: string
+          p_delta: number
+          p_location_id: string
+          p_part_id: string
+        }
         Returns: undefined
       }
       apply_sla_change: { Args: { p_change: Json }; Returns: Json }
@@ -3115,6 +3138,10 @@ export type Database = {
         Args: { p_job_card_id: string }
         Returns: boolean
       }
+      job_card_stock_company: {
+        Args: { p_job_card_id: string }
+        Returns: string
+      }
       outsource_invoice_snapshot: {
         Args: { p_invoice_id: string }
         Returns: Json
@@ -3300,6 +3327,7 @@ export type Database = {
       stock_audit_movements: {
         Args: { p_audit_id: string }
         Returns: {
+          company: string
           occurred_at: string
           part_id: string
           quantity: number
@@ -3308,6 +3336,7 @@ export type Database = {
           vehicle_number: string
         }[]
       }
+      stock_company_label: { Args: { p_company: string }; Returns: string }
       submit_outsource_invoice_to_finance: {
         Args: { p_invoice_id: string }
         Returns: undefined

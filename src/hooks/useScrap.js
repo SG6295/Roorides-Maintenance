@@ -130,6 +130,7 @@ export function useScrapInventory(filters = {}) {
                     status,
                     created_at,
                     location_id,
+                    company,
                     location:workshop_locations!location_id(id, name),
                     job_card:job_cards!source_job_card_id(job_card_number),
                     ${AUDIT_SOURCE_EMBED}
@@ -141,6 +142,9 @@ export function useScrapInventory(filters = {}) {
             }
             if (filters.location_id) {
                 query = query.eq('location_id', filters.location_id)
+            }
+            if (filters.company) {
+                query = query.eq('company', filters.company)
             }
             if (filters.search) {
                 query = query.ilike('part_name_snapshot', `%${filters.search}%`)

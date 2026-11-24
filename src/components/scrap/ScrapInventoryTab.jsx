@@ -6,6 +6,7 @@ import { TicketListSkeleton } from '../shared/LoadingSkeleton'
 import { useScrapInventory, scrapSourceLabel } from '../../hooks/useScrap'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { useWorkshopLocations } from '../../hooks/useWorkshopLocations'
+import { STOCK_COMPANIES, companyShortLabel } from '../../constants/vehicleCompanies'
 
 const STATUS_BADGE = {
     in_storage:  'bg-green-100 text-green-700',
@@ -22,7 +23,7 @@ const STATUS_LABEL = {
 }
 
 export default function ScrapInventoryTab() {
-    const [filters, setFilters] = useState({ status: '', search: '', vehicle: '', location_id: '', dateFrom: '', dateTo: '' })
+    const [filters, setFilters] = useState({ status: '', search: '', vehicle: '', location_id: '', company: '', dateFrom: '', dateTo: '' })
     const search = useDebouncedValue(filters.search)
     const vehicle = useDebouncedValue(filters.vehicle)
     const { data: items = [], isLoading } = useScrapInventory({ ...filters, search, vehicle })
@@ -69,7 +70,13 @@ export default function ScrapInventoryTab() {
                         />
                     )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3">
+                    <FilterSelect
+                        value={filters.company}
+                        onChange={v => setFilters(p => ({ ...p, company: v }))}
+                        placeholder="All Companies"
+                        options={STOCK_COMPANIES.map(c => ({ value: c.value, label: c.label }))}
+                    />
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                         <span className="shrink-0 w-8">From</span>
                         <input
@@ -109,6 +116,7 @@ export default function ScrapInventoryTab() {
                                 <th className="px-4 py-3 text-left">Source Vehicle</th>
                                 <th className="px-4 py-3 text-left">Source</th>
                                 <th className="px-4 py-3 text-left">Workshop</th>
+                                <th className="px-4 py-3 text-left">Company</th>
                                 <th className="px-4 py-3 text-left">Status</th>
                                 <th className="px-4 py-3 text-left">Date Added</th>
                             </tr>
@@ -125,6 +133,7 @@ export default function ScrapInventoryTab() {
                                         {scrapSourceLabel(item)}
                                     </td>
                                     <td className="px-4 py-3 text-gray-700">{item.location?.name || '—'}</td>
+                                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{companyShortLabel(item.company)}</td>
                                     <td className="px-4 py-3">
                                         <span className={`px-2 py-0.5 text-xs rounded-full ${STATUS_BADGE[item.status] || 'bg-gray-100 text-gray-600'}`}>
                                             {STATUS_LABEL[item.status] || item.status}

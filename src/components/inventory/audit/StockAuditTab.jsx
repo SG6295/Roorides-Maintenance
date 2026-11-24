@@ -181,7 +181,7 @@ function CountingCard({ audit, items, parts, canAudit }) {
                         <p className="text-sm text-gray-700 mt-2">
                             {items.length === 0
                                 ? 'This workshop holds no stock yet. Download the sheet and write in whatever is physically on the shelves — that becomes its opening stock.'
-                                : `${items.length} part${items.length === 1 ? '' : 's'} to count, plus blank rows for anything found that isn't listed.`}
+                                : `${items.length} line${items.length === 1 ? '' : 's'} to count (one per part per company), plus blank rows for anything found that isn't listed.`}
                         </p>
                         {audit.notes && <p className="text-xs text-gray-500 mt-1">“{audit.notes}”</p>}
                     </div>

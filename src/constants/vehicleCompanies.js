@@ -16,6 +16,31 @@ export const VEHICLE_COMPANIES = [
 /** The two companies a vehicle can be assigned or moved to — never back to Unknown. */
 export const ASSIGNABLE_COMPANIES = VEHICLE_COMPANIES.filter(c => c.value !== UNKNOWN_COMPANY)
 
+/**
+ * The two companies that can own stock, purchases and scrap (MAIN-157) — the same two.
+ * Mirrors the `*_company_check` / `purchase_invoices_billed_to_check` constraints.
+ * `short` is for table columns where the full name does not fit.
+ */
+export const STOCK_COMPANIES = [
+    { value: 'nvs_travels', label: 'NVS Travels', short: 'NVS Travels' },
+    { value: 'nvs_travel_solutions', label: 'NVS Travel Solutions Pvt Ltd', short: 'Pvt Ltd' },
+]
+
+export const companyShortLabel = value =>
+    STOCK_COMPANIES.find(c => c.value === value)?.short ?? companyLabel(value)
+
+/**
+ * A part's stock rows (`part_stock`, any locations) summed per company, with every
+ * company present — `{ nvs_travels: 3, nvs_travel_solutions: 0 }`.
+ */
+export function stockByCompany(rows = []) {
+    const totals = Object.fromEntries(STOCK_COMPANIES.map(c => [c.value, 0]))
+    for (const row of rows) {
+        if (row.company in totals) totals[row.company] += Number(row.quantity ?? 0)
+    }
+    return totals
+}
+
 const BY_VALUE = new Map(VEHICLE_COMPANIES.map(c => [c.value, c]))
 
 export const companyLabel = value => BY_VALUE.get(value)?.label ?? value ?? '—'

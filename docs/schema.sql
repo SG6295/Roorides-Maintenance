@@ -1062,12 +1062,13 @@ CREATE FUNCTION public.add_part_to_inventory() RETURNS trigger
     AS $$
 DECLARE
     v_location_id uuid;
+    v_company     text;
 BEGIN
-    SELECT pi.location_id INTO v_location_id
+    SELECT pi.location_id, pi.billed_to INTO v_location_id, v_company
     FROM   public.purchase_invoices pi
     WHERE  pi.id = NEW.invoice_id;
 
-    PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, NEW.quantity);
+    PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, v_company, NEW.quantity);
     RETURN NEW;
 END;
 $$;
@@ -1124,16 +1125,17 @@ CREATE FUNCTION public.adjust_part_inventory_on_update() RETURNS trigger
     AS $$
 DECLARE
     v_location_id uuid;
+    v_company     text;
 BEGIN
-    SELECT pi.location_id INTO v_location_id
+    SELECT pi.location_id, pi.billed_to INTO v_location_id, v_company
     FROM   public.purchase_invoices pi
     WHERE  pi.id = NEW.invoice_id;
 
     IF NEW.part_id = OLD.part_id THEN
-        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, NEW.quantity - OLD.quantity);
+        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, v_company, NEW.quantity - OLD.quantity);
     ELSE
-        PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, -OLD.quantity);
-        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, NEW.quantity);
+        PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, v_company, -OLD.quantity);
+        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, v_company, NEW.quantity);
     END IF;
 
     RETURN NEW;
@@ -1241,10 +1243,10 @@ $$;
 ALTER FUNCTION public.advance_people() OWNER TO postgres;
 
 --
--- Name: apply_part_stock_delta(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: apply_part_stock_delta(uuid, uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) RETURNS void
+CREATE FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_company text, p_delta numeric) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -1256,32 +1258,36 @@ BEGIN
     IF p_location_id IS NULL THEN
         RAISE EXCEPTION 'Cannot change stock without a workshop location.';
     END IF;
+    IF p_company IS NULL OR p_company NOT IN ('nvs_travels', 'nvs_travel_solutions') THEN
+        RAISE EXCEPTION 'Cannot change stock without saying which company owns it.';
+    END IF;
 
-    INSERT INTO public.part_stock (part_id, location_id, quantity)
-    VALUES (p_part_id, p_location_id, 0)
-    ON CONFLICT (part_id, location_id) DO NOTHING;
+    INSERT INTO public.part_stock (part_id, location_id, company, quantity)
+    VALUES (p_part_id, p_location_id, p_company, 0)
+    ON CONFLICT (part_id, location_id, company) DO NOTHING;
 
     SELECT quantity INTO v_available
     FROM   public.part_stock
-    WHERE  part_id = p_part_id AND location_id = p_location_id
+    WHERE  part_id = p_part_id AND location_id = p_location_id AND company = p_company
     FOR UPDATE;
 
     IF v_available + p_delta < 0 THEN
         SELECT name INTO v_part     FROM public.parts              WHERE id = p_part_id;
         SELECT name INTO v_location FROM public.workshop_locations WHERE id = p_location_id;
-        RAISE EXCEPTION 'Not enough stock: % has % available at %, needed %.',
-            COALESCE(v_part, 'part'), v_available, COALESCE(v_location, 'this location'), abs(p_delta);
+        RAISE EXCEPTION 'Not enough stock: % has % available at % for %, needed %.',
+            COALESCE(v_part, 'part'), v_available, COALESCE(v_location, 'this location'),
+            public.stock_company_label(p_company), abs(p_delta);
     END IF;
 
     UPDATE public.part_stock
-    SET    quantity = quantity + p_delta,
+    SET    quantity   = quantity + p_delta,
            updated_at = now()
-    WHERE  part_id = p_part_id AND location_id = p_location_id;
+    WHERE  part_id = p_part_id AND location_id = p_location_id AND company = p_company;
 END;
 $$;
 
 
-ALTER FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) OWNER TO postgres;
+ALTER FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_company text, p_delta numeric) OWNER TO postgres;
 
 --
 -- Name: apply_sla_change(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
@@ -2317,11 +2323,11 @@ BEGIN
     FOR r IN
         SELECT * FROM public.stock_audit_items
         WHERE  audit_id = p_audit_id
-        ORDER  BY part_name_snapshot
+        ORDER  BY part_name_snapshot, company
     LOOP
         SELECT quantity INTO v_live
         FROM   public.part_stock
-        WHERE  part_id = r.part_id AND location_id = v_location;
+        WHERE  part_id = r.part_id AND location_id = v_location AND company = r.company;
         v_live := COALESCE(v_live, 0);
 
         -- Latest purchase price per unit, net of discount and before GST — the same
@@ -2338,11 +2344,11 @@ BEGIN
             -- apply_part_stock_delta guards this too, but it cannot know the count is
             -- what pushed the workshop negative, so check here for a usable message.
             IF v_live + r.variance < 0 THEN
-                RAISE EXCEPTION 'Cannot write off % of "%": only % left at this workshop after activity during the audit. Re-count that part and run a fresh audit.',
-                    abs(r.variance), r.part_name_snapshot, v_live;
+                RAISE EXCEPTION 'Cannot write off % of "%" (%): only % left at this workshop after activity during the audit. Re-count that part and run a fresh audit.',
+                    abs(r.variance), r.part_name_snapshot, public.stock_company_label(r.company), v_live;
             END IF;
 
-            PERFORM public.apply_part_stock_delta(r.part_id, v_location, r.variance);
+            PERFORM public.apply_part_stock_delta(r.part_id, v_location, r.company, r.variance);
 
             v_var_parts := v_var_parts + 1;
             v_net_units := v_net_units + r.variance;
@@ -2358,11 +2364,11 @@ BEGIN
             INSERT INTO public.scrap_inventory (
                 source_audit_reason_id, part_id_snapshot, part_name_snapshot,
                 part_number_snapshot, quantity_snapshot, unit_snapshot, notes,
-                status, location_id, created_by
+                status, location_id, company, created_by
             )
             SELECT l.id, r.part_id, r.part_name_snapshot, r.part_number_snapshot,
                    l.quantity, r.unit_snapshot, l.notes,
-                   'in_storage'::public.scrap_item_status, v_location, auth.uid()
+                   'in_storage'::public.scrap_item_status, v_location, r.company, auth.uid()
             FROM   public.stock_audit_item_reasons l
             JOIN   public.parts p ON p.id = r.part_id
             WHERE  l.audit_item_id = r.id
@@ -2412,19 +2418,64 @@ CREATE FUNCTION public.deduct_part_from_inventory() RETURNS trigger
     SET search_path TO 'public'
     AS $$
 DECLARE
+    v_job_card_id   uuid;
     v_job_card_type text;
     v_location_id   uuid;
+    v_first         text;
+    v_second        text;
+    v_have_first    numeric;
+    v_have_total    numeric;
+    v_take_first    numeric;
+    v_part          text;
+    v_location      text;
 BEGIN
-    SELECT jc.type, jc.location_id INTO v_job_card_type, v_location_id
+    SELECT jc.id, jc.type, jc.location_id INTO v_job_card_id, v_job_card_type, v_location_id
     FROM   public.issues    i
     JOIN   public.job_cards jc ON jc.id = i.job_card_id
     WHERE  i.id = NEW.issue_id;
 
     IF v_job_card_type = 'Outsource' THEN
+        NEW.stock_draws := '{}'::jsonb;
         RETURN NEW;
     END IF;
 
-    PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, -NEW.quantity_used);
+    IF v_location_id IS NULL THEN
+        RAISE EXCEPTION 'Cannot change stock without a workshop location.';
+    END IF;
+
+    v_first  := public.job_card_stock_company(v_job_card_id);
+    v_second := CASE v_first WHEN 'nvs_travels' THEN 'nvs_travel_solutions' ELSE 'nvs_travels' END;
+
+    -- Both rows locked, in a fixed order, before either is read.
+    PERFORM 1 FROM public.part_stock
+    WHERE  part_id = NEW.part_id AND location_id = v_location_id
+    ORDER  BY company
+    FOR UPDATE;
+
+    SELECT coalesce(sum(quantity) FILTER (WHERE company = v_first), 0), coalesce(sum(quantity), 0)
+    INTO   v_have_first, v_have_total
+    FROM   public.part_stock
+    WHERE  part_id = NEW.part_id AND location_id = v_location_id;
+
+    IF v_have_total < NEW.quantity_used THEN
+        SELECT name INTO v_part     FROM public.parts              WHERE id = NEW.part_id;
+        SELECT name INTO v_location FROM public.workshop_locations WHERE id = v_location_id;
+        RAISE EXCEPTION 'Not enough stock: % has % available at %, needed %.',
+            COALESCE(v_part, 'part'), v_have_total, COALESCE(v_location, 'this location'), NEW.quantity_used;
+    END IF;
+
+    v_take_first := least(v_have_first, NEW.quantity_used);
+    NEW.stock_draws := '{}'::jsonb;
+
+    IF v_take_first > 0 THEN
+        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, v_first, -v_take_first);
+        NEW.stock_draws := NEW.stock_draws || jsonb_build_object(v_first, v_take_first);
+    END IF;
+    IF NEW.quantity_used - v_take_first > 0 THEN
+        PERFORM public.apply_part_stock_delta(NEW.part_id, v_location_id, v_second, -(NEW.quantity_used - v_take_first));
+        NEW.stock_draws := NEW.stock_draws || jsonb_build_object(v_second, NEW.quantity_used - v_take_first);
+    END IF;
+
     RETURN NEW;
 END;
 $$;
@@ -3677,7 +3728,7 @@ CREATE FUNCTION public.guard_refurbishment_invoice_header() RETURNS trigger
     AS $$
 BEGIN
     IF OLD.kind = 'refurbishment' THEN
-        RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so its workshop cannot be changed.';
+        RAISE EXCEPTION 'This invoice came from a scrap refurbishment, so its workshop and Billed to cannot be changed.';
     END IF;
 
     RETURN NEW;
@@ -4044,6 +4095,27 @@ $$;
 ALTER FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid) OWNER TO postgres;
 
 --
+-- Name: job_card_stock_company(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.job_card_stock_company(p_job_card_id uuid) RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT coalesce(
+        (SELECT v.company
+         FROM   public.job_cards jc
+         JOIN   public.vehicles  v ON v.registration_number = jc.vehicle_number
+         WHERE  jc.id = p_job_card_id
+           AND  v.company IN ('nvs_travels', 'nvs_travel_solutions')
+         LIMIT  1),
+        'nvs_travels')
+$$;
+
+
+ALTER FUNCTION public.job_card_stock_company(p_job_card_id uuid) OWNER TO postgres;
+
+--
 -- Name: log_batch_service_change(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4256,15 +4328,15 @@ CREATE FUNCTION public.move_invoice_stock_on_location_change() RETURNS trigger
 DECLARE
     r RECORD;
 BEGIN
-    IF NEW.location_id IS NOT DISTINCT FROM OLD.location_id THEN
+    IF (NEW.location_id, NEW.billed_to) IS NOT DISTINCT FROM (OLD.location_id, OLD.billed_to) THEN
         RETURN NEW;
     END IF;
 
     FOR r IN
         SELECT part_id, quantity FROM public.purchase_invoice_items WHERE invoice_id = NEW.id
     LOOP
-        PERFORM public.apply_part_stock_delta(r.part_id, OLD.location_id, -r.quantity);
-        PERFORM public.apply_part_stock_delta(r.part_id, NEW.location_id,  r.quantity);
+        PERFORM public.apply_part_stock_delta(r.part_id, OLD.location_id, OLD.billed_to, -r.quantity);
+        PERFORM public.apply_part_stock_delta(r.part_id, NEW.location_id, NEW.billed_to,  r.quantity);
     END LOOP;
 
     RETURN NEW;
@@ -4293,6 +4365,7 @@ CREATE FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) RETURNS jso
         'payby_date',                 oi.payby_date,
         'supplier_id',                coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id),
         'invoice_file',               coalesce(jc.invoice_url, bs.invoice_url, pi.invoice_file_url),
+        'billed_to',                  pi.billed_to,
         'lines', CASE
             WHEN bs.id IS NOT NULL THEN (
                 SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -4593,6 +4666,7 @@ DECLARE
     v_unit_price  numeric;
     v_comment     text;
     v_seen        uuid[] := '{}';
+    v_billed_to   text := NULLIF(p_invoice->>'billed_to', '');
 BEGIN
     IF NOT public.is_maintenance_exec() THEN
         RAISE EXCEPTION '%', json_build_object(
@@ -4609,6 +4683,14 @@ BEGIN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_INCOMPLETE',
             'error_message', 'Supplier, invoice number, invoice date and workshop are required.',
+            'details',       null
+        )::text;
+    END IF;
+
+    IF v_billed_to IS NULL OR v_billed_to NOT IN ('nvs_travels', 'nvs_travel_solutions') THEN
+        RAISE EXCEPTION '%', json_build_object(
+            'error_code',    'BILLED_TO_REQUIRED',
+            'error_message', 'Choose who the refurbishment is billed to.',
             'details',       null
         )::text;
     END IF;
@@ -4668,7 +4750,7 @@ BEGIN
     PERFORM set_config('app.recording_refurbishment', 'on', true);
 
     INSERT INTO public.purchase_invoices
-        (kind, invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
+        (kind, invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, billed_to, created_by)
     VALUES (
         'refurbishment',
         btrim(p_invoice->>'invoice_number'),
@@ -4678,6 +4760,7 @@ BEGIN
         NULLIF(p_invoice->>'notes', ''),
         btrim(p_invoice->>'invoice_file_url'),
         v_location,
+        v_billed_to,
         auth.uid()
     )
     RETURNING id INTO v_invoice_id;
@@ -4727,6 +4810,18 @@ BEGIN
                 RAISE EXCEPTION '%', json_build_object(
                     'error_code',    'WRONG_WORKSHOP',
                     'error_message', format('"%s" is held at another workshop.', v_scrap.part_name_snapshot),
+                    'details',       null
+                )::text;
+            END IF;
+            -- Scrap belongs to a company too; the refurbished stock goes to the Billed to
+            -- company, so nothing passes between the companies unrecorded (MAIN-157).
+            IF v_scrap.company <> v_billed_to THEN
+                RAISE EXCEPTION '%', json_build_object(
+                    'error_code',    'COMPANY_MISMATCH',
+                    'error_message', format('"%s" is %s scrap, but this refurbishment is billed to %s.',
+                                            v_scrap.part_name_snapshot,
+                                            public.stock_company_label(v_scrap.company),
+                                            public.stock_company_label(v_billed_to)),
                     'details',       null
                 )::text;
             END IF;
@@ -4817,7 +4912,7 @@ BEGIN
                     received_by, received_at, current_location,
                     outsource_part_disposition_snapshot,
                     outsource_vendor_credit_amount_snapshot,
-                    location_id, created_by, updated_by
+                    location_id, company, created_by, updated_by
                 ) VALUES (
                     v_scrap.source_ticket_id, v_scrap.source_job_card_id, v_scrap.source_issue_id,
                     v_scrap.source_issue_part_id, v_scrap.source_vehicle_number, v_scrap.source_audit_reason_id,
@@ -4826,13 +4921,14 @@ BEGIN
                     v_scrap.received_by, v_scrap.received_at, v_scrap.current_location,
                     v_scrap.outsource_part_disposition_snapshot,
                     v_scrap.outsource_vendor_credit_amount_snapshot,
-                    v_scrap.location_id, v_scrap.created_by, auth.uid()
+                    v_scrap.location_id, v_scrap.company, v_scrap.created_by, auth.uid()
                 )
                 RETURNING id INTO v_final_scrap;
 
-                -- The insert trigger re-derives the workshop from the job card.
+                -- The insert trigger re-derives the workshop and company from the job card.
                 UPDATE public.scrap_inventory
-                SET    location_id = v_scrap.location_id
+                SET    location_id = v_scrap.location_id,
+                       company     = v_scrap.company
                 WHERE  id = v_final_scrap;
             END IF;
         END IF;
@@ -5533,21 +5629,33 @@ CREATE FUNCTION public.restore_part_to_inventory() RETURNS trigger
 DECLARE
     v_job_card_type text;
     v_location_id   uuid;
+    d               RECORD;
 BEGIN
     SELECT jc.type, jc.location_id INTO v_job_card_type, v_location_id
     FROM   public.issues    i
     JOIN   public.job_cards jc ON jc.id = i.job_card_id
     WHERE  i.id = OLD.issue_id;
 
-    IF v_job_card_type = 'Outsource' THEN
-        RETURN OLD;
-    END IF;
-
     IF v_location_id IS NULL THEN
         RETURN OLD;
     END IF;
 
-    PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, OLD.quantity_used);
+    -- Exactly what was drawn, to the company it came from.
+    IF OLD.stock_draws <> '{}'::jsonb THEN
+        FOR d IN SELECT key AS company, value::numeric AS quantity FROM jsonb_each_text(OLD.stock_draws)
+        LOOP
+            PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, d.company, d.quantity);
+        END LOOP;
+        RETURN OLD;
+    END IF;
+
+    -- A line with no record of its draws is outsourced (no stock) or from before
+    -- MAIN-157, when all stock was NVS Travels.
+    IF v_job_card_type = 'Outsource' THEN
+        RETURN OLD;
+    END IF;
+
+    PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, 'nvs_travels', OLD.quantity_used);
     RETURN OLD;
 END;
 $$;
@@ -5727,8 +5835,9 @@ CREATE FUNCTION public.reverse_part_inventory_on_delete() RETURNS trigger
     AS $$
 DECLARE
     v_location_id uuid;
+    v_company     text;
 BEGIN
-    SELECT pi.location_id INTO v_location_id
+    SELECT pi.location_id, pi.billed_to INTO v_location_id, v_company
     FROM   public.purchase_invoices pi
     WHERE  pi.id = OLD.invoice_id;
 
@@ -5736,7 +5845,7 @@ BEGIN
         RETURN OLD;
     END IF;
 
-    PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, -OLD.quantity);
+    PERFORM public.apply_part_stock_delta(OLD.part_id, v_location_id, v_company, -OLD.quantity);
     RETURN OLD;
 END;
 $$;
@@ -6127,6 +6236,7 @@ DECLARE
     -- refuse any other change but the notes.
     v_resubmit      boolean := coalesce((p_invoice->>'resubmit')::boolean, false);
     v_before        jsonb;
+    v_billed_to     text := nullif(p_invoice->>'billed_to', '');
 BEGIN
     IF NOT public.is_maintenance_exec() THEN
         RAISE EXCEPTION 'Only maintenance executives can record or edit a purchase invoice.'
@@ -6150,16 +6260,20 @@ BEGIN
         v_has_finance := FOUND;
     END IF;
 
+    IF v_billed_to IS NULL OR v_billed_to NOT IN ('nvs_travels', 'nvs_travel_solutions') THEN
+        RAISE EXCEPTION 'Choose who the purchase is billed to: NVS Travels or NVS Travel Solutions Pvt Ltd.';
+    END IF;
+
     IF v_resubmit AND v_status IS DISTINCT FROM 'Reject' THEN
         RAISE EXCEPTION 'Only a rejected invoice can be resubmitted.';
     END IF;
 
     IF v_status IN ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed') THEN
         IF (p_invoice->>'invoice_number', (p_invoice->>'invoice_date')::date, v_file,
-            (p_invoice->>'location_id')::uuid, coalesce(v_supplier_id, v_old.supplier_id))
+            (p_invoice->>'location_id')::uuid, coalesce(v_supplier_id, v_old.supplier_id), v_billed_to)
            IS DISTINCT FROM
            (v_old.invoice_number, v_old.invoice_date, v_old.invoice_file_url,
-            v_old.location_id, v_old.supplier_id)
+            v_old.location_id, v_old.supplier_id, v_old.billed_to)
            OR EXISTS (
                SELECT id, part_id, quantity, unit_price, gst_rate, discount_amount
                FROM   public.purchase_invoice_items
@@ -6213,7 +6327,7 @@ BEGIN
 
     IF v_invoice_id IS NULL THEN
         INSERT INTO public.purchase_invoices
-            (invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, created_by)
+            (invoice_number, supplier_id, supplier_name, invoice_date, notes, invoice_file_url, location_id, billed_to, created_by)
         VALUES (
             p_invoice->>'invoice_number',
             v_supplier_id,
@@ -6222,6 +6336,7 @@ BEGIN
             nullif(p_invoice->>'notes', ''),
             v_file,
             (p_invoice->>'location_id')::uuid,
+            v_billed_to,
             auth.uid()
         )
         RETURNING id INTO v_invoice_id;
@@ -6233,7 +6348,8 @@ BEGIN
                invoice_date     = (p_invoice->>'invoice_date')::date,
                notes            = nullif(p_invoice->>'notes', ''),
                invoice_file_url = v_file,
-               location_id      = (p_invoice->>'location_id')::uuid
+               location_id      = (p_invoice->>'location_id')::uuid,
+               billed_to        = v_billed_to
         WHERE  id = v_invoice_id;
 
         DELETE FROM public.purchase_invoice_items
@@ -6538,6 +6654,9 @@ BEGIN
         NEW.location_id := 'a1e1d4c0-0000-4000-8000-000000000001';
     END IF;
 
+    -- The part came off the vehicle, so it is the vehicle's company's (MAIN-157).
+    NEW.company := public.job_card_stock_company(NEW.source_job_card_id);
+
     RETURN NEW;
 END;
 $$;
@@ -6579,13 +6698,14 @@ BEGIN
 
     FOR r IN
         SELECT (elem->>'part_id')::uuid AS part_id,
+               COALESCE(NULLIF(elem->>'company', ''), 'nvs_travels') AS company,
                COALESCE(elem->'lines', '[]'::jsonb) AS lines
         FROM   jsonb_array_elements(p_items) AS elem
     LOOP
         v_item_id := NULL;
         SELECT id, variance, part_name_snapshot INTO v_item_id, v_variance, v_part_name
         FROM   public.stock_audit_items
-        WHERE  audit_id = p_audit_id AND part_id = r.part_id;
+        WHERE  audit_id = p_audit_id AND part_id = r.part_id AND company = r.company;
 
         IF v_item_id IS NULL THEN
             RAISE EXCEPTION 'One of those parts is not part of this audit.';
@@ -7255,9 +7375,9 @@ BEGIN
     -- A workshop with no stock at all yields an empty sheet on purpose: that is how a new
     -- workshop's opening stock gets entered, entirely through found rows.
     INSERT INTO public.stock_audit_items (
-        audit_id, part_id, part_name_snapshot, part_number_snapshot, unit_snapshot, system_qty
+        audit_id, part_id, company, part_name_snapshot, part_number_snapshot, unit_snapshot, system_qty
     )
-    SELECT v_audit_id, p.id, p.name, p.part_number, COALESCE(p.unit, 'pcs'), ps.quantity
+    SELECT v_audit_id, p.id, ps.company, p.name, p.part_number, COALESCE(p.unit, 'pcs'), ps.quantity
     FROM   public.part_stock ps
     JOIN   public.parts p ON p.id = ps.part_id
     WHERE  ps.location_id = p_location_id
@@ -7274,7 +7394,7 @@ ALTER FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text) OWNER 
 -- Name: stock_audit_movements(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part_id uuid, source text, quantity numeric, reference text, vehicle_number text, occurred_at timestamp without time zone)
+CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part_id uuid, company text, source text, quantity numeric, reference text, vehicle_number text, occurred_at timestamp without time zone)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -7289,11 +7409,13 @@ CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part
                      AND u.role IN ('finance', 'super_admin', 'maintenance_exec')
                )
     )
-    -- Consumed on a job card. Outsource job cards never touch stock, so they are excluded
-    -- here exactly as deduct_part_from_inventory() excludes them.
+    -- Consumed on a job card, per company it was drawn from. Outsource job cards never
+    -- touch stock, so they are excluded exactly as deduct_part_from_inventory() excludes
+    -- them; a line with no recorded draws is from before MAIN-157, all NVS Travels.
     SELECT ip.part_id,
+           d.company,
            'consumption'::text,
-           -ip.quantity_used,
+           -d.quantity,
            'JC-' || jc.job_card_number::text,
            jc.vehicle_number,
            ip.added_at
@@ -7301,12 +7423,20 @@ CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part
     JOIN   public.job_cards   jc ON jc.location_id = a.location_id AND jc.type <> 'Outsource'
     JOIN   public.issues      i  ON i.job_card_id = jc.id
     JOIN   public.issue_parts ip ON ip.issue_id = i.id
+    CROSS  JOIN LATERAL (
+               SELECT e.key AS company, e.value::numeric AS quantity
+               FROM   jsonb_each_text(ip.stock_draws) e
+               UNION ALL
+               SELECT 'nvs_travels', ip.quantity_used
+               WHERE  ip.stock_draws = '{}'::jsonb
+           ) d
     WHERE  ip.added_at > a.started_at
 
     UNION ALL
 
-    -- Inwarded on a purchase invoice.
+    -- Inwarded on a purchase invoice, to the company it is billed to.
     SELECT pii.part_id,
+           pi.billed_to,
            'purchase'::text,
            pii.quantity,
            pi.invoice_number,
@@ -7321,6 +7451,7 @@ CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part
 
     -- Moved to or from another workshop.
     SELECT sti.part_id,
+           sti.company,
            CASE WHEN st.to_location_id = a.location_id
                 THEN 'transfer_in' ELSE 'transfer_out' END,
            CASE WHEN st.to_location_id = a.location_id
@@ -7337,17 +7468,35 @@ CREATE FUNCTION public.stock_audit_movements(p_audit_id uuid) RETURNS TABLE(part
                            THEN st.from_location_id ELSE st.to_location_id END
     WHERE  st.transferred_at > a.started_at
 
-    ORDER BY 6 DESC;
+    ORDER BY 7 DESC;
 $$;
 
 
 ALTER FUNCTION public.stock_audit_movements(p_audit_id uuid) OWNER TO postgres;
 
 --
--- Name: FUNCTION stock_audit_movements(p_audit_id uuid); Type: COMMENT; Schema: public; Owner: postgres
+-- Name: stock_company_label(text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-COMMENT ON FUNCTION public.stock_audit_movements(p_audit_id uuid) IS 'Stock that legitimately moved at a workshop while an audit was open. SECURITY DEFINER, so it carries its own role check: returns nothing unless the caller is finance, super_admin or maintenance_exec.';
+CREATE FUNCTION public.stock_company_label(p_company text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT CASE p_company
+               WHEN 'nvs_travels'          THEN 'NVS Travels'
+               WHEN 'nvs_travel_solutions' THEN 'NVS Travel Solutions Pvt Ltd'
+               ELSE coalesce(p_company, '—')
+           END
+$$;
+
+
+ALTER FUNCTION public.stock_company_label(p_company text) OWNER TO postgres;
+
+--
+-- Name: FUNCTION stock_company_label(p_company text); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.stock_company_label(p_company text) IS 'Display name of a stock company (MAIN-157). Mirrors companyLabel() in src/constants/vehicleCompanies.js.';
 
 
 --
@@ -7456,7 +7605,8 @@ BEGIN
 
     FOR r IN
         SELECT (elem->>'part_id')::uuid        AS part_id,
-               (elem->>'counted_qty')::numeric AS counted_qty
+               (elem->>'counted_qty')::numeric AS counted_qty,
+               NULLIF(elem->>'company', '')    AS company
         FROM   jsonb_array_elements(p_counts) AS elem
     LOOP
         IF r.part_id IS NULL OR r.counted_qty IS NULL THEN
@@ -7465,6 +7615,9 @@ BEGIN
         IF r.counted_qty < 0 THEN
             RAISE EXCEPTION 'A counted quantity cannot be negative.';
         END IF;
+        IF r.company IS NULL OR r.company NOT IN ('nvs_travels', 'nvs_travel_solutions') THEN
+            RAISE EXCEPTION 'Every row on the sheet needs Belongs to: NVS Travels or NVS Travel Solutions Pvt Ltd.';
+        END IF;
 
         -- A changed count makes the explanation of the old difference meaningless.
         DELETE FROM public.stock_audit_item_reasons l
@@ -7472,23 +7625,24 @@ BEGIN
         WHERE  l.audit_item_id = i.id
           AND  i.audit_id = p_audit_id
           AND  i.part_id = r.part_id
+          AND  i.company = r.company
           AND  i.counted_qty IS DISTINCT FROM r.counted_qty;
 
         UPDATE public.stock_audit_items
         SET counted_qty = r.counted_qty
-        WHERE audit_id = p_audit_id AND part_id = r.part_id;
+        WHERE audit_id = p_audit_id AND part_id = r.part_id AND company = r.company;
 
         IF NOT FOUND THEN
             -- Written onto a blank row: stock the app did not know was here.
             INSERT INTO public.stock_audit_items (
-                audit_id, part_id, part_name_snapshot, part_number_snapshot,
+                audit_id, part_id, company, part_name_snapshot, part_number_snapshot,
                 unit_snapshot, system_qty, counted_qty, was_found_row
             )
-            SELECT p_audit_id, p.id, p.name, p.part_number, COALESCE(p.unit, 'pcs'),
+            SELECT p_audit_id, p.id, r.company, p.name, p.part_number, COALESCE(p.unit, 'pcs'),
                    COALESCE(ps.quantity, 0), r.counted_qty, true
             FROM   public.parts p
             LEFT   JOIN public.part_stock ps
-                   ON ps.part_id = p.id AND ps.location_id = v_location
+                   ON ps.part_id = p.id AND ps.location_id = v_location AND ps.company = r.company
             WHERE  p.id = r.part_id;
 
             IF NOT FOUND THEN
@@ -7711,18 +7865,22 @@ BEGIN
 
     FOR r IN
         SELECT (elem->>'part_id')::uuid  AS part_id,
-               (elem->>'quantity')::numeric AS quantity
+               (elem->>'quantity')::numeric AS quantity,
+               NULLIF(elem->>'company', '') AS company
         FROM   jsonb_array_elements(p_items) AS elem
     LOOP
         IF r.part_id IS NULL OR r.quantity IS NULL OR r.quantity <= 0 THEN
             RAISE EXCEPTION 'Every line needs a part and a quantity greater than zero.';
         END IF;
+        IF r.company IS NULL OR r.company NOT IN ('nvs_travels', 'nvs_travel_solutions') THEN
+            RAISE EXCEPTION 'Say whose stock is moving: NVS Travels or NVS Travel Solutions Pvt Ltd.';
+        END IF;
 
-        PERFORM public.apply_part_stock_delta(r.part_id, p_from, -r.quantity);
-        PERFORM public.apply_part_stock_delta(r.part_id, p_to,    r.quantity);
+        PERFORM public.apply_part_stock_delta(r.part_id, p_from, r.company, -r.quantity);
+        PERFORM public.apply_part_stock_delta(r.part_id, p_to,   r.company,  r.quantity);
 
-        INSERT INTO public.stock_transfer_items (transfer_id, part_id, quantity)
-        VALUES (v_transfer_id, r.part_id, r.quantity);
+        INSERT INTO public.stock_transfer_items (transfer_id, part_id, quantity, company)
+        VALUES (v_transfer_id, r.part_id, r.quantity, r.company);
 
         v_count := v_count + 1;
     END LOOP;
@@ -12133,12 +12291,20 @@ CREATE TABLE public.issue_parts (
     added_at timestamp without time zone DEFAULT now(),
     outsource_part_disposition public.outsource_part_disposition,
     outsource_vendor_credit_amount numeric(10,2),
+    stock_draws jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT issue_parts_outsource_credit_consistency CHECK (((outsource_part_disposition = 'retained_by_vendor_with_credit'::public.outsource_part_disposition) = (outsource_vendor_credit_amount IS NOT NULL))),
     CONSTRAINT issue_parts_quantity_used_check CHECK ((quantity_used > (0)::numeric))
 );
 
 
 ALTER TABLE public.issue_parts OWNER TO postgres;
+
+--
+-- Name: COLUMN issue_parts.stock_draws; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.issue_parts.stock_draws IS 'How much of this spare came from each company''s stock, e.g. {"nvs_travels": 2} (MAIN-157). Empty on outsourced cards. Removing the spare returns exactly this. An empty object on an in-house line from before MAIN-157 reaching an environment means it was all NVS Travels.';
+
 
 --
 -- Name: issues; Type: TABLE; Schema: public; Owner: postgres
@@ -12347,6 +12513,8 @@ CREATE TABLE public.part_stock (
     location_id uuid NOT NULL,
     quantity numeric(10,2) DEFAULT 0 NOT NULL,
     updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    company text DEFAULT 'nvs_travels'::text NOT NULL,
+    CONSTRAINT part_stock_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
     CONSTRAINT part_stock_quantity_nonneg CHECK ((quantity >= (0)::numeric))
 );
 
@@ -12357,7 +12525,7 @@ ALTER TABLE public.part_stock OWNER TO postgres;
 -- Name: TABLE part_stock; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON TABLE public.part_stock IS 'Authoritative stock per part per workshop location. parts.quantity_in_stock is the derived total.';
+COMMENT ON TABLE public.part_stock IS 'Authoritative stock per part per workshop per company (MAIN-157). parts.quantity_in_stock is the derived total across both.';
 
 
 --
@@ -12461,6 +12629,8 @@ CREATE TABLE public.purchase_invoices (
     supplier_id uuid,
     kind text DEFAULT 'purchase'::text NOT NULL,
     purchase_number integer NOT NULL,
+    billed_to text DEFAULT 'nvs_travels'::text NOT NULL,
+    CONSTRAINT purchase_invoices_billed_to_check CHECK ((billed_to = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
     CONSTRAINT purchase_invoices_kind_check CHECK ((kind = ANY (ARRAY['purchase'::text, 'refurbishment'::text])))
 );
 
@@ -12486,6 +12656,13 @@ COMMENT ON COLUMN public.purchase_invoices.supplier_id IS 'The supplier, where o
 --
 
 COMMENT ON COLUMN public.purchase_invoices.purchase_number IS 'Running number shown as PI-<n> and used in the invoice''s address (MAIN-143). Purchases and refurbishments share it; suppliers reuse their own invoice numbers, so this is ours.';
+
+
+--
+-- Name: COLUMN purchase_invoices.billed_to; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.purchase_invoices.billed_to IS 'The company that paid for this purchase or refurbishment, and so owns its stock (MAIN-157). Invoices from before then are NVS Travels.';
 
 
 --
@@ -12624,6 +12801,8 @@ CREATE TABLE public.scrap_inventory (
     updated_by uuid,
     location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
     source_audit_reason_id uuid,
+    company text DEFAULT 'nvs_travels'::text NOT NULL,
+    CONSTRAINT scrap_inventory_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
     CONSTRAINT scrap_inventory_one_source_check CHECK ((num_nonnulls(source_job_card_id, source_audit_reason_id) = 1))
 );
 
@@ -12642,6 +12821,13 @@ COMMENT ON COLUMN public.scrap_inventory.location_id IS 'Workshop holding this s
 --
 
 COMMENT ON COLUMN public.scrap_inventory.source_audit_reason_id IS 'The Damaged line of a stock audit this item came from. Exactly one of this and source_job_card_id is set.';
+
+
+--
+-- Name: COLUMN scrap_inventory.company; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.scrap_inventory.company IS 'The company this scrap belongs to (MAIN-157): from a job card, its vehicle''s company; from an audit, the counted stock''s company. Scrap from before then is NVS Travels.';
 
 
 --
@@ -12909,6 +13095,8 @@ CREATE TABLE public.stock_audit_items (
     final_qty numeric(10,2),
     unit_value_snapshot numeric(12,2),
     variance_value numeric(14,2),
+    company text DEFAULT 'nvs_travels'::text NOT NULL,
+    CONSTRAINT stock_audit_items_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
     CONSTRAINT stock_audit_items_counted_nonneg CHECK (((counted_qty IS NULL) OR (counted_qty >= (0)::numeric))),
     CONSTRAINT stock_audit_items_reason_check CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['missing'::text, 'stolen'::text, 'damaged'::text, 'found'::text, 'other'::text]))))
 );
@@ -12963,6 +13151,13 @@ COMMENT ON COLUMN public.stock_audit_items.moved_during_audit IS 'Live stock min
 --
 
 COMMENT ON COLUMN public.stock_audit_items.unit_value_snapshot IS 'Latest purchase price per unit, net of discount and before GST, frozen at completion. NULL when the part has never been purchased.';
+
+
+--
+-- Name: COLUMN stock_audit_items.company; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_audit_items.company IS 'Whose stock this line counts — the count sheet''s Belongs to column (MAIN-157). Each company''s stock at the workshop is confirmed separately.';
 
 
 --
@@ -13043,11 +13238,20 @@ CREATE TABLE public.stock_transfer_items (
     transfer_id uuid NOT NULL,
     part_id uuid NOT NULL,
     quantity numeric(10,2) NOT NULL,
+    company text DEFAULT 'nvs_travels'::text NOT NULL,
+    CONSTRAINT stock_transfer_items_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
     CONSTRAINT stock_transfer_items_quantity_positive CHECK ((quantity > (0)::numeric))
 );
 
 
 ALTER TABLE public.stock_transfer_items OWNER TO postgres;
+
+--
+-- Name: COLUMN stock_transfer_items.company; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stock_transfer_items.company IS 'Whose stock moved. A move between workshops never changes the company (MAIN-157).';
+
 
 --
 -- Name: stock_transfers; Type: TABLE; Schema: public; Owner: postgres
@@ -14223,7 +14427,7 @@ ALTER TABLE ONLY public.outsource_invoices
 --
 
 ALTER TABLE ONLY public.part_stock
-    ADD CONSTRAINT part_stock_pkey PRIMARY KEY (part_id, location_id);
+    ADD CONSTRAINT part_stock_pkey PRIMARY KEY (part_id, location_id, company);
 
 
 --
@@ -14439,7 +14643,7 @@ ALTER TABLE ONLY public.stock_audit_items
 --
 
 ALTER TABLE ONLY public.stock_audit_items
-    ADD CONSTRAINT stock_audit_items_unique_part UNIQUE (audit_id, part_id);
+    ADD CONSTRAINT stock_audit_items_unique_part UNIQUE (audit_id, part_id, company);
 
 
 --
@@ -16221,7 +16425,7 @@ CREATE TRIGGER trigger_adjust_part_inventory_on_update AFTER UPDATE ON public.pu
 -- Name: issue_parts trigger_deduct_part_inventory; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trigger_deduct_part_inventory AFTER INSERT ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.deduct_part_from_inventory();
+CREATE TRIGGER trigger_deduct_part_inventory BEFORE INSERT ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.deduct_part_from_inventory();
 
 
 --
@@ -16277,7 +16481,7 @@ CREATE TRIGGER trigger_guard_purchase_invoice_kind BEFORE INSERT OR UPDATE OF ki
 -- Name: purchase_invoices trigger_guard_refurbishment_invoice_header; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trigger_guard_refurbishment_invoice_header BEFORE UPDATE ON public.purchase_invoices FOR EACH ROW WHEN ((old.location_id IS DISTINCT FROM new.location_id)) EXECUTE FUNCTION public.guard_refurbishment_invoice_header();
+CREATE TRIGGER trigger_guard_refurbishment_invoice_header BEFORE UPDATE ON public.purchase_invoices FOR EACH ROW WHEN (((old.location_id IS DISTINCT FROM new.location_id) OR (old.billed_to IS DISTINCT FROM new.billed_to))) EXECUTE FUNCTION public.guard_refurbishment_invoice_header();
 
 
 --
@@ -16298,7 +16502,7 @@ CREATE TRIGGER trigger_guard_refurbishment_invoice_new_line BEFORE INSERT ON pub
 -- Name: purchase_invoices trigger_move_invoice_stock_on_location_change; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
-CREATE TRIGGER trigger_move_invoice_stock_on_location_change AFTER UPDATE OF location_id ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.move_invoice_stock_on_location_change();
+CREATE TRIGGER trigger_move_invoice_stock_on_location_change AFTER UPDATE OF location_id, billed_to ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.move_invoice_stock_on_location_change();
 
 
 --
@@ -19521,11 +19725,11 @@ GRANT ALL ON FUNCTION public.advance_people() TO service_role;
 
 
 --
--- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_company text, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_delta numeric) TO service_role;
+REVOKE ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_company text, p_delta numeric) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_company text, p_delta numeric) TO service_role;
 
 
 --
@@ -20068,6 +20272,15 @@ GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid
 
 
 --
+-- Name: FUNCTION job_card_stock_company(p_job_card_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.job_card_stock_company(p_job_card_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.job_card_stock_company(p_job_card_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.job_card_stock_company(p_job_card_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION log_batch_service_change(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -20542,8 +20755,18 @@ GRANT ALL ON FUNCTION public.start_stock_audit(p_location_id uuid, p_notes text)
 -- Name: FUNCTION stock_audit_movements(p_audit_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
+REVOKE ALL ON FUNCTION public.stock_audit_movements(p_audit_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.stock_audit_movements(p_audit_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.stock_audit_movements(p_audit_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION stock_company_label(p_company text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_company_label(p_company text) TO anon;
+GRANT ALL ON FUNCTION public.stock_company_label(p_company text) TO authenticated;
+GRANT ALL ON FUNCTION public.stock_company_label(p_company text) TO service_role;
 
 
 --

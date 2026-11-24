@@ -5,6 +5,7 @@ import { usePurchaseInvoiceForm } from '../../hooks/usePurchaseInvoiceForm'
 import { refurbishmentSource } from '../../utils/refurbishment'
 import { invoiceTotal as calcInvoiceTotal } from '../../lib/invoiceDiscount'
 import { PurchaseInvoiceModal, PurchaseInvoiceFields, InvoiceTotal } from './PurchaseInvoiceShared'
+import BilledToField from './BilledToField'
 
 const SOURCE_BADGE = {
     job_card: 'bg-blue-50 text-blue-700',
@@ -43,7 +44,7 @@ export default function EditRefurbishmentModal({ invoice, onClose }) {
 
         try {
             // The lines go back exactly as they are; save_purchase_invoice keeps them.
-            await form.save({ locationId: invoice.location_id, lines })
+            await form.save({ locationId: invoice.location_id, billedTo: invoice.billed_to, lines })
             onClose()
         } catch (err) {
             setError(err.message)
@@ -68,6 +69,9 @@ export default function EditRefurbishmentModal({ invoice, onClose }) {
             <PurchaseInvoiceFields
                 form={form}
                 workshop={<>
+                    <div className="mb-3">
+                        <BilledToField value={invoice.billed_to} readOnly />
+                    </div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Inward to Workshop</label>
                     <p className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700">{workshop}</p>
                 </>}

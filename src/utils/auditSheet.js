@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx'
+import { STOCK_COMPANIES, companyLabel } from '../constants/vehicleCompanies'
 
 /**
  * The stock-audit count sheet (MAIN-30).
@@ -10,6 +11,10 @@ import * as XLSX from 'xlsx'
  * audit_id and part_id are repeated on every row on purpose. A second metadata worksheet
  * would be tidier to look at but does not survive a save-as-CSV, and the machine keys are
  * what make "is this even the right sheet?" answerable without guessing.
+ *
+ * Belongs to (MAIN-157): each company's stock at the workshop is counted on its own line,
+ * so a part held by both is printed twice. A found row must say whose it is, and only the
+ * two company names are accepted.
  */
 
 export const SHEET_COLUMNS = [
@@ -18,11 +23,21 @@ export const SHEET_COLUMNS = [
     'part_name',
     'part_number',
     'unit',
+    'belongs_to',
     'system_qty',
     'counted_qty',
 ]
 
-const COLUMN_WIDTHS = [38, 38, 34, 18, 8, 12, 12]
+const COLUMN_WIDTHS = [38, 38, 34, 18, 8, 28, 12, 12]
+
+/** The same line of an audit: one part, one company. */
+export const auditLineKey = (partId, company) => `${partId}|${company}`
+
+const normalise = v => String(v ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+const COMPANY_BY_LABEL = new Map(STOCK_COMPANIES.map(c => [normalise(c.label), c.value]))
+
+/** The company a Belongs to cell names, or null when it names neither. */
+export const parseBelongsTo = v => COMPANY_BY_LABEL.get(normalise(v)) ?? null
 
 /** Blank rows at the foot of the sheet for stock found on the shelf but not listed. */
 export const FOUND_ROW_COUNT = 20
@@ -38,13 +53,14 @@ export function buildCountSheet({ audit, items, locationName }) {
         item.part_name_snapshot,
         item.part_number_snapshot || '',
         item.unit_snapshot || '',
+        companyLabel(item.company),
         Number(item.system_qty ?? 0),
         item.counted_qty === null || item.counted_qty === undefined ? '' : Number(item.counted_qty),
     ])
 
     // Found rows carry the audit id so an upload can still tell which audit they belong
-    // to, and nothing else — the counter fills in part number, name and quantity.
-    const found = Array.from({ length: FOUND_ROW_COUNT }, () => [audit.id, '', '', '', '', '', ''])
+    // to, and nothing else — the counter fills in part number, name, Belongs to and quantity.
+    const found = Array.from({ length: FOUND_ROW_COUNT }, () => [audit.id, '', '', '', '', '', '', ''])
 
     const ws = XLSX.utils.aoa_to_sheet([header, ...printed, ...found])
     ws['!cols'] = COLUMN_WIDTHS.map(wch => ({ wch }))
@@ -119,7 +135,8 @@ export function validateCountSheet(rows, { audit, items, parts }) {
         return { records: [], counts: [], fatal: ['That sheet has no rows below the header.'], missing: [] }
     }
 
-    const itemsByPartId = new Map(items.map(i => [i.part_id, i]))
+    const itemsByKey = new Map(items.map(i => [auditLineKey(i.part_id, i.company), i]))
+    const printedPartIds = new Set(items.map(i => i.part_id))
     const byNumber = new Map(
         parts.filter(p => p.part_number).map(p => [str(p.part_number).toLowerCase(), p])
     )
@@ -134,6 +151,9 @@ export function validateCountSheet(rows, { audit, items, parts }) {
     } else if (sheetAuditIds.size > 1 || !sheetAuditIds.has(audit.id)) {
         fatal.push('That sheet belongs to a different audit. Download a fresh count sheet for this one.')
     }
+    if (!('belongs_to' in records[0])) {
+        fatal.push('That sheet has no Belongs to column. Download a fresh count sheet for this audit.')
+    }
 
     const seen = new Set()
 
@@ -142,19 +162,32 @@ export function validateCountSheet(rows, { audit, items, parts }) {
         const partId = str(rec.part_id)
         const partNumber = str(rec.part_number)
         const partName = str(rec.part_name)
+        const rawCompany = str(rec.belongs_to)
         const rawCount = rec.counted_qty
 
-        const isPrinted = !!partId && itemsByPartId.has(partId)
+        const isPrinted = !!partId && printedPartIds.has(partId)
         const untouchedFoundRow =
-            !partId && !partNumber && !partName && str(rawCount) === ''
+            !partId && !partNumber && !partName && !rawCompany && str(rawCount) === ''
 
         if (untouchedFoundRow) return { ...rec, _skip: true, _errors: [] }
+
+        const company = parseBelongsTo(rawCompany)
+        if (!rawCompany) {
+            errors.push('Belongs to is blank — write NVS Travels or NVS Travel Solutions Pvt Ltd')
+        } else if (!company) {
+            errors.push(`Belongs to "${rawCompany}" is not NVS Travels or NVS Travel Solutions Pvt Ltd`)
+        }
 
         // Resolve the part. Printed rows already know it; found rows are matched on part
         // number first, then name.
         let resolved = null
+        let item = null
         if (isPrinted) {
-            resolved = { id: partId, name: itemsByPartId.get(partId).part_name_snapshot }
+            item = company ? itemsByKey.get(auditLineKey(partId, company)) ?? null : null
+            if (company && !item) {
+                errors.push(`This line was printed for another company — write ${companyLabel(company)} stock on a blank row instead`)
+            }
+            resolved = { id: partId, name: items.find(i => i.part_id === partId).part_name_snapshot }
         } else if (partId) {
             errors.push('This part is not on this audit’s sheet')
         } else {
@@ -164,8 +197,8 @@ export function validateCountSheet(rows, { audit, items, parts }) {
                 null
             if (match) {
                 resolved = match
-                if (itemsByPartId.has(match.id)) {
-                    errors.push('Already listed higher up the sheet — write the count on that row instead')
+                if (company && itemsByKey.has(auditLineKey(match.id, company))) {
+                    errors.push('Already listed higher up the sheet for this company — write the count on that row instead')
                     resolved = null
                 }
             } else {
@@ -184,15 +217,15 @@ export function validateCountSheet(rows, { audit, items, parts }) {
             errors.push('Counted quantity cannot be negative')
         }
 
-        if (resolved) {
-            if (seen.has(resolved.id)) {
-                errors.push('This part appears twice on the sheet')
+        if (resolved && company) {
+            const key = auditLineKey(resolved.id, company)
+            if (seen.has(key)) {
+                errors.push('This part appears twice on the sheet for this company')
             } else {
-                seen.add(resolved.id)
+                seen.add(key)
             }
         }
 
-        const item = isPrinted ? itemsByPartId.get(partId) : null
         const systemQty = item ? Number(item.system_qty) : 0
 
         return {
@@ -202,6 +235,7 @@ export function validateCountSheet(rows, { audit, items, parts }) {
             _errors: errors,
             _isFound: !isPrinted,
             _partId: resolved?.id ?? null,
+            _company: company,
             _partLabel: resolved?.name || partName || partNumber || '—',
             _systemQty: systemQty,
             _countedQty: Number.isFinite(qty) ? qty : null,
@@ -213,12 +247,12 @@ export function validateCountSheet(rows, { audit, items, parts }) {
 
     // Every printed row has to come back. Anything absent was never counted.
     const missing = items
-        .filter(i => !seen.has(i.part_id))
-        .map(i => i.part_name_snapshot)
+        .filter(i => !seen.has(auditLineKey(i.part_id, i.company)))
+        .map(i => `${i.part_name_snapshot} (${companyLabel(i.company)})`)
 
     if (missing.length > 0) {
         fatal.push(
-            `${missing.length} part${missing.length === 1 ? '' : 's'} from the sheet ${missing.length === 1 ? 'is' : 'are'} not in the uploaded file: ` +
+            `${missing.length} line${missing.length === 1 ? '' : 's'} from the sheet ${missing.length === 1 ? 'is' : 'are'} not in the uploaded file: ` +
             missing.slice(0, 5).join(', ') +
             (missing.length > 5 ? `, and ${missing.length - 5} more` : '') +
             '. Every printed row must be counted.'
@@ -227,7 +261,7 @@ export function validateCountSheet(rows, { audit, items, parts }) {
 
     const counts = usable
         .filter(r => r._errors.length === 0 && r._partId)
-        .map(r => ({ part_id: r._partId, counted_qty: r._countedQty }))
+        .map(r => ({ part_id: r._partId, company: r._company, counted_qty: r._countedQty }))
 
     return { records: usable, counts, fatal, missing }
 }
