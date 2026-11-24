@@ -79,9 +79,11 @@ export function useToggleWorkshopLocation() {
                     .eq('location_id', id)
                     .gt('quantity', 0)
                 if (stockErr) throw stockErr
-                if (stock?.length) {
+                // One row per part per company (MAIN-157), so count parts, not rows.
+                const heldParts = new Set((stock || []).map(r => r.part_id)).size
+                if (heldParts) {
                     throw new Error(
-                        `This workshop still holds ${stock.length} part${stock.length === 1 ? '' : 's'} in stock. ` +
+                        `This workshop still holds ${heldParts} part${heldParts === 1 ? '' : 's'} in stock. ` +
                         'Move the stock to another workshop before deactivating it.'
                     )
                 }

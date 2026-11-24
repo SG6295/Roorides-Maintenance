@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { auditLineKey } from '../utils/auditSheet'
 
 /**
  * Physical stock counts (MAIN-30).
@@ -151,6 +152,7 @@ export function useStockAuditItems(auditId) {
                 `)
                 .eq('audit_id', auditId)
                 .order('part_name_snapshot')
+                .order('company')
             if (error) throw error
             return (data || []).map(row => ({
                 ...row,
@@ -164,7 +166,8 @@ export function useStockAuditItems(auditId) {
 
 /**
  * What legitimately moved at this workshop since the count sheet was generated, grouped
- * by part. Without this a final figure that differs from the counted figure reads as a
+ * by part and company (auditLineKey) — each company's line is explained by its own
+ * stock's movements (MAIN-157). Without this a final figure that differs from the counted figure reads as a
  * bug rather than as a job card doing its job.
  */
 export function useStockAuditMovements(auditId) {
@@ -178,7 +181,8 @@ export function useStockAuditMovements(auditId) {
             if (error) throw error
 
             return (data || []).reduce((acc, row) => {
-                const list = acc[row.part_id] || (acc[row.part_id] = [])
+                const key = auditLineKey(row.part_id, row.company)
+                const list = acc[key] || (acc[key] = [])
                 list.push({ ...row, quantity: Number(row.quantity ?? 0) })
                 return acc
             }, {})
@@ -214,7 +218,7 @@ export function useStartStockAudit() {
     })
 }
 
-/** @param {Array<{part_id: string, counted_qty: number}>} counts */
+/** @param {Array<{part_id: string, company: string, counted_qty: number}>} counts */
 export function useSubmitStockAuditCounts() {
     const queryClient = useQueryClient()
     return useMutation({
@@ -223,6 +227,7 @@ export function useSubmitStockAuditCounts() {
                 p_audit_id: auditId,
                 p_counts: counts.map(c => ({
                     part_id: c.part_id,
+                    company: c.company,
                     counted_qty: Number(c.counted_qty),
                 })),
             }),
@@ -230,7 +235,7 @@ export function useSubmitStockAuditCounts() {
     })
 }
 
-/** @param {Array<{part_id: string, lines: Array<{quantity: number, reason: string, notes: string|null}>}>} items */
+/** @param {Array<{part_id: string, company: string, lines: Array<{quantity: number, reason: string, notes: string|null}>}>} items */
 export function useSetStockAuditReasons() {
     const queryClient = useQueryClient()
     return useMutation({

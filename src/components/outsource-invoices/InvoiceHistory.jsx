@@ -2,6 +2,7 @@ import { useOutsourceInvoiceHistory } from '../../hooks/useOutsourceInvoices'
 import { fmtMoney, fmtDate, fmtDateTime } from './format'
 import { groupBatchLines } from './historyEntries'
 import { workTypeLabel } from '../../constants/batchWorkTypes'
+import { companyLabel } from '../../constants/vehicleCompanies'
 
 const FIELD_LABELS = {
     invoice_no:                 'Invoice No',
@@ -91,6 +92,10 @@ function Resubmission({ entry, who }) {
             <p className="text-sm text-indigo-800 font-medium">Resubmitted by {who}</p>
             {changed.map(f => {
                 if (f === 'invoice_file') return <p key={f} className="text-xs text-gray-600">Invoice file replaced</p>
+                // A purchase's Billed to (MAIN-157).
+                if (f === 'billed_to') {
+                    return <p key={f} className="text-xs text-gray-600">Billed to: {companyLabel(was(f))} → {companyLabel(now(f))}</p>
+                }
                 if (f === 'supplier_id') {
                     return <p key={f} className="text-xs text-gray-600">Supplier: {was('supplier_name') ?? '—'} → {now('supplier_name') ?? '—'}</p>
                 }

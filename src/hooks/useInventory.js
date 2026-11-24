@@ -4,9 +4,11 @@ import { fetchAllRows } from '../utils/fetchAllRows'
 import { toDate } from '../utils/datetime'
 import { parsePurchaseNumber } from '../utils/purchaseInvoice'
 import { employeeKey } from '../utils/employeeId'
+import { stockByCompany } from '../constants/vehicleCompanies'
 
 /**
- * All parts with stock levels, ordered by name.
+ * All parts with stock levels, ordered by name. `by_company` is each company's stock
+ * across every workshop (MAIN-157).
  */
 export function useParts(filters = {}) {
     return useQuery({
@@ -16,7 +18,7 @@ export function useParts(filters = {}) {
         queryFn: async () => {
             let query = supabase
                 .from('parts')
-                .select('id, name, part_number, unit, quantity_in_stock, default_exclude_from_scrap, default_exclusion_reason')
+                .select('id, name, part_number, unit, quantity_in_stock, default_exclude_from_scrap, default_exclusion_reason, part_stock(company, quantity)')
                 .order('name')
 
             if (filters.search) {
@@ -32,7 +34,10 @@ export function useParts(filters = {}) {
 
             const { data, error } = await query
             if (error) throw error
-            return data || []
+            return (data || []).map(({ part_stock, ...part }) => ({
+                ...part,
+                by_company: stockByCompany(part_stock),
+            }))
         },
     })
 }
@@ -50,6 +55,7 @@ const PURCHASE_INVOICE_COLUMNS = `
     invoice_file_url,
     created_at,
     location_id,
+    billed_to,
     location:workshop_locations!location_id(id, name, address),
     created_by_user:users!created_by(name),
     purchase_invoice_items(id),
@@ -194,6 +200,7 @@ export function useUpdatePurchaseInvoice() {
                     notes: invoiceData.notes || null,
                     invoice_file_url: invoiceData.invoice_file_url || null,
                     location_id: invoiceData.location_id,
+                    billed_to: invoiceData.billed_to || null,
                     ...toFinanceDetails(finance),
                     ...(resubmit ? { resubmit: true, resubmit_note: resubmit.note || null } : {}),
                 },
@@ -203,8 +210,8 @@ export function useUpdatePurchaseInvoice() {
         },
         onSuccess: (_data, { invoiceId }) => {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
-            // A workshop change moves stock between locations, so the per-workshop
-            // views are stale too, not just the global quantity.
+            // A workshop or Billed to change moves stock between locations or companies,
+            // so the per-workshop views are stale too, not just the global quantity.
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoices'] })
             queryClient.invalidateQueries({ queryKey: ['purchase_invoice_items', invoiceId] })
@@ -235,6 +242,7 @@ export function useRecordPurchase() {
                     notes: invoice.notes || null,
                     invoice_file_url: invoice.invoice_file_url || null,
                     location_id: invoice.location_id,
+                    billed_to: invoice.billed_to || null,
                     ...toFinanceDetails(finance),
                 },
                 p_items: lineItems.map(toInvoiceItem),
@@ -643,7 +651,8 @@ export function useDeletePartUnit() {
 // ─── Per-location stock ───────────────────────────────────────────────────────
 
 /**
- * Parts with their stock at one workshop location.
+ * Parts with their stock at one workshop location, in total (`quantity_here`) and per
+ * company (`by_company`, MAIN-157).
  *
  * Deliberately a left join: every part is returned, with 0 where it has no stock at
  * this location. If we filtered to parts that have a part_stock row, a newly created
@@ -658,7 +667,7 @@ export function usePartStock(locationId, filters = {}) {
         queryFn: async () => {
             let query = supabase
                 .from('parts')
-                .select('id, name, part_number, unit, quantity_in_stock, default_exclude_from_scrap, default_exclusion_reason, part_stock(location_id, quantity)')
+                .select('id, name, part_number, unit, quantity_in_stock, default_exclude_from_scrap, default_exclusion_reason, part_stock(location_id, company, quantity)')
                 .eq('part_stock.location_id', locationId)
                 .order('name')
 
@@ -671,13 +680,17 @@ export function usePartStock(locationId, filters = {}) {
             const { data, error } = await query
             if (error) throw error
 
-            const rows = (data || []).map(part => ({
-                ...part,
-                quantity_here: Number(part.part_stock?.[0]?.quantity ?? 0),
-                quantity_total: Number(part.quantity_in_stock ?? 0),
-            }))
+            const rows = (data || []).map(part => {
+                const by_company = stockByCompany(part.part_stock)
+                return {
+                    ...part,
+                    by_company,
+                    quantity_here: Object.values(by_company).reduce((a, b) => a + b, 0),
+                    quantity_total: Number(part.quantity_in_stock ?? 0),
+                }
+            })
 
-            // Stock level filters apply to this location, not the company-wide total.
+            // Stock level filters apply to this location's total, not every workshop's.
             if (filters.stockStatus === 'low') return rows.filter(r => r.quantity_here <= 5)
             if (filters.stockStatus === 'out') return rows.filter(r => r.quantity_here <= 0)
             return rows
@@ -686,28 +699,35 @@ export function usePartStock(locationId, filters = {}) {
 }
 
 /**
- * Headline numbers per location for the inventory landing cards.
+ * Headline numbers per location for the inventory landing cards. A part held by both
+ * companies at a workshop counts once there. Read through parts (one row each) so the
+ * per-company stock rows never meet the API's 1,000-row cap.
  */
 export function useLocationStockSummary() {
     return useQuery({
         queryKey: ['part_stock', 'summary'],
         queryFn: async () => {
             const { data, error } = await supabase
-                .from('part_stock')
-                .select('location_id, quantity')
+                .from('parts')
+                .select('id, part_stock(location_id, quantity)')
             if (error) throw error
 
-            return (data || []).reduce((acc, row) => {
-                const qty = Number(row.quantity ?? 0)
-                const bucket = acc[row.location_id] || { stocked: 0, low: 0, units: 0 }
-                if (qty > 0) {
-                    bucket.stocked += 1
-                    bucket.units += qty
-                    if (qty <= 5) bucket.low += 1
+            const acc = {}
+            for (const part of data || []) {
+                const here = {}
+                for (const row of part.part_stock || []) {
+                    here[row.location_id] = (here[row.location_id] || 0) + Number(row.quantity ?? 0)
                 }
-                acc[row.location_id] = bucket
-                return acc
-            }, {})
+                for (const [locationId, qty] of Object.entries(here)) {
+                    const bucket = acc[locationId] || (acc[locationId] = { stocked: 0, low: 0, units: 0 })
+                    if (qty > 0) {
+                        bucket.stocked += 1
+                        bucket.units += qty
+                        if (qty <= 5) bucket.low += 1
+                    }
+                }
+            }
+            return acc
         },
     })
 }
@@ -719,17 +739,18 @@ export function useLocationStockSummary() {
  * @param {object} args
  * @param {string} args.fromLocationId
  * @param {string} args.toLocationId
+ * @param {string} args.company  whose stock moves — it arrives under the same company (MAIN-157)
  * @param {Array<{part_id: string, quantity: number}>} args.items
  * @param {string} [args.notes]
  */
 export function useTransferStock() {
     const queryClient = useQueryClient()
     return useMutation({
-        mutationFn: async ({ fromLocationId, toLocationId, items, notes }) => {
+        mutationFn: async ({ fromLocationId, toLocationId, company, items, notes }) => {
             const { data, error } = await supabase.rpc('transfer_stock', {
                 p_from: fromLocationId,
                 p_to: toLocationId,
-                p_items: items.map(i => ({ part_id: i.part_id, quantity: Number(i.quantity) })),
+                p_items: items.map(i => ({ part_id: i.part_id, quantity: Number(i.quantity), company })),
                 p_notes: notes || null,
             })
             if (error) throw error

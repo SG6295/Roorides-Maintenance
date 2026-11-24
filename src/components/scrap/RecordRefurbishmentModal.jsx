@@ -4,6 +4,7 @@ import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import NewPartInlineForm from '../inventory/NewPartInlineForm'
+import BilledToField from '../inventory/BilledToField'
 import SupplierPicker from '../suppliers/SupplierPicker'
 import InvoiceDetailsFields from '../outsource-invoices/InvoiceDetailsFields'
 import { EMPTY_INVOICE_FORM, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
@@ -58,6 +59,7 @@ export default function RecordRefurbishmentModal({ onClose }) {
         supplier_id: '',
         notes: '',
         location_id: '',
+        billed_to: '',
     })
     // The finance details, as on a job card or multi-vehicle invoice; the date and
     // number are the purchase invoice's own.
@@ -73,10 +75,14 @@ export default function RecordRefurbishmentModal({ onClose }) {
     // With a single workshop there is nothing to choose, so pick it for them.
     const locationId = invoice.location_id || (locations.length === 1 ? locations[0].id : '')
 
-    const { data: scrapItems = [] } = useScrapInventory({ status: 'in_storage', location_id: locationId })
+    // Only scrap of the Billed to company: the refurbished stock becomes that company's,
+    // so another company's scrap would pass between them unrecorded (MAIN-157).
+    const scrapReady = !!locationId && !!invoice.billed_to
+    const { data: scrapRows = [] } = useScrapInventory({ status: 'in_storage', location_id: locationId, company: invoice.billed_to })
+    const scrapItems = useMemo(() => (scrapReady ? scrapRows : []), [scrapRows, scrapReady])
     const scrapById = useMemo(
-        () => (locationId ? Object.fromEntries(scrapItems.map(s => [s.id, s])) : {}),
-        [scrapItems, locationId]
+        () => Object.fromEntries(scrapItems.map(s => [s.id, s])),
+        [scrapItems]
     )
 
     const updateLine = (key, patch) => {
@@ -84,10 +90,18 @@ export default function RecordRefurbishmentModal({ onClose }) {
         setLines(prev => prev.map(l => (l.key === key ? { ...l, ...patch } : l)))
     }
 
+    // Scrap items belong to one workshop and one company, so earlier picks no longer apply.
+    const clearScrapPicks = () =>
+        setLines(prev => prev.map(l => ({ ...l, scrap_id: '', quantity: l.notFound ? l.quantity : '' })))
+
     function chooseWorkshop(id) {
         setInvoice(p => ({ ...p, location_id: id }))
-        // Scrap items belong to one workshop, so earlier picks no longer apply.
-        setLines(prev => prev.map(l => ({ ...l, scrap_id: '', quantity: l.notFound ? l.quantity : '' })))
+        clearScrapPicks()
+    }
+
+    function chooseBilledTo(company) {
+        setInvoice(p => ({ ...p, billed_to: company }))
+        clearScrapPicks()
     }
 
     function chooseScrap(line, value) {
@@ -122,6 +136,10 @@ export default function RecordRefurbishmentModal({ onClose }) {
         }
         if (!locationId) {
             setError('Choose which workshop these parts are being inwarded to.')
+            return
+        }
+        if (!invoice.billed_to) {
+            setError('Choose who the refurbishment is billed to.')
             return
         }
         if (!invoiceFile?.url) {
@@ -197,7 +215,13 @@ export default function RecordRefurbishmentModal({ onClose }) {
                                         placeholder="Optional"
                                     />
                                 </div>
-                                <div className="sm:col-span-2">
+                                <BilledToField
+                                    value={invoice.billed_to}
+                                    onChange={chooseBilledTo}
+                                    showError={showErrors}
+                                    hint="The refurbished parts become this company's stock, and only its scrap can be used."
+                                />
+                                <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
                                         Workshop <span className="text-red-500">*</span>
                                     </label>
@@ -296,7 +320,7 @@ export default function RecordRefurbishmentModal({ onClose }) {
                                                             value={line.scrap_id}
                                                             onChange={val => chooseScrap(line, val)}
                                                             options={scrapOptions}
-                                                            placeholder={locationId ? 'Search scrap items…' : 'Choose a workshop first'}
+                                                            placeholder={scrapReady ? 'Search scrap items…' : 'Choose Billed to and the workshop first'}
                                                             showAllOnFocus={true}
                                                             disabled={!locationId}
                                                             pinnedOption={{ value: NOT_FOUND_SENTINEL, label: "Couldn't find it in the list" }}

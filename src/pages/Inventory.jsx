@@ -40,11 +40,30 @@ import {
     ArrowsRightLeftIcon,
 } from '@heroicons/react/24/outline'
 import { useToast } from '../hooks/useFeedback'
+import { STOCK_COMPANIES } from '../constants/vehicleCompanies'
 
-// Sentinel for the company-wide roll-up card, which is not a real location id.
+// Sentinel for the all-workshops roll-up card, which is not a real location id.
 const ALL_LOCATIONS = '__all__'
 
 // ── Parts Tab ─────────────────────────────────────────────────────────────────
+
+// Each company's share of a stock figure (MAIN-157): stock belongs to whoever paid for it.
+function CompanyStockHeaders() {
+    return STOCK_COMPANIES.map(c => (
+        <th key={c.value} className="px-4 py-3 text-right whitespace-nowrap" title={c.label}>{c.short}</th>
+    ))
+}
+
+function CompanyStockCells({ byCompany }) {
+    return STOCK_COMPANIES.map(c => {
+        const qty = byCompany?.[c.value] ?? 0
+        return (
+            <td key={c.value} className={`px-4 py-3 text-right ${qty > 0 ? 'text-gray-900' : 'text-gray-300'}`}>
+                {qty > 0 ? qty : '—'}
+            </td>
+        )
+    })
+}
 
 function stockBadge(qty) {
     if (qty <= 0) return <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Out of stock</span>
@@ -53,7 +72,7 @@ function stockBadge(qty) {
 }
 
 /**
- * Level 1: pick a workshop (or the company-wide roll-up).
+ * Level 1: pick a workshop (or the all-workshops roll-up).
  */
 function LocationPicker({ locations, onSelect }) {
     const { data: summary = {} } = useLocationStockSummary()
@@ -104,7 +123,7 @@ function LocationPicker({ locations, onSelect }) {
                     <Squares2X2Icon className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" />
                     <div className="min-w-0">
                         <div className="font-semibold text-gray-900">All Locations</div>
-                        <div className="text-xs text-gray-400">Company-wide totals</div>
+                        <div className="text-xs text-gray-400">Totals across every workshop</div>
                     </div>
                 </div>
                 <div className="mt-4 flex items-center gap-4 text-sm">
@@ -228,6 +247,7 @@ function LocationPartsTable({ location, locations, canMove }) {
                                 <th className="px-4 py-3 text-left">Part Name</th>
                                 <th className="px-4 py-3 text-left">Part Number</th>
                                 <th className="px-4 py-3 text-left">Unit</th>
+                                <CompanyStockHeaders />
                                 <th className="px-4 py-3 text-right">At {location.name}</th>
                                 <th className="px-4 py-3 text-right">All Locations</th>
                                 <th className="px-4 py-3 text-left">Exclude from scrap by default</th>
@@ -252,6 +272,7 @@ function LocationPartsTable({ location, locations, canMove }) {
                                     <td className="px-4 py-3 font-medium text-gray-900">{part.name}</td>
                                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">{part.part_number || '—'}</td>
                                     <td className="px-4 py-3 text-gray-500">{part.unit}</td>
+                                    <CompanyStockCells byCompany={part.by_company} />
                                     <td className="px-4 py-3 text-right">{stockBadge(part.quantity_here)}</td>
                                     <td className="px-4 py-3 text-right text-gray-400">{part.quantity_total}</td>
                                     <td className="px-4 py-3"><ScrapDefaultCell part={part} /></td>
@@ -294,7 +315,7 @@ function LocationPartsTable({ location, locations, canMove }) {
 }
 
 /**
- * The company-wide roll-up, unchanged from before locations existed.
+ * The all-workshops roll-up, split by company like each workshop's table.
  */
 function AllLocationsTable() {
     const [filters, setFilters] = useState({ search: '', stockStatus: '' })
@@ -343,6 +364,7 @@ function AllLocationsTable() {
                                 <th className="px-4 py-3 text-left">Part Name</th>
                                 <th className="px-4 py-3 text-left">Part Number</th>
                                 <th className="px-4 py-3 text-left">Unit</th>
+                                <CompanyStockHeaders />
                                 <th className="px-4 py-3 text-right">In Stock</th>
                                 <th className="px-4 py-3 text-left">Exclude from scrap by default</th>
                                 <th className="px-4 py-3 w-10"></th>
@@ -354,6 +376,7 @@ function AllLocationsTable() {
                                     <td className="px-4 py-3 font-medium text-gray-900">{part.name}</td>
                                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">{part.part_number || '—'}</td>
                                     <td className="px-4 py-3 text-gray-500">{part.unit}</td>
+                                    <CompanyStockCells byCompany={part.by_company} />
                                     <td className="px-4 py-3 text-right">{stockBadge(part.quantity_in_stock)}</td>
                                     <td className="px-4 py-3"><ScrapDefaultCell part={part} /></td>
                                     <td className="px-4 py-3 text-center">
@@ -425,7 +448,7 @@ function PartsTab() {
                 </h2>
                 <p className="text-xs text-gray-500">
                     {effectiveId === ALL_LOCATIONS
-                        ? 'Company-wide totals across every workshop.'
+                        ? 'Totals across every workshop, by company.'
                         : location?.address || 'No address recorded'}
                 </p>
             </div>

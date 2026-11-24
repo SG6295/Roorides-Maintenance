@@ -27,6 +27,7 @@ import { FeedbackProvider } from '../../../shared/Feedback'
 const item = over => ({
     id: 'item-1',
     part_id: 'part-1',
+    company: 'nvs_travels',
     part_name_snapshot: 'Alternator',
     part_number_snapshot: null,
     unit_snapshot: 'pcs',
@@ -77,7 +78,7 @@ describe('AuditReviewTable reason lines', () => {
         await user.click(screen.getByRole('button', { name: /Save progress/ }))
         expect(saveReasons).toHaveBeenCalledWith({
             auditId: 'audit-1',
-            items: [{ part_id: 'part-1', lines: [{ quantity: 4, reason: 'missing', notes: null }] }],
+            items: [{ part_id: 'part-1', company: 'nvs_travels', lines: [{ quantity: 4, reason: 'missing', notes: null }] }],
         })
     })
 

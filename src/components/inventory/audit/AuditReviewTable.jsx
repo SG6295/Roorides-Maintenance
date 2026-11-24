@@ -22,6 +22,11 @@ import {
     savableAuditLines,
 } from '../../../utils/auditReasons'
 import { useConfirm } from '../../../hooks/useFeedback'
+import { auditLineKey } from '../../../utils/auditSheet'
+import { companyShortLabel } from '../../../constants/vehicleCompanies'
+
+// One line of the audit is one part's stock for one company (MAIN-157).
+const lineKey = item => auditLineKey(item.part_id, item.company)
 
 const SOURCE_LABELS = {
     consumption: 'Used on job card',
@@ -69,11 +74,11 @@ export default function AuditReviewTable({ audit, items }) {
     const rows = showAll ? items : mismatches
 
     // What the row shows: local edits if there are any, otherwise what is saved.
-    const linesFor = item => edits[item.part_id] ?? initialAuditLines(item)
+    const linesFor = item => edits[lineKey(item)] ?? initialAuditLines(item)
 
     function setLines(item, lines) {
         setError(null)
-        setEdits(prev => ({ ...prev, [item.part_id]: lines }))
+        setEdits(prev => ({ ...prev, [lineKey(item)]: lines }))
     }
 
     function setLineField(item, index, field, value) {
@@ -96,10 +101,10 @@ export default function AuditReviewTable({ audit, items }) {
     const unexplained = mismatches.filter(i => !isMismatchExplained(i.variance, linesFor(i)))
 
     const pendingItems = () =>
-        Object.entries(edits).map(([part_id, lines]) => ({
-            part_id,
-            lines: savableAuditLines(lines),
-        }))
+        Object.entries(edits).map(([key, lines]) => {
+            const [part_id, company] = key.split('|')
+            return { part_id, company, lines: savableAuditLines(lines) }
+        })
 
     async function persistReasons() {
         if (!dirty) return
@@ -172,6 +177,7 @@ export default function AuditReviewTable({ audit, items }) {
                             <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
                                 <tr>
                                     <th className="px-4 py-3 text-left">Part</th>
+                                    <th className="px-4 py-3 text-left">Belongs to</th>
                                     <th className="px-4 py-3 text-right">On sheet</th>
                                     <th className="px-4 py-3 text-right">Counted</th>
                                     <th className="px-4 py-3 text-right">Difference</th>
@@ -181,14 +187,15 @@ export default function AuditReviewTable({ audit, items }) {
                             </thead>
                             <tbody className="divide-y divide-gray-50">
                                 {rows.map(item => {
-                                    const moved = movements[item.part_id] || []
+                                    const key = lineKey(item)
+                                    const moved = movements[key] || []
                                     const netMoved = moved.reduce((s, m) => s + m.quantity, 0)
-                                    const isOpen = expanded === item.part_id
+                                    const isOpen = expanded === key
                                     const lines = linesFor(item)
                                     const left = unallocatedQty(item.variance, lines)
 
                                     return (
-                                        <Fragment key={item.part_id}>
+                                        <Fragment key={key}>
                                             <tr className={`align-top ${
                                                 item.variance !== 0 && !isMismatchExplained(item.variance, lines)
                                                     ? 'bg-yellow-50/50'
@@ -206,6 +213,7 @@ export default function AuditReviewTable({ audit, items }) {
                                                         )}
                                                     </div>
                                                 </td>
+                                                <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{companyShortLabel(item.company)}</td>
                                                 <td className="px-4 py-3 text-right text-gray-500">{fmt(item.system_qty)}</td>
                                                 <td className="px-4 py-3 text-right text-gray-900">{fmt(item.counted_qty)}</td>
                                                 <td className={`px-4 py-3 text-right font-semibold ${
@@ -219,7 +227,7 @@ export default function AuditReviewTable({ audit, items }) {
                                                         <span className="text-xs text-gray-400">—</span>
                                                     ) : (
                                                         <button
-                                                            onClick={() => setExpanded(isOpen ? null : item.part_id)}
+                                                            onClick={() => setExpanded(isOpen ? null : key)}
                                                             className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-1 hover:bg-amber-100"
                                                         >
                                                             <ExclamationTriangleIcon className="w-3 h-3" />
@@ -306,7 +314,7 @@ export default function AuditReviewTable({ audit, items }) {
 
                                             {isOpen && (
                                                 <tr className="bg-amber-50/40">
-                                                    <td colSpan={7} className="px-4 py-3">
+                                                    <td colSpan={8} className="px-4 py-3">
                                                         <p className="text-xs text-gray-600 mb-2">
                                                             Moved at this workshop after the count sheet was generated. The audit
                                                             applies its own difference of <strong>{signed(item.variance)}</strong> on

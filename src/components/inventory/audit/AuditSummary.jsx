@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 import { AUDIT_REASON_LABELS, auditRef, useStockAuditItems } from '../../../hooks/useStockAudits'
 import { TicketListSkeleton } from '../../shared/LoadingSkeleton'
+import { companyLabel, companyShortLabel } from '../../../constants/vehicleCompanies'
 
 const rupees = n =>
     `₹${Math.abs(Number(n ?? 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -56,6 +57,7 @@ export default function AuditSummary({ audit }) {
             'Part Name': i.part_name_snapshot,
             'Part Number': i.part_number_snapshot ?? '',
             'Unit': i.unit_snapshot ?? '',
+            'Belongs To': companyLabel(i.company),
             'On Sheet': Number(i.system_qty),
             'Counted': Number(i.counted_qty ?? 0),
             'Difference': Number(i.variance ?? 0),
@@ -133,6 +135,7 @@ export default function AuditSummary({ audit }) {
                             <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
                                 <tr>
                                     <th className="px-4 py-3 text-left">Part</th>
+                                    <th className="px-4 py-3 text-left">Belongs to</th>
                                     <th className="px-4 py-3 text-right">On sheet</th>
                                     <th className="px-4 py-3 text-right">Counted</th>
                                     <th className="px-4 py-3 text-right">Difference</th>
@@ -155,6 +158,7 @@ export default function AuditSummary({ audit }) {
                                                 {i.was_found_row && <span className="ml-1 text-blue-600">found on shelf</span>}
                                             </div>
                                         </td>
+                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{companyShortLabel(i.company)}</td>
                                         <td className="px-4 py-3 text-right text-gray-500">{fmt(i.system_qty)}</td>
                                         <td className="px-4 py-3 text-right text-gray-900">{fmt(i.counted_qty)}</td>
                                         <td className={`px-4 py-3 text-right font-semibold ${

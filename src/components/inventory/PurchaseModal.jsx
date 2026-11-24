@@ -7,6 +7,7 @@ import CustomSelect from '../shared/CustomSelect'
 import SearchableSelect from '../shared/SearchableSelect'
 import MultiFileAttach from '../shared/MultiFileAttach'
 import NewPartInlineForm from './NewPartInlineForm'
+import BilledToField from './BilledToField'
 import SupplierPicker from '../suppliers/SupplierPicker'
 import InvoiceDetailsFields from '../outsource-invoices/InvoiceDetailsFields'
 import { EMPTY_INVOICE_FORM, invoiceFormToRow, validateInvoiceForm } from '../outsource-invoices/invoiceForm'
@@ -53,6 +54,7 @@ export default function PurchaseModal({ onClose }) {
         supplier_id: '',
         notes: '',
         location_id: '',
+        billed_to: '',
     })
     // The finance details, as on a job card or refurbishment (MAIN-129); the date and
     // number are the purchase invoice's own.
@@ -120,6 +122,10 @@ export default function PurchaseModal({ onClose }) {
         }
         if (!locationId) {
             setError('Choose which workshop this invoice is being inwarded to.')
+            return
+        }
+        if (!invoice.billed_to) {
+            setError('Choose who the purchase is billed to.')
             return
         }
 
@@ -215,7 +221,13 @@ export default function PurchaseModal({ onClose }) {
                                         placeholder="Optional"
                                     />
                                 </div>
-                                <div className="sm:col-span-2">
+                                <BilledToField
+                                    value={invoice.billed_to}
+                                    onChange={v => setInvoice(p => ({ ...p, billed_to: v }))}
+                                    showError={showErrors}
+                                    hint="The stock on this invoice belongs to this company."
+                                />
+                                <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">
                                         Inward to Workshop <span className="text-red-500">*</span>
                                     </label>

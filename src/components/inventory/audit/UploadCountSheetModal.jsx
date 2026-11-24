@@ -7,6 +7,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { parseCountSheet, validateCountSheet } from '../../../utils/auditSheet'
 import { useSubmitStockAuditCounts } from '../../../hooks/useStockAudits'
+import { companyShortLabel } from '../../../constants/vehicleCompanies'
 
 const STEPS = { UPLOAD: 'upload', VALIDATE: 'validate' }
 
@@ -76,7 +77,7 @@ export default function UploadCountSheetModal({ audit, items, parts, onClose }) 
                         <h2 className="text-lg font-semibold text-gray-900">Upload Count Sheet</h2>
                         <p className="text-xs text-gray-500 mt-0.5">
                             {step === STEPS.UPLOAD
-                                ? `${audit.location?.name} — ${items.length} part${items.length === 1 ? '' : 's'} to count`
+                                ? `${audit.location?.name} — ${items.length} line${items.length === 1 ? '' : 's'} to count (one per part per company)`
                                 : `${result?.records.length ?? 0} rows read`}
                         </p>
                     </div>
@@ -170,6 +171,7 @@ export default function UploadCountSheetModal({ audit, items, parts, onClose }) 
                                         <tr>
                                             <th className="px-3 py-2 font-medium w-10">Row</th>
                                             <th className="px-3 py-2 font-medium">Part</th>
+                                            <th className="px-3 py-2 font-medium">Belongs to</th>
                                             <th className="px-3 py-2 font-medium text-right w-24">System</th>
                                             <th className="px-3 py-2 font-medium text-right w-24">Counted</th>
                                             <th className="px-3 py-2 font-medium text-right w-24">Difference</th>
@@ -187,6 +189,9 @@ export default function UploadCountSheetModal({ audit, items, parts, onClose }) 
                                                         {rec._isFound && !hasErr && (
                                                             <span className="ml-2 text-blue-600">found on shelf</span>
                                                         )}
+                                                    </td>
+                                                    <td className="px-3 py-1.5 text-gray-700 whitespace-nowrap">
+                                                        {rec._company ? companyShortLabel(rec._company) : '—'}
                                                     </td>
                                                     <td className="px-3 py-1.5 text-right text-gray-500">
                                                         {hasErr ? '—' : rec._systemQty}

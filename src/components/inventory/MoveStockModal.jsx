@@ -2,19 +2,26 @@ import { useState } from 'react'
 import { XMarkIcon, ArrowRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import CustomSelect from '../shared/CustomSelect'
 import { useTransferStock } from '../../hooks/useInventory'
+import { STOCK_COMPANIES } from '../../constants/vehicleCompanies'
 
 /**
- * Move selected parts from one workshop to another.
+ * Move selected parts from one workshop to another. One company's stock moves at a time,
+ * and it arrives under the same company (MAIN-157).
  *
  * @param {object} props
  * @param {object} props.fromLocation      the workshop the parts are leaving
  * @param {Array}  props.locations         all active workshops
- * @param {Array}  props.parts             the selected rows, each with quantity_here
+ * @param {Array}  props.parts             the selected rows, each with by_company
  * @param {Function} props.onClose
  */
 export default function MoveStockModal({ fromLocation, locations, parts, onClose }) {
     const transferStock = useTransferStock()
 
+    // Preset when only one company holds any of the selected stock here.
+    const [company, setCompany] = useState(() => {
+        const held = STOCK_COMPANIES.filter(c => parts.some(p => (p.by_company?.[c.value] ?? 0) > 0))
+        return held.length === 1 ? held[0].value : ''
+    })
     const [toLocationId, setToLocationId] = useState('')
     const [notes, setNotes] = useState('')
     const [error, setError] = useState(null)
@@ -29,14 +36,15 @@ export default function MoveStockModal({ fromLocation, locations, parts, onClose
     const lines = parts.map(part => {
         const raw = quantities[part.id]
         const qty = raw === '' ? 0 : Number(raw)
+        const available = company ? (part.by_company?.[company] ?? 0) : 0
         const invalid =
-            raw !== '' && (Number.isNaN(qty) || qty < 0 || qty > part.quantity_here)
-        return { part, raw, qty, invalid }
+            raw !== '' && (Number.isNaN(qty) || qty < 0 || (!!company && qty > available))
+        return { part, raw, qty, available, invalid }
     })
 
     const movable = lines.filter(l => l.qty > 0 && !l.invalid)
     const anyInvalid = lines.some(l => l.invalid)
-    const canSubmit = !!toLocationId && movable.length > 0 && !anyInvalid && !transferStock.isPending
+    const canSubmit = !!company && !!toLocationId && movable.length > 0 && !anyInvalid && !transferStock.isPending
 
     async function handleMove() {
         setError(null)
@@ -44,6 +52,7 @@ export default function MoveStockModal({ fromLocation, locations, parts, onClose
             await transferStock.mutateAsync({
                 fromLocationId: fromLocation.id,
                 toLocationId,
+                company,
                 items: movable.map(l => ({ part_id: l.part.id, quantity: l.qty })),
                 notes,
             })
@@ -71,6 +80,18 @@ export default function MoveStockModal({ fromLocation, locations, parts, onClose
 
                 {/* Lines */}
                 <div className="flex-1 overflow-y-auto px-6 py-4">
+                    <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Whose stock</label>
+                        <CustomSelect
+                            value={company}
+                            onChange={v => { setCompany(v); setError(null) }}
+                            options={STOCK_COMPANIES.map(c => ({ value: c.value, label: c.label }))}
+                            placeholder="Choose the company…"
+                            compact
+                        />
+                        <p className="text-xs text-gray-400 mt-1">It stays that company's stock at the new workshop.</p>
+                    </div>
+
                     <table className="w-full text-sm">
                         <thead className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                             <tr>
@@ -80,7 +101,7 @@ export default function MoveStockModal({ fromLocation, locations, parts, onClose
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                            {lines.map(({ part, raw, invalid }) => (
+                            {lines.map(({ part, raw, available, invalid }) => (
                                 <tr key={part.id}>
                                     <td className="py-2 pr-2">
                                         <div className="font-medium text-gray-900">{part.name}</div>
@@ -89,13 +110,13 @@ export default function MoveStockModal({ fromLocation, locations, parts, onClose
                                         )}
                                     </td>
                                     <td className="py-2 text-right text-gray-500">
-                                        {part.quantity_here} {part.unit}
+                                        {company ? `${available} ${part.unit}` : '—'}
                                     </td>
                                     <td className="py-2 text-right">
                                         <input
                                             type="number"
                                             min="0"
-                                            max={part.quantity_here}
+                                            max={available}
                                             step="0.01"
                                             placeholder="0"
                                             value={raw}
@@ -116,7 +137,7 @@ export default function MoveStockModal({ fromLocation, locations, parts, onClose
 
                     {anyInvalid && (
                         <p className="text-xs text-red-600 mt-3">
-                            A quantity is higher than what this workshop holds. Reduce it to continue.
+                            A quantity is higher than what this workshop holds for that company. Reduce it to continue.
                         </p>
                     )}
                 </div>
