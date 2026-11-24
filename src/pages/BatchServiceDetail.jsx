@@ -28,7 +28,9 @@ import {
 } from '../components/outsource-invoices/invoiceForm'
 import { fmtMoney, fmtPaise, fmtDate } from '../components/outsource-invoices/format'
 import { formatSiteLabel } from '../utils/siteLabel'
-import { isUnassignedVehicle, unassignedVehicleMessage } from '../constants/vehicleCompanies'
+import { isUnassignedVehicle, unassignedVehicleMessage, companyLabel, companyShortLabel } from '../constants/vehicleCompanies'
+import BilledToField from '../components/inventory/BilledToField'
+import { wrongCompanyLines } from '../utils/batchCompany'
 import { formatBatchNumber, batchPath, parseBatchNumber } from '../utils/batchNumber'
 import { lineAmount, linesSummary } from '../utils/batchSplit'
 import { BATCH_WORK_TYPES, OTHER_WORK_TYPE, workTypeLabel } from '../constants/batchWorkTypes'
@@ -112,6 +114,8 @@ function BatchForm({ batch }) {
 
     const [supplierId, setSupplierId] = useState(batch?.supplier_id ?? '')
     const [invoiceUrl, setInvoiceUrl] = useState(batch?.invoice_url ?? '')
+    // Required, and empty on a new invoice (MAIN-161): every vehicle must belong to it.
+    const [billedTo, setBilledTo] = useState(batch?.billed_to ?? '')
     const [invoiceForm, setInvoiceForm] = useState(batch?.invoice ? invoiceFormFromRow(batch.invoice) : EMPTY_INVOICE_FORM)
     const [lines, setLines] = useState(
         () => (batch?.vehicles ?? []).map(v => newLine({
@@ -150,6 +154,7 @@ function BatchForm({ batch }) {
     const errors = {
         ...(supplierId ? {} : { supplier: 'Required' }),
         ...(invoiceUrl ? {} : { invoiceUrl: 'Upload the invoice' }),
+        ...(billedTo ? {} : { billedTo: 'Required' }),
     }
 
     // What each line still lacks. The database checks the same things.
@@ -165,7 +170,17 @@ function BatchForm({ batch }) {
         if (seen.has(k)) { duplicateKeys.add(seen.get(k)); duplicateKeys.add(line.key) }
         else seen.set(k, line.key)
     }
+    // Vehicles of the other company (MAIN-161), checked as the database does.
+    const companyOf = new Map(vehicles.map(v => [v.registration_number, v.company]))
+    const wrongCompany = wrongCompanyLines({
+        lines,
+        billedTo,
+        savedBilledTo: batch?.billed_to,
+        savedVehicles: new Map((batch?.vehicles ?? []).map(v => [v.id, v.vehicle_number])),
+        companyOf,
+    })
     const problems = {
+        company: wrongCompany.size,
         work: lines.filter(lacksWork).length,
         site: lines.filter(l => !l.site).length,
         jobCard: lines.filter(lacksJobCard).length,
@@ -195,12 +210,15 @@ function BatchForm({ batch }) {
 
     // Already-added vehicles stay pickable: a bus can need a second line for other work.
     // A vehicle finance has not assigned to a company can't be added (MAIN-155).
+    // A vehicle of the other company can't be added once Billed to is chosen (MAIN-161).
     const vehicleOptions = vehicles.map(v => ({
         value: v.registration_number,
         label: v.registration_number,
         ...(isUnassignedVehicle(v)
             ? { badge: 'Unassigned — contact finance', disabled: true }
-            : { badge: v.vehicle_sites?.map(s => s.site_name).join(', ') || undefined }),
+            : billedTo && v.company !== billedTo
+                ? { badge: `${companyShortLabel(v.company)} vehicle`, disabled: true }
+                : { badge: v.vehicle_sites?.map(s => s.site_name).join(', ') || undefined }),
     }))
     const unassignedVehicles = new Set(vehicles.filter(isUnassignedVehicle).map(v => v.registration_number))
 
@@ -224,7 +242,7 @@ function BatchForm({ batch }) {
         try {
             const savedNumber = await save.mutateAsync({
                 batchId: batch?.id,
-                batch: { supplier_id: supplierId, invoice_url: invoiceUrl },
+                batch: { supplier_id: supplierId, invoice_url: invoiceUrl, billed_to: billedTo },
                 invoice: {
                     ...invoiceFormToRow(invoiceForm),
                     ...(rejected ? { resubmit: true, resubmit_note: resubmitNote.trim() || null } : {}),
@@ -282,6 +300,14 @@ function BatchForm({ batch }) {
                     error={showErrors && errors.supplier}
                 />
                 {showErrors && errors.supplier && <p className="text-xs text-red-600 mt-0.5">{errors.supplier}</p>}
+                <div className="mt-3 sm:w-96">
+                    <BilledToField
+                        value={billedTo}
+                        onChange={setBilledTo}
+                        showError={showErrors}
+                        hint="Every vehicle on this invoice must belong to this company."
+                    />
+                </div>
             </section>
 
             {/* ── Vehicles and work ────────────────────────────────────────── */}
@@ -317,7 +343,8 @@ function BatchForm({ batch }) {
                     value=""
                     onChange={addVehicle}
                     options={vehicleOptions}
-                    placeholder="Search a registration number to add a line..."
+                    placeholder={billedTo ? 'Search a registration number to add a line...' : 'Choose Billed to first'}
+                    disabled={!billedTo}
                 />
 
                 {lines.length === 0 ? (
@@ -346,6 +373,11 @@ function BatchForm({ batch }) {
                                         <tr key={line.key} className="align-top">
                                             <td className="py-1.5 pt-3.5 font-mono text-gray-800 whitespace-nowrap">
                                                 {line.vehicle_number}
+                                                {wrongCompany.has(line.key) && (
+                                                    <p className="font-sans text-xs text-red-600 whitespace-normal max-w-[12rem]">
+                                                        {companyShortLabel(companyOf.get(line.vehicle_number))} vehicle — remove it or change Billed to
+                                                    </p>
+                                                )}
                                                 {unassignedVehicles.has(line.vehicle_number) && (
                                                     <p className="font-sans text-xs text-red-600 whitespace-normal max-w-[12rem]">
                                                         {unassignedVehicleMessage(line.vehicle_number)}
@@ -501,7 +533,7 @@ function BatchForm({ batch }) {
             </button>
             {!linesReady && (
                 <p className="text-xs text-gray-500 text-center -mt-2">
-                    Save is enabled once every line has a site, a type of work, a rate and a quantity (and a job card for Other), and the amounts add up to the approved amount.
+                    Save is enabled once every vehicle belongs to the company billed, every line has a site, a type of work, a rate and a quantity (and a job card for Other), and the amounts add up to the approved amount.
                 </p>
             )}
 
@@ -705,7 +737,8 @@ function LinesTotal({ summary, problems }) {
     const plural = n => `${n} line${n === 1 ? '' : 's'}`
     const need = (n, what) => <span className="text-amber-700">{plural(n)} need{n === 1 ? 's' : ''} {what}</span>
     let status
-    if (problems.duplicate > 0) status = <span className="text-red-600">The same vehicle has the same work twice</span>
+    if (problems.company > 0) status = <span className="text-red-600">{plural(problems.company)} {problems.company === 1 ? 'has a vehicle' : 'have vehicles'} of the other company</span>
+    else if (problems.duplicate > 0) status = <span className="text-red-600">The same vehicle has the same work twice</span>
     else if (problems.work > 0) status = need(problems.work, 'a type of work')
     else if (invalid.length > 0) status = need(invalid.length, 'a rate and quantity')
     else if (problems.site > 0) status = need(problems.site, 'a site')
@@ -750,8 +783,16 @@ function BatchReadOnly({ batch, lockedByFinance, canRestore }) {
             {canRestore && <RestoreInvoice batch={batch} />}
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                <p className="text-xs text-gray-500 mb-0.5">Vendor</p>
-                <p className="text-sm font-medium text-gray-900">{batch.supplier?.entity_name || '—'}</p>
+                <div className="flex flex-wrap gap-x-10 gap-y-3">
+                    <div>
+                        <p className="text-xs text-gray-500 mb-0.5">Vendor</p>
+                        <p className="text-sm font-medium text-gray-900">{batch.supplier?.entity_name || '—'}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-gray-500 mb-0.5">Billed to</p>
+                        <p className="text-sm font-medium text-gray-900">{companyLabel(batch.billed_to)}</p>
+                    </div>
+                </div>
             </section>
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">

@@ -18,6 +18,7 @@ import {
     INVOICE_TYPES,
     isRejectedInvoice,
 } from '../constants/outsourceInvoices'
+import { STOCK_COMPANIES } from '../constants/vehicleCompanies'
 import { formatBatchNumber } from '../utils/batchNumber'
 import { formatPurchaseNumber } from '../utils/purchaseInvoice'
 
@@ -56,6 +57,7 @@ export default function OutsourceInvoices() {
     const fsFilter = searchParams.getAll('fs')
     const pbFilter = searchParams.getAll('pb')
     const typeFilter = searchParams.getAll('type')
+    const coFilter = searchParams.getAll('co')
     const dateFrom = searchParams.get('from') || ''
     const dateTo   = searchParams.get('to')   || ''
     const page     = Math.max(0, parseInt(searchParams.get('p') ?? '0', 10) || 0)
@@ -70,6 +72,7 @@ export default function OutsourceInvoices() {
         financePaymentStatus:     fsFilter,
         paidBy:                   pbFilter,
         type:                     typeFilter,
+        company:                  coFilter,
         dateFrom,
         dateTo,
     }
@@ -174,7 +177,7 @@ export default function OutsourceInvoices() {
     }
 
     const clearFilters = () => setSearchParams({})
-    const hasFilters   = !!(search || psFilter.length || fsFilter.length || pbFilter.length || typeFilter.length || dateFrom || dateTo)
+    const hasFilters   = !!(search || psFilter.length || fsFilter.length || pbFilter.length || typeFilter.length || coFilter.length || dateFrom || dateTo)
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -265,6 +268,26 @@ export default function OutsourceInvoices() {
                                         }`}
                                     >
                                         {t.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Whose invoice it is (MAIN-161); the tiles follow it too. */}
+                        <div>
+                            <p className="text-xs font-medium text-gray-500 mb-1.5">Company</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {STOCK_COMPANIES.map(c => (
+                                    <button
+                                        key={c.value}
+                                        onClick={() => toggleMulti('co', c.value)}
+                                        className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                                            coFilter.includes(c.value)
+                                                ? 'bg-blue-600 text-white border-blue-600'
+                                                : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                                        }`}
+                                    >
+                                        {c.label}
                                     </button>
                                 ))}
                             </div>

@@ -84,6 +84,7 @@ export function useOutsourceInvoices(filters = {}) {
                     finance_payment_status:     filters.financePaymentStatus?.length     ? filters.financePaymentStatus     : null,
                     paid_by:                    filters.paidBy?.length                   ? filters.paidBy                   : null,
                     type:                       filters.type?.length                     ? filters.type                     : null,
+                    company:                    filters.company?.length                  ? filters.company                  : null,
                     date_from:                  filters.dateFrom || null,
                     date_to:                    filters.dateTo   || null,
                     page:                       isPaginated ? filters.page : null,
@@ -110,6 +111,7 @@ export function useOutsourceInvoiceSummary(filters = {}) {
                 p_finance_payment_status:     filters.financePaymentStatus?.length     ? filters.financePaymentStatus     : null,
                 p_paid_by:                    filters.paidBy?.length                   ? filters.paidBy                   : null,
                 p_type:                       filters.type?.length                     ? filters.type                     : null,
+                p_company:                    filters.company?.length                  ? filters.company                  : null,
                 p_date_from:                  filters.dateFrom || null,
                 p_date_to:                    filters.dateTo   || null,
             })
