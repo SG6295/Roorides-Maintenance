@@ -2614,6 +2614,56 @@ export type Database = {
           },
         ]
       }
+      vehicle_company_changes: {
+        Row: {
+          created_at: string
+          gst_percent: number | null
+          id: string
+          kind: string
+          new_company: string
+          old_company: string
+          performed_by: string | null
+          performed_by_name: string | null
+          registration_number: string
+          sale_value: number | null
+          vehicle_id: string
+        }
+        Insert: {
+          created_at?: string
+          gst_percent?: number | null
+          id?: string
+          kind: string
+          new_company: string
+          old_company: string
+          performed_by?: string | null
+          performed_by_name?: string | null
+          registration_number: string
+          sale_value?: number | null
+          vehicle_id: string
+        }
+        Update: {
+          created_at?: string
+          gst_percent?: number | null
+          id?: string
+          kind?: string
+          new_company?: string
+          old_company?: string
+          performed_by?: string | null
+          performed_by_name?: string | null
+          registration_number?: string
+          sale_value?: number | null
+          vehicle_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vehicle_company_changes_vehicle_id_fkey"
+            columns: ["vehicle_id"]
+            isOneToOne: false
+            referencedRelation: "vehicles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vehicle_sites: {
         Row: {
           site_name: string
@@ -2646,6 +2696,7 @@ export type Database = {
       }
       vehicles: {
         Row: {
+          company: string
           created_at: string | null
           id: string
           is_active: boolean | null
@@ -2658,6 +2709,7 @@ export type Database = {
           year: number | null
         }
         Insert: {
+          company?: string
           created_at?: string | null
           id?: string
           is_active?: boolean | null
@@ -2670,6 +2722,7 @@ export type Database = {
           year?: number | null
         }
         Update: {
+          company?: string
           created_at?: string | null
           id?: string
           is_active?: boolean | null
@@ -2791,6 +2844,10 @@ export type Database = {
       }
       apply_sla_change: { Args: { p_change: Json }; Returns: Json }
       assert_ledger_writer: { Args: never; Returns: undefined }
+      assert_vehicle_assigned: {
+        Args: { p_registration: string }
+        Returns: undefined
+      }
       can_read_outsource_invoice: {
         Args: { p_batch_service_id: string; p_job_card_id: string }
         Returns: boolean
@@ -3173,6 +3230,10 @@ export type Database = {
         Args: { p_days: number; p_supplier_id: string }
         Returns: undefined
       }
+      set_vehicle_company: {
+        Args: { p_change: Json; p_vehicle_id: string }
+        Returns: Json
+      }
       sla_assert_change_allowed: {
         Args: { p_change: Json }
         Returns: undefined
@@ -3294,6 +3355,7 @@ export type Database = {
         Args: { p_from: string; p_items: Json; p_notes?: string; p_to: string }
         Returns: string
       }
+      vehicle_open_work: { Args: { p_registration: string }; Returns: string }
     }
     Enums: {
       issue_category:

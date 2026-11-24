@@ -10,6 +10,7 @@ import Navigation from '../shared/Navigation'
 import PhotoUpload from './PhotoUpload'
 import SearchableSelect from '../shared/SearchableSelect'
 import { logSLAEvent, SLA_EVENTS } from '../../utils/slaLogger'
+import { isUnassignedVehicle } from '../../constants/vehicleCompanies'
 import { useToast } from '../../hooks/useFeedback'
 
 export default function TicketForm() {
@@ -90,10 +91,14 @@ export default function TicketForm() {
       .map(v => ({
         value: v.registration_number,
         label: `${v.registration_number}${v.make ? ` — ${v.make}` : ''}${v.model ? ` ${v.model}` : ''}`,
-        ...(v.is_active ? {} : {
+        ...(!v.is_active ? {
           badge: 'Inactive',
           disabled: v.registration_number !== watchVehicle,
-        }),
+        // MAIN-155: no ticket on a vehicle finance has not assigned to a company yet.
+        } : isUnassignedVehicle(v) ? {
+          badge: 'Unassigned — contact finance',
+          disabled: true,
+        } : {}),
       }))
   ), [vehicles, watchVehicle])
 
@@ -246,6 +251,11 @@ export default function TicketForm() {
               <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
                 Every vehicle linked to {watchSite} is inactive, so there is none to
                 raise a ticket against. Please contact your administrator.
+              </p>
+            )}
+            {watchSite && vehicles.some(v => v.is_active && isUnassignedVehicle(v)) && (
+              <p className="mt-1.5 text-xs text-gray-500">
+                Vehicles marked &quot;Unassigned&quot; can&apos;t take a ticket until finance assigns them to a company.
               </p>
             )}
             <button

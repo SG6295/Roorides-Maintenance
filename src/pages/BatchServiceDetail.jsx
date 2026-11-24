@@ -28,6 +28,7 @@ import {
 } from '../components/outsource-invoices/invoiceForm'
 import { fmtMoney, fmtPaise, fmtDate } from '../components/outsource-invoices/format'
 import { formatSiteLabel } from '../utils/siteLabel'
+import { isUnassignedVehicle, unassignedVehicleMessage } from '../constants/vehicleCompanies'
 import { formatBatchNumber, batchPath, parseBatchNumber } from '../utils/batchNumber'
 import { lineAmount, linesSummary } from '../utils/batchSplit'
 import { BATCH_WORK_TYPES, OTHER_WORK_TYPE, workTypeLabel } from '../constants/batchWorkTypes'
@@ -193,11 +194,15 @@ function BatchForm({ batch }) {
     }
 
     // Already-added vehicles stay pickable: a bus can need a second line for other work.
+    // A vehicle finance has not assigned to a company can't be added (MAIN-155).
     const vehicleOptions = vehicles.map(v => ({
         value: v.registration_number,
         label: v.registration_number,
-        badge: v.vehicle_sites?.map(s => s.site_name).join(', ') || undefined,
+        ...(isUnassignedVehicle(v)
+            ? { badge: 'Unassigned — contact finance', disabled: true }
+            : { badge: v.vehicle_sites?.map(s => s.site_name).join(', ') || undefined }),
     }))
+    const unassignedVehicles = new Set(vehicles.filter(isUnassignedVehicle).map(v => v.registration_number))
 
     const addVehicle = vehicleNumber => {
         if (!vehicleNumber) return
@@ -339,7 +344,14 @@ function BatchForm({ batch }) {
                                     const duplicate = duplicateKeys.has(line.key)
                                     return (
                                         <tr key={line.key} className="align-top">
-                                            <td className="py-1.5 pt-3.5 font-mono text-gray-800 whitespace-nowrap">{line.vehicle_number}</td>
+                                            <td className="py-1.5 pt-3.5 font-mono text-gray-800 whitespace-nowrap">
+                                                {line.vehicle_number}
+                                                {unassignedVehicles.has(line.vehicle_number) && (
+                                                    <p className="font-sans text-xs text-red-600 whitespace-normal max-w-[12rem]">
+                                                        {unassignedVehicleMessage(line.vehicle_number)}
+                                                    </p>
+                                                )}
+                                            </td>
                                             <td className="py-1.5 px-2">
                                                 <div className="w-44">
                                                     {own.length === 1 && (!line.site || line.site === own[0]) ? (
