@@ -60,3 +60,23 @@ describe('Invoices columns (MAIN-142)', () => {
         expect(COLUMNS.some(c => c.key === 'pay_by')).toBe(false)
     })
 })
+
+// MAIN-161 — every invoice shows whose it is.
+describe('InvoiceCell company column', () => {
+    const renderCompany = company =>
+        render(<MemoryRouter><InvoiceCell columnKey="company" invoice={{ ...jobCardInvoice, company }} /></MemoryRouter>)
+
+    it('is shown by default', () => {
+        expect(DEFAULT_COLUMN_KEYS).toContain('company')
+    })
+
+    it('shows the short company name', () => {
+        renderCompany('nvs_travel_solutions')
+        expect(screen.getByText('Pvt Ltd')).toBeInTheDocument()
+    })
+
+    it('shows NVS Travels', () => {
+        renderCompany('nvs_travels')
+        expect(screen.getByText('NVS Travels')).toBeInTheDocument()
+    })
+})

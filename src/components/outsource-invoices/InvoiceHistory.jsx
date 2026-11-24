@@ -72,6 +72,8 @@ function lineChange(line) {
 function batchFieldChange(field, entry) {
     if (field === 'supplier_id') return 'Vendor changed'
     if (field === 'invoice_url') return 'Invoice file replaced'
+    // MAIN-161.
+    if (field === 'billed_to') return `Billed to: ${companyLabel(entry.old_data?.[field])} → ${companyLabel(entry.new_data?.[field])}`
     // 'description' and 'site' appear only in entries from before the work (MAIN-112)
     // and the site moved onto the vehicle lines.
     const label = field === 'description' ? 'Work' : 'Site'

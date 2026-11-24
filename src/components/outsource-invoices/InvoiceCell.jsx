@@ -7,6 +7,7 @@ import { workTypeSummary, vehicleCountLabel } from '../../constants/batchWorkTyp
 import { formatBatchNumber, batchPath } from '../../utils/batchNumber'
 import { formatPurchaseNumber, purchaseInvoicePath } from '../../utils/purchaseInvoice'
 import { INVOICE_TYPE_LABELS } from '../../constants/outsourceInvoices'
+import { companyShortLabel } from '../../constants/vehicleCompanies'
 
 /**
  * One cell of the Invoices list (MAIN-98), by column key — the column
@@ -23,6 +24,7 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, canOpen 
 
     switch (columnKey) {
         case 'type':          return INVOICE_TYPE_LABELS[inv.invoice_type] ?? '—'
+        case 'company':       return <span className="whitespace-nowrap">{inv.company ? companyShortLabel(inv.company) : '—'}</span>
         case 'job_card':
             if (purchase) {
                 // Our running number beside the supplier's invoice number, which

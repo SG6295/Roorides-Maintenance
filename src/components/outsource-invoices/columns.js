@@ -7,6 +7,8 @@
  */
 export const COLUMNS = [
     { key: 'type',               label: 'Type',               default: true },
+    // Whose invoice it is (MAIN-161) — outsource_invoices.company.
+    { key: 'company',            label: 'Company',            default: true },
     // Job card number, MVI number or Purchase/Refurbishment, linked (MAIN-142 renamed it).
     { key: 'job_card',           label: 'Reference',          default: true },
     { key: 'vehicle',            label: 'Vehicle',            default: true },

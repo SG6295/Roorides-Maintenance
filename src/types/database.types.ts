@@ -181,6 +181,7 @@ export type Database = {
       batch_services: {
         Row: {
           batch_number: number
+          billed_to: string
           cancel_reason: string | null
           cancelled_at: string | null
           cancelled_by: string | null
@@ -194,6 +195,7 @@ export type Database = {
         }
         Insert: {
           batch_number?: never
+          billed_to?: string
           cancel_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
@@ -207,6 +209,7 @@ export type Database = {
         }
         Update: {
           batch_number?: never
+          billed_to?: string
           cancel_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
@@ -650,6 +653,7 @@ export type Database = {
           advance_amount: number | null
           approved_amount: number | null
           batch_service_id: string | null
+          company: string
           created_at: string
           created_by: string | null
           date_of_activity: string | null
@@ -671,6 +675,7 @@ export type Database = {
           advance_amount?: number | null
           approved_amount?: number | null
           batch_service_id?: string | null
+          company?: string
           created_at?: string
           created_by?: string | null
           date_of_activity?: string | null
@@ -692,6 +697,7 @@ export type Database = {
           advance_amount?: number | null
           approved_amount?: number | null
           batch_service_id?: string | null
+          company?: string
           created_at?: string
           created_by?: string | null
           date_of_activity?: string | null
@@ -3050,6 +3056,7 @@ export type Database = {
       get_outsource_invoice_rows: { Args: { p_filters?: Json }; Returns: Json }
       get_outsource_invoice_summary: {
         Args: {
+          p_company?: string[]
           p_date_from?: string
           p_date_to?: string
           p_finance_payment_status?: string[]
@@ -3134,6 +3141,10 @@ export type Database = {
       is_maintenance_exec: { Args: never; Returns: boolean }
       is_sla_tracked: { Args: { p_raised_at: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
+      job_card_invoice_company: {
+        Args: { p_job_card_id: string }
+        Returns: string
+      }
       job_card_site_accessible_to_user: {
         Args: { p_job_card_id: string }
         Returns: boolean
