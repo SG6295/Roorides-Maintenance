@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { formatAs } from '../utils/datetime'
 import { useJobCards } from '../hooks/useJobCards'
 import { labourTechnicianNames } from '../utils/labour'
+import { canSeeCosts, jobCardValueLabel, jobCardValueBasis } from '../utils/jobCardValue'
 import { useAuth } from '../hooks/useAuth'
 import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
 import Navigation from '../components/shared/Navigation'
@@ -19,6 +20,8 @@ export default function JobCards() {
     const navigate = useNavigate()
     const { userProfile } = useAuth()
     const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    // MAIN-158: the job card's value, for the people who see the money.
+    const showValue = canSeeCosts(userProfile?.role)
     const [filters, setFilters] = useState({
         status: '',
         site: '',
@@ -127,6 +130,11 @@ export default function JobCards() {
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
                                     Open Issues
                                 </th>
+                                {showValue && (
+                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-600 uppercase tracking-wider">
+                                        Value
+                                    </th>
+                                )}
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -183,12 +191,23 @@ export default function JobCards() {
                                                 <span className="text-green-600">All Done</span>
                                             )}
                                         </td>
+                                        {showValue && (() => {
+                                            const v = jobCardValueLabel(jc)
+                                            return (
+                                                <td
+                                                    className={`px-6 py-4 whitespace-nowrap text-sm text-right ${v.muted ? 'text-gray-500 italic' : 'text-gray-900 tabular-nums'}`}
+                                                    title={jobCardValueBasis(jc)}
+                                                >
+                                                    {v.text}
+                                                </td>
+                                            )
+                                        })()}
                                     </tr>
                                 )
                             })}
                             {filteredJobCards?.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-600">
+                                    <td colSpan={showValue ? 8 : 7} className="px-6 py-12 text-center text-gray-600">
                                         No job cards found.
                                     </td>
                                 </tr>

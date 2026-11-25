@@ -47,6 +47,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { ChevronUpDownIcon, CheckIcon } from '@heroicons/react/20/solid'
 import { useToast, useConfirm } from '../hooks/useFeedback'
+import { canSeeCosts, jobCardValueLabel, jobCardValueBasis } from '../utils/jobCardValue'
 
 const JOB_LOCATION_OPTIONS = [
     { value: 'InHouse', label: 'In-house' },
@@ -413,6 +414,20 @@ export default function JobCardDetail() {
                             {formatAs(jobCard.created_at, 'MMM d, yyyy')}
                         </span>
                     </div>
+
+                    {/* MAIN-158: what the job card cost, for the people who see the money. */}
+                    {canSeeCosts(userProfile?.role) && (() => {
+                        const v = jobCardValueLabel(jobCard)
+                        return (
+                            <div className="flex items-baseline gap-2 mb-3">
+                                <span className="text-sm text-gray-600">Value</span>
+                                <span className={v.muted ? 'text-sm text-gray-500 italic' : 'text-lg font-semibold text-gray-900 tabular-nums'}>
+                                    {v.text}
+                                </span>
+                                <span className="text-xs text-gray-500">{jobCardValueBasis(jobCard)}</span>
+                            </div>
+                        )
+                    })()}
 
                     {/* Info pills */}
                     <div className="flex flex-wrap gap-2 mb-4">

@@ -719,6 +719,59 @@ export type Database = {
           },
         ]
       }
+      opening_stock_lots: {
+        Row: {
+          company: string
+          created_at: string
+          created_by: string | null
+          created_by_name: string
+          gst_rate: number
+          id: string
+          note: string | null
+          part_id: string
+          quantity: number
+          source: string
+          unit_cost: number | null
+          unit_price: number
+        }
+        Insert: {
+          company?: string
+          created_at?: string
+          created_by?: string | null
+          created_by_name?: string
+          gst_rate?: number
+          id?: string
+          note?: string | null
+          part_id: string
+          quantity: number
+          source?: string
+          unit_cost?: number | null
+          unit_price: number
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          created_by?: string | null
+          created_by_name?: string
+          gst_rate?: number
+          id?: string
+          note?: string | null
+          part_id?: string
+          quantity?: number
+          source?: string
+          unit_cost?: number | null
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opening_stock_lots_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       outsource_invoices: {
         Row: {
           accepted_at: string | null
@@ -2011,6 +2064,91 @@ export type Database = {
           },
         ]
       }
+      stock_cost_draws: {
+        Row: {
+          amount: number | null
+          audit_item_id: string | null
+          company: string
+          found_audit_item_id: string | null
+          id: string
+          issue_part_id: string | null
+          opening_lot_id: string | null
+          part_id: string
+          purchase_item_id: string | null
+          quantity: number
+          unit_cost: number | null
+        }
+        Insert: {
+          amount?: number | null
+          audit_item_id?: string | null
+          company: string
+          found_audit_item_id?: string | null
+          id?: string
+          issue_part_id?: string | null
+          opening_lot_id?: string | null
+          part_id: string
+          purchase_item_id?: string | null
+          quantity: number
+          unit_cost?: number | null
+        }
+        Update: {
+          amount?: number | null
+          audit_item_id?: string | null
+          company?: string
+          found_audit_item_id?: string | null
+          id?: string
+          issue_part_id?: string | null
+          opening_lot_id?: string | null
+          part_id?: string
+          purchase_item_id?: string | null
+          quantity?: number
+          unit_cost?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_cost_draws_audit_item_id_fkey"
+            columns: ["audit_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_audit_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_cost_draws_found_audit_item_id_fkey"
+            columns: ["found_audit_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_audit_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_cost_draws_issue_part_id_fkey"
+            columns: ["issue_part_id"]
+            isOneToOne: false
+            referencedRelation: "issue_parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_cost_draws_opening_lot_id_fkey"
+            columns: ["opening_lot_id"]
+            isOneToOne: false
+            referencedRelation: "opening_stock_lots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_cost_draws_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_cost_draws_purchase_item_id_fkey"
+            columns: ["purchase_item_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_invoice_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stock_transfer_items: {
         Row: {
           company: string
@@ -2900,6 +3038,10 @@ export type Database = {
       }
     }
     Functions: {
+      add_opening_stock_price: {
+        Args: { p_part_id: string; p_price: Json }
+        Returns: Json
+      }
       add_working_days: {
         Args: {
           n_days: number
@@ -3262,6 +3404,10 @@ export type Database = {
       is_maintenance_exec: { Args: never; Returns: boolean }
       is_sla_tracked: { Args: { p_raised_at: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
+      is_workshop_move_invoice: {
+        Args: { p_purchase_number: number }
+        Returns: boolean
+      }
       job_card_invoice_company: {
         Args: { p_job_card_id: string }
         Returns: string
@@ -3273,6 +3419,10 @@ export type Database = {
       job_card_stock_company: {
         Args: { p_job_card_id: string }
         Returns: string
+      }
+      job_card_value: {
+        Args: { jc: Database["public"]["Tables"]["job_cards"]["Row"] }
+        Returns: number
       }
       outsource_invoice_snapshot: {
         Args: { p_invoice_id: string }
@@ -3286,12 +3436,41 @@ export type Database = {
         }
         Returns: string
       }
+      part_cost_consumers: {
+        Args: { p_company: string; p_part_id: string }
+        Returns: {
+          at_time: string
+          consumer_id: string
+          kind: string
+          quantity: number
+        }[]
+      }
+      part_cost_gap: {
+        Args: { p_company: string; p_part_id: string }
+        Returns: number
+      }
+      part_cost_lots: {
+        Args: { p_company: string; p_part_id: string }
+        Returns: {
+          at_time: string
+          kind: string
+          lot_id: string
+          quantity: number
+          recorded_at: string
+          rnk: number
+          unit_cost: number
+        }[]
+      }
       part_name_key: { Args: { p_name: string }; Returns: string }
       payment_run_for: { Args: { p_date: string }; Returns: string }
       preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
       purchase_invoice_file_missing: {
         Args: { p_purchase_invoice_id: string }
         Returns: boolean
+      }
+      rebuild_part_cost: {
+        Args: { p_company: string; p_part_id: string }
+        Returns: undefined
       }
       reconcile_company_ledger: {
         Args: { p_company: string; p_reconciliation: Json }
@@ -3461,6 +3640,10 @@ export type Database = {
         Returns: Database["public"]["Enums"]["sla_status_enum"]
       }
       sla_version_at: { Args: { p_at: string }; Returns: string }
+      spare_cost: {
+        Args: { ip: Database["public"]["Tables"]["issue_parts"]["Row"] }
+        Returns: number
+      }
       start_stock_audit: {
         Args: { p_location_id: string; p_notes?: string }
         Returns: string
