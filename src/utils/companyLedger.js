@@ -34,6 +34,17 @@ export const ENTRY_TAGS = {
     multi_vehicle:  { label: 'Multi-vehicle invoice', className: 'bg-indigo-100 text-indigo-800' },
     vehicle_sold:   { label: 'Vehicle sold',          className: 'bg-emerald-100 text-emerald-800' },
     vehicle_bought: { label: 'Vehicle bought',        className: 'bg-amber-100 text-amber-800' },
+    adjustment:          { label: 'Adjustment', className: 'bg-orange-100 text-orange-800' },
+    reversed_adjustment: { label: 'Reversed',   className: 'bg-red-100 text-red-800' },
+}
+
+/**
+ * The two figures a company ledger is reconciled on (MAIN-163), each on its own.
+ * `column` is the get_company_ledger field the figure is a running total of.
+ */
+export const RECONCILE_FIGURES = {
+    spent: { label: 'Spent to date',          column: 'spend' },
+    owed:  { label: 'Owed between companies', column: 'owed' },
 }
 
 /** Whether the GST on an entry was claimed back — from finance's status. */
@@ -46,14 +57,26 @@ export const GST_STATUSES = {
 }
 
 export const isSpend = line => Number(line.spend) !== 0
+
+/** A reconciliation adjustment (MAIN-163), active or reversed. It carries no GST. */
+export const isAdjustment = line => line.kind === 'adjustment' || line.kind === 'reversed_adjustment'
+/** A reversed adjustment: shown struck through, adds nothing. */
+export const isVoided = line => line.kind === 'reversed_adjustment'
+
+/** The signed amount a line shows: an adjustment's own (+/−), else the spend or the owed amount. */
+export function lineAmount(line) {
+    if (isAdjustment(line)) return Number(line.detail?.amount ?? 0)
+    return isSpend(line) ? Number(line.spend) : Math.abs(Number(line.owed))
+}
 export const entryDay = line => formatAs(line.entry_at, 'yyyy-MM-dd', '')
 
 const fmtDay = d => formatAs(d, 'dd MMM yyyy', '')
 
 /**
  * How a line reads: `title`, a grey `sub` line and `link` ({ to, label }) to its record.
+ * `company` is the ledger's, used to word an Owed figure.
  */
-export function describeEntry(line) {
+export function describeEntry(line, company) {
     const d = line.detail ?? {}
     switch (line.kind) {
         case 'purchase':
@@ -97,6 +120,24 @@ export function describeEntry(line) {
                 link: null,
             }
         }
+        case 'adjustment':
+        case 'reversed_adjustment': {
+            const figure = RECONCILE_FIGURES[d.balance]
+            const show = v => d.balance === 'owed' ? figureInWords(v, company) : fmtRupees(v)
+            const base = [
+                `As of ${fmtDay(d.as_of)}`,
+                `${d.confirmed_against ?? 'Tally'} ${show(d.confirmed_balance)}, app ${show(d.system_balance)}`,
+                d.reason,
+                d.created_by && `Recorded by ${d.created_by}`,
+            ].filter(Boolean).join(' · ')
+            return {
+                title: `${figure?.label ?? d.balance} reconciled with ${d.confirmed_against ?? 'Tally'}`,
+                sub: line.kind === 'reversed_adjustment'
+                    ? `${base}. Reversed${d.reversed_by ? ` by ${d.reversed_by}` : ''}: ${d.reverse_reason ?? ''}`
+                    : base,
+                link: null,
+            }
+        }
         default:
             return { title: line.kind, sub: '', link: null }
     }
@@ -116,6 +157,33 @@ export function owedWording(balance, company) {
 
 const paise = v => Math.round(Number(v ?? 0) * 100)
 
+const fmtRupees = v => `₹${(paise(v) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+/** An Owed figure with its direction: "₹500.00 (Pvt Ltd owes NVS Travels)". */
+export function figureInWords(value, company) {
+    const n = paise(value)
+    if (n === 0 || !company) return n === 0 ? `${fmtRupees(0)} (nothing owed)` : fmtRupees(value)
+    return `${fmtRupees(Math.abs(n) / 100)} (${owedWording(value, company)})`
+}
+
+/**
+ * The app's figure (`spent` or `owed`, MAIN-163) at the end of an IST day, in paise — what
+ * reconcile_company_ledger freezes (it recomputes it when posting). Reversed adjustments
+ * already add nothing.
+ */
+export function figureAsOf(lines, balance, day) {
+    const column = RECONCILE_FIGURES[balance]?.column
+    if (!column) return 0
+    return lines.reduce((sum, l) => (entryDay(l) <= day ? sum + paise(l[column]) : sum), 0)
+}
+
+/** The latest as-of date an active adjustment reconciled `balance` to, or null. */
+export function lastReconciled(lines, balance) {
+    return lines
+        .filter(l => l.kind === 'adjustment' && l.detail?.balance === balance)
+        .reduce((latest, l) => (!latest || l.detail.as_of > latest ? l.detail.as_of : latest), null)
+}
+
 /**
  * Totals over the given lines, added in paise so they are exact:
  * spent, the net owed between the companies over these lines, GST in all, on spending
@@ -128,6 +196,8 @@ export function ledgerTotals(lines) {
     for (const l of lines) {
         spent += paise(l.spend)
         owed += paise(l.owed)
+        // An adjustment moves a figure but has no GST, and is not an invoice missing one.
+        if (isAdjustment(l)) continue
         if (l.gst == null) {
             gstNotRecorded += 1
             gstNotRecordedAmount += paise(l.spend)

@@ -2265,6 +2265,36 @@ CREATE FUNCTION public.company_ledger_lines(p_company text) RETURNS TABLE(entry_
   from   public.vehicle_company_changes c
   where  c.kind = 'sale'
     and  p_company in (c.old_company, c.new_company)
+
+  union all
+
+  -- MAIN-163: reconciliation adjustments. Placed at the end of their as-of day, or when
+  -- posted if that is earlier (today's). A reversed one stays as a line but adds nothing;
+  -- its amount is in `detail`.
+  select least(public.end_of_ist_day(a.as_of), a.created_at), 4, a.id,
+         case when a.status = 'Reversed' then 'reversed_adjustment' else 'adjustment' end,
+         a.as_of,
+         case when a.status = 'Active' and a.balance = 'spent' then a.amount else 0 end,
+         case when a.status = 'Active' and a.balance = 'owed'  then a.amount else 0 end,
+         null::numeric,
+         'adjustment',
+         jsonb_build_object(
+             'balance',           a.balance,
+             'amount',            a.amount,
+             'as_of',             a.as_of,
+             'confirmed_against', a.confirmed_against,
+             'system_balance',    a.system_balance,
+             'confirmed_balance', a.confirmed_balance,
+             'reason',            a.reason,
+             'created_by',        u.name,
+             'created_at',        a.created_at,
+             'reversed_at',       a.reversed_at,
+             'reversed_by',       ru.name,
+             'reverse_reason',    a.reverse_reason)
+  from   public.company_ledger_adjustments a
+  left join public.users u  on u.id  = a.created_by
+  left join public.users ru on ru.id = a.reversed_by
+  where  a.company = p_company
 $$;
 
 
@@ -2274,7 +2304,7 @@ ALTER FUNCTION public.company_ledger_lines(p_company text) OWNER TO postgres;
 -- Name: FUNCTION company_ledger_lines(p_company text); Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON FUNCTION public.company_ledger_lines(p_company text) IS 'MAIN-156: every line of one company''s ledger, derived from purchases, accepted invoices and vehicle sales. Internal; read through get_company_ledger.';
+COMMENT ON FUNCTION public.company_ledger_lines(p_company text) IS 'MAIN-156: every line of one company''s ledger, derived from purchases, accepted invoices and vehicle sales, plus its reconciliation adjustments (MAIN-163). Internal; read through get_company_ledger.';
 
 
 --
@@ -4933,6 +4963,75 @@ $$;
 ALTER FUNCTION public.recalculate_ticket_sla_on_status_change() OWNER TO postgres;
 
 --
+-- Name: reconcile_company_ledger(text, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.reconcile_company_ledger(p_company text, p_reconciliation jsonb) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_balance   text    := p_reconciliation->>'balance';
+    v_as_of     date;
+    v_confirmed numeric;
+    v_reason    text    := nullif(btrim(p_reconciliation->>'reason'), '');
+    v_system    numeric;
+    v_id        uuid;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.users
+                   WHERE id = auth.uid() AND role IN ('finance', 'super_admin') AND is_active) THEN
+        RAISE EXCEPTION 'Only finance can reconcile the company ledgers.' USING ERRCODE = '42501';
+    END IF;
+    PERFORM public.assert_ledger_company(p_company);
+
+    IF v_balance IS NULL OR v_balance NOT IN ('spent', 'owed') THEN
+        RAISE EXCEPTION 'Choose which figure you are reconciling.';
+    END IF;
+
+    BEGIN
+        v_as_of     := (p_reconciliation->>'as_of')::date;
+        v_confirmed := (p_reconciliation->>'confirmed_balance')::numeric;
+    EXCEPTION WHEN invalid_text_representation OR invalid_datetime_format OR datetime_field_overflow THEN
+        RAISE EXCEPTION 'Enter a valid date and amount.';
+    END;
+
+    IF v_as_of IS NULL OR v_as_of > (now() AT TIME ZONE 'Asia/Kolkata')::date THEN
+        RAISE EXCEPTION 'Choose a date that is not in the future.';
+    END IF;
+    IF v_confirmed IS NULL OR v_confirmed <> round(v_confirmed, 2) THEN
+        RAISE EXCEPTION 'Enter the confirmed figure, with at most two decimals.';
+    END IF;
+    IF v_reason IS NULL THEN
+        RAISE EXCEPTION 'Give a reason.';
+    END IF;
+
+    -- One reconciliation of a company at a time, so two can't freeze the same figure.
+    PERFORM pg_advisory_xact_lock(hashtext('company_ledger_reconcile'), hashtext(p_company));
+
+    SELECT coalesce(sum(CASE v_balance WHEN 'spent' THEN l.spend ELSE l.owed END), 0) INTO v_system
+    FROM   public.company_ledger_lines(p_company) l
+    WHERE  l.entry_at <= least(public.end_of_ist_day(v_as_of), now());
+
+    INSERT INTO public.company_ledger_adjustments
+        (company, balance, as_of, confirmed_against, system_balance, confirmed_balance, reason, created_by)
+    VALUES (p_company, v_balance, v_as_of, 'Tally', v_system, v_confirmed, v_reason, auth.uid())
+    RETURNING id INTO v_id;
+
+    RETURN v_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.reconcile_company_ledger(p_company text, p_reconciliation jsonb) OWNER TO postgres;
+
+--
+-- Name: FUNCTION reconcile_company_ledger(p_company text, p_reconciliation jsonb); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.reconcile_company_ledger(p_company text, p_reconciliation jsonb) IS 'MAIN-163: finance/super_admin record the Spent to date or Owed between companies figure confirmed in Tally as of a date; the app''s figure is frozen and the difference posted. Do not add a parameter — p_reconciliation is jsonb.';
+
+
+--
 -- Name: reconcile_supplier_balance(text, uuid, date, text, numeric, text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -6199,6 +6298,52 @@ $_$;
 
 
 ALTER FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) OWNER TO postgres;
+
+--
+-- Name: reverse_company_ledger_adjustment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_status text;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.users
+                   WHERE id = auth.uid() AND role IN ('finance', 'super_admin') AND is_active) THEN
+        RAISE EXCEPTION 'Only finance can reconcile the company ledgers.' USING ERRCODE = '42501';
+    END IF;
+    IF nullif(btrim(p_reason), '') IS NULL THEN
+        RAISE EXCEPTION 'Give a reason for reversing this adjustment.';
+    END IF;
+
+    SELECT status INTO v_status FROM public.company_ledger_adjustments WHERE id = p_adjustment_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Adjustment not found.';
+    END IF;
+    IF v_status = 'Reversed' THEN
+        RAISE EXCEPTION 'This adjustment is already reversed.';
+    END IF;
+
+    UPDATE public.company_ledger_adjustments
+    SET    status         = 'Reversed',
+           reversed_at    = now(),
+           reversed_by    = auth.uid(),
+           reverse_reason = btrim(p_reason)
+    WHERE  id = p_adjustment_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text) OWNER TO postgres;
+
+--
+-- Name: FUNCTION reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text) IS 'MAIN-163: undoes a company ledger adjustment posted in error, with a reason. It stays on the ledger, struck through, and out of every total.';
+
 
 --
 -- Name: reverse_ledger_adjustment(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -12728,6 +12873,44 @@ ALTER TABLE public.batch_services ALTER COLUMN batch_number ADD GENERATED ALWAYS
 
 
 --
+-- Name: company_ledger_adjustments; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.company_ledger_adjustments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    balance text NOT NULL,
+    as_of date NOT NULL,
+    confirmed_against text DEFAULT 'Tally'::text NOT NULL,
+    system_balance numeric NOT NULL,
+    confirmed_balance numeric NOT NULL,
+    amount numeric GENERATED ALWAYS AS ((confirmed_balance - system_balance)) STORED,
+    reason text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text DEFAULT 'Active'::text NOT NULL,
+    reversed_at timestamp with time zone,
+    reversed_by uuid,
+    reverse_reason text,
+    CONSTRAINT company_ledger_adjustments_balance_check CHECK ((balance = ANY (ARRAY['spent'::text, 'owed'::text]))),
+    CONSTRAINT company_ledger_adjustments_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
+    CONSTRAINT company_ledger_adjustments_reason_check CHECK ((NULLIF(btrim(reason), ''::text) IS NOT NULL)),
+    CONSTRAINT company_ledger_adjustments_reverse_reason_check CHECK (((status = 'Active'::text) OR ((reversed_at IS NOT NULL) AND (NULLIF(btrim(reverse_reason), ''::text) IS NOT NULL)))),
+    CONSTRAINT company_ledger_adjustments_source_check CHECK ((confirmed_against = 'Tally'::text)),
+    CONSTRAINT company_ledger_adjustments_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Reversed'::text])))
+);
+
+
+ALTER TABLE public.company_ledger_adjustments OWNER TO postgres;
+
+--
+-- Name: TABLE company_ledger_adjustments; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.company_ledger_adjustments IS 'MAIN-163: reconciliations of a company ledger against Tally. balance = spent (Spent to date) or owed (Owed between companies). amount = confirmed − app figure. Written only by reconcile_company_ledger / reverse_company_ledger_adjustment.';
+
+
+--
 -- Name: finance_entries; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -14867,6 +15050,14 @@ ALTER TABLE ONLY public.batch_services
 
 
 --
+-- Name: company_ledger_adjustments company_ledger_adjustments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.company_ledger_adjustments
+    ADD CONSTRAINT company_ledger_adjustments_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: finance_entries finance_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -16049,6 +16240,13 @@ CREATE INDEX batch_service_vehicles_job_card_id_idx ON public.batch_service_vehi
 --
 
 CREATE INDEX batch_service_vehicles_vehicle_number_idx ON public.batch_service_vehicles USING btree (vehicle_number);
+
+
+--
+-- Name: company_ledger_adjustments_company_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX company_ledger_adjustments_company_idx ON public.company_ledger_adjustments USING btree (company, balance, as_of);
 
 
 --
@@ -17419,6 +17617,22 @@ ALTER TABLE ONLY public.batch_services
 
 
 --
+-- Name: company_ledger_adjustments company_ledger_adjustments_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.company_ledger_adjustments
+    ADD CONSTRAINT company_ledger_adjustments_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: company_ledger_adjustments company_ledger_adjustments_reversed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.company_ledger_adjustments
+    ADD CONSTRAINT company_ledger_adjustments_reversed_by_fkey FOREIGN KEY (reversed_by) REFERENCES public.users(id);
+
+
+--
 -- Name: finance_entries finance_entries_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -18398,6 +18612,13 @@ CREATE POLICY "Exec and finance read advance repayments" ON public.advance_repay
 
 
 --
+-- Name: company_ledger_adjustments Exec and finance read company ledger adjustments; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance read company ledger adjustments" ON public.company_ledger_adjustments FOR SELECT USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
 -- Name: supplier_ledger_adjustments Exec and finance read ledger adjustments; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -19176,6 +19397,12 @@ ALTER TABLE public.batch_service_vehicles ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.batch_services ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: company_ledger_adjustments; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.company_ledger_adjustments ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: finance_entries; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -21029,6 +21256,15 @@ GRANT ALL ON FUNCTION public.recalculate_ticket_sla_on_status_change() TO servic
 
 
 --
+-- Name: FUNCTION reconcile_company_ledger(p_company text, p_reconciliation jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.reconcile_company_ledger(p_company text, p_reconciliation jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.reconcile_company_ledger(p_company text, p_reconciliation jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.reconcile_company_ledger(p_company text, p_reconciliation jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION reconcile_supplier_balance(p_company text, p_supplier_id uuid, p_as_of date, p_confirmed_against text, p_confirmed_balance numeric, p_reason text); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21125,6 +21361,15 @@ GRANT ALL ON FUNCTION public.restore_part_to_inventory() TO service_role;
 REVOKE ALL ON FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.resubmit_outsource_invoice(p_invoice_id uuid, p_resubmission jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text) TO authenticated;
+GRANT ALL ON FUNCTION public.reverse_company_ledger_adjustment(p_adjustment_id uuid, p_reason text) TO service_role;
 
 
 --
@@ -22081,6 +22326,15 @@ GRANT ALL ON TABLE public.batch_services TO service_role;
 GRANT ALL ON SEQUENCE public.batch_services_batch_number_seq TO anon;
 GRANT ALL ON SEQUENCE public.batch_services_batch_number_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.batch_services_batch_number_seq TO service_role;
+
+
+--
+-- Name: TABLE company_ledger_adjustments; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.company_ledger_adjustments TO anon;
+GRANT ALL ON TABLE public.company_ledger_adjustments TO authenticated;
+GRANT ALL ON TABLE public.company_ledger_adjustments TO service_role;
 
 
 --

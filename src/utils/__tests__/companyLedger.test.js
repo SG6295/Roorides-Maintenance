@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
     describeEntry, owedWording, ledgerTotals, linesInRange,
     companyFromSlug, companyLedgerPath, otherCompany,
+    figureAsOf, lastReconciled, lineAmount, isAdjustment, figureInWords,
 } from '../companyLedger'
 
 // MAIN-156 — how company ledger lines read, from get_company_ledger rows.
@@ -125,5 +126,78 @@ describe('addresses', () => {
         expect(companyFromSlug('unknown')).toBeNull()
         expect(companyLedgerPath('nvs_travels')).toBe('/company-ledger/nvs-travels')
         expect(otherCompany('nvs_travels')).toBe('nvs_travel_solutions')
+    })
+})
+
+// MAIN-163 — reconciliation adjustments.
+
+const spentAdj = {
+    kind: 'adjustment', entry_at: '2026-11-22T18:29:59.999+00:00', doc_date: '2026-11-22',
+    spend: 50, owed: 0, gst: null, gst_status: 'adjustment',
+    detail: {
+        balance: 'spent', amount: 50, as_of: '2026-11-22', confirmed_against: 'Tally',
+        system_balance: 5980.5, confirmed_balance: 6030.5, reason: 'Freight bill', created_by: 'vijay',
+    },
+}
+const owedAdjReversed = {
+    kind: 'reversed_adjustment', entry_at: '2026-11-23T10:00:00+00:00', doc_date: '2026-11-23',
+    spend: 0, owed: 0, gst: null, gst_status: 'adjustment',
+    detail: {
+        balance: 'owed', amount: -500, as_of: '2026-11-23', confirmed_against: 'Tally',
+        system_balance: 0, confirmed_balance: -500, reason: 'Typo', created_by: 'vijay',
+        reversed_by: 'Soukhya', reverse_reason: 'Wrong tab',
+    },
+}
+
+describe('reconciliation adjustments', () => {
+    it('reads as the figure reconciled, with both figures and who', () => {
+        const { title, sub, link } = describeEntry(spentAdj, 'nvs_travels')
+        expect(title).toBe('Spent to date reconciled with Tally')
+        expect(sub).toContain('As of 22 Nov 2026')
+        expect(sub).toContain('Tally ₹6,030.50, app ₹5,980.50')
+        expect(sub).toContain('Recorded by vijay')
+        expect(link).toBeNull()
+    })
+
+    it('words an Owed figure from the ledger company side, and shows a reversal', () => {
+        const { sub } = describeEntry(owedAdjReversed, 'nvs_travels')
+        expect(sub).toContain('Tally ₹500.00 (NVS Travels owes Pvt Ltd)')
+        expect(sub).toContain('app ₹0.00 (nothing owed)')
+        expect(sub).toContain('Reversed by Soukhya: Wrong tab')
+    })
+
+    it('shows the signed adjustment amount', () => {
+        expect(lineAmount(spentAdj)).toBe(50)
+        expect(lineAmount(owedAdjReversed)).toBe(-500)
+        expect(lineAmount(purchase)).toBe(1180)
+        expect(lineAmount(bought)).toBe(1250000.5)
+        expect(isAdjustment(purchase)).toBe(false)
+    })
+
+    it('keeps adjustments out of the GST figures but in Spent', () => {
+        const t = ledgerTotals([purchase, jobCard, spentAdj, owedAdjReversed])
+        expect(t.spent).toBe(5730)
+        expect(t.gstNotRecorded).toBe(1)
+        expect(t.spendGst).toBe(180)
+    })
+
+    it('works out a figure at the end of an IST day', () => {
+        const lines = [purchase, jobCard, mvi, spentAdj, bought, sold]
+        // spentAdj sits at 23:59:59 IST on 22 Nov; purchase on 20 Nov, job card 21 Nov, MVI 22 Nov.
+        expect(figureAsOf(lines, 'spent', '2026-11-21')).toBe(568000)
+        expect(figureAsOf(lines, 'spent', '2026-11-22')).toBe(603000)
+        // Both sales fall on 25 Nov IST.
+        expect(figureAsOf(lines, 'owed', '2026-11-24')).toBe(0)
+        expect(figureAsOf(lines, 'owed', '2026-11-25')).toBe(-5000050)
+    })
+
+    it('finds the latest active reconciliation of each figure', () => {
+        expect(lastReconciled([spentAdj, owedAdjReversed], 'spent')).toBe('2026-11-22')
+        expect(lastReconciled([spentAdj, owedAdjReversed], 'owed')).toBeNull()
+    })
+
+    it('words an owed figure', () => {
+        expect(figureInWords(250, 'nvs_travels')).toBe('₹250.00 (Pvt Ltd owes NVS Travels)')
+        expect(figureInWords(0, 'nvs_travels')).toBe('₹0.00 (nothing owed)')
     })
 })
