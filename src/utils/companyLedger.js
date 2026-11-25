@@ -11,6 +11,8 @@ import { formatAs, toDate } from './datetime'
  * other company owes this one). A vehicle bought from the other company is owed, not spent.
  * A spare transfer (MAIN-159) moves both: the vehicle's company spends it and owes it, the
  * supplying company's spending goes down by it and it is owed; a reversal is its own line.
+ * An invoice transfer (MAIN-160) does the same for a job card invoice from before go-live
+ * that stayed with NVS Travels on a card that belongs to the other company.
  */
 
 /** Address slug ↔ company value. `/company-ledger/nvs-travels`. */
@@ -40,6 +42,8 @@ export const ENTRY_TAGS = {
     spare_transfer_out:          { label: 'Spare transfer out',          className: 'bg-emerald-100 text-emerald-800' },
     spare_transfer_in_reversed:  { label: 'Spare transfer in reversed',  className: 'bg-red-100 text-red-800' },
     spare_transfer_out_reversed: { label: 'Spare transfer out reversed', className: 'bg-red-100 text-red-800' },
+    invoice_transfer_in:         { label: 'Invoice transfer in',         className: 'bg-amber-100 text-amber-800' },
+    invoice_transfer_out:        { label: 'Invoice transfer out',        className: 'bg-emerald-100 text-emerald-800' },
     adjustment:          { label: 'Adjustment', className: 'bg-orange-100 text-orange-800' },
     reversed_adjustment: { label: 'Reversed',   className: 'bg-red-100 text-red-800' },
 }
@@ -68,8 +72,10 @@ export const isSpend = line => Number(line.spend) !== 0
 export const isAdjustment = line => line.kind === 'adjustment' || line.kind === 'reversed_adjustment'
 /** A spare transfer (MAIN-159) or its reversal: moves both figures, signed. */
 export const isSpareTransfer = line => typeof line.kind === 'string' && line.kind.startsWith('spare_transfer_')
-/** A line whose Amount is shown with its sign: an adjustment or a spare transfer. */
-export const isSigned = line => isAdjustment(line) || isSpareTransfer(line)
+/** An invoice transfer (MAIN-160): moves both figures, signed, like a spare transfer. */
+export const isInvoiceTransfer = line => line.kind === 'invoice_transfer_in' || line.kind === 'invoice_transfer_out'
+/** A line whose Amount is shown with its sign: an adjustment or a transfer. */
+export const isSigned = line => isAdjustment(line) || isSpareTransfer(line) || isInvoiceTransfer(line)
 /** A vehicle sale between the companies: its GST is not spending. */
 const isVehicleSale = line => line.kind === 'vehicle_sold' || line.kind === 'vehicle_bought'
 /** A reversed adjustment: shown struck through, adds nothing. */
@@ -81,7 +87,7 @@ export const isVoided = line => line.kind === 'reversed_adjustment'
  */
 export function lineAmount(line) {
     if (isAdjustment(line)) return Number(line.detail?.amount ?? 0)
-    if (isSpareTransfer(line)) return Number(line.spend)
+    if (isSpareTransfer(line) || isInvoiceTransfer(line)) return Number(line.spend)
     return isSpend(line) ? Number(line.spend) : Math.abs(Number(line.owed))
 }
 export const entryDay = line => formatAs(line.entry_at, 'yyyy-MM-dd', '')
@@ -158,8 +164,23 @@ export function describeEntry(line, company) {
                     rates && `GST ${rates} included`,
                     reversed
                         ? [`Spare removed`, d.reversed_by && `by ${d.reversed_by}`, d.posted_at && `(transferred ${fmtDay(d.posted_at)})`].filter(Boolean).join(' ')
-                        : d.posted_by && `Transferred by ${d.posted_by}`,
+                        : d.source === 'backfill'
+                            ? 'Used before transfers were recorded'
+                            : d.posted_by && `Transferred by ${d.posted_by}`,
                 ].filter(Boolean).join(' · '),
+                link: d.job_card_number != null
+                    ? { to: `/job-cards/${d.job_card_number}`, label: `Job card ${d.job_card_number}` }
+                    : null,
+            }
+        }
+        case 'invoice_transfer_in':
+        case 'invoice_transfer_out': {
+            const incoming = line.kind === 'invoice_transfer_in'
+            const billedTo = incoming ? d.other_company : company
+            return {
+                title: `Job card invoice ${[d.invoice_no, d.supplier].filter(Boolean).join(' · ')} ${incoming ? 'from' : 'to'} ${companyLabel(d.other_company)}`,
+                sub: [d.vehicle, billedTo && `Billed to ${companyLabel(billedTo)} before go-live`]
+                    .filter(Boolean).join(' · '),
                 link: d.job_card_number != null
                     ? { to: `/job-cards/${d.job_card_number}`, label: `Job card ${d.job_card_number}` }
                     : null,

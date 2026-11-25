@@ -3554,6 +3554,10 @@ export type Database = {
       }
       part_name_key: { Args: { p_name: string }; Returns: string }
       payment_run_for: { Args: { p_date: string }; Returns: string }
+      post_backfill_spare_transfers: {
+        Args: { p_registration: string }
+        Returns: number
+      }
       preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
       purchase_invoice_file_missing: {
         Args: { p_purchase_invoice_id: string }
@@ -3597,6 +3601,10 @@ export type Database = {
       record_supplier_payment: {
         Args: { p_payment: Json; p_supplier_id: string }
         Returns: string
+      }
+      refresh_backfill_transfers: {
+        Args: { p_company: string; p_part_id: string }
+        Returns: undefined
       }
       refresh_overdue_slas: { Args: never; Returns: undefined }
       refresh_ticket_sla: { Args: { p_ticket_id: string }; Returns: undefined }
@@ -3736,6 +3744,10 @@ export type Database = {
         Returns: number
       }
       spare_cost_amount: { Args: { p_issue_part_id: string }; Returns: number }
+      spare_draw_quote: {
+        Args: { p_from: string; p_issue_part_id: string }
+        Returns: Json
+      }
       spare_transfer: {
         Args: { ip: Database["public"]["Tables"]["issue_parts"]["Row"] }
         Returns: Json
@@ -3805,6 +3817,10 @@ export type Database = {
       }
       transfer_stock: {
         Args: { p_from: string; p_items: Json; p_notes?: string; p_to: string }
+        Returns: string
+      }
+      vehicle_company_at: {
+        Args: { p_at: string; p_registration: string }
         Returns: string
       }
       vehicle_open_work: { Args: { p_registration: string }; Returns: string }

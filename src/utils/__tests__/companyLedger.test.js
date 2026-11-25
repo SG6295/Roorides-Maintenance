@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
     describeEntry, owedWording, ledgerTotals, linesInRange,
     companyFromSlug, companyLedgerPath, otherCompany,
-    figureAsOf, lastReconciled, lineAmount, isAdjustment, figureInWords,
+    figureAsOf, lastReconciled, lineAmount, isAdjustment, figureInWords, isSigned,
 } from '../companyLedger'
 
 // MAIN-156 — how company ledger lines read, from get_company_ledger rows.
@@ -252,5 +252,46 @@ describe('spare transfers', () => {
         const t = ledgerTotals([transferIn, sale])
         expect(t.spendGst).toBe(77.03)
         expect(t.gstByStatus.inter_company).toBe(229.57)
+    })
+})
+
+// MAIN-160 — backfilled spare transfers, and invoice transfers for job card invoices from
+// before go-live that stayed with NVS Travels on a Pvt Ltd card.
+describe('backfilled and invoice transfers', () => {
+    it('says a backfilled spare transfer was used before transfers were recorded', () => {
+        const line = {
+            kind: 'spare_transfer_in', entry_at: '2026-06-01T06:00:00+00:00',
+            spend: 120, owed: -120, gst: 18.31, gst_status: 'inter_company',
+            detail: {
+                job_card_number: 410, vehicle: 'KA51AL5680', part: 'Engine oil', unit: 'L', quantity: 2, amount: 120,
+                gst_breakdown: [{ rate: 18, before_gst: 101.69, gst: 18.31, incl_gst: 120 }],
+                other_company: 'nvs_travels', source: 'backfill', posted_by: null,
+            },
+        }
+        expect(describeEntry(line, 'nvs_travel_solutions').sub)
+            .toBe('KA51AL5680 · GST 18% included · Used before transfers were recorded')
+    })
+
+    const detail = { invoice_no: 'B-77', supplier: 'HKGN', job_card_number: 1838, vehicle: 'KA51AJ3479', other_company: 'nvs_travels' }
+    const invIn = { kind: 'invoice_transfer_in', entry_at: '2026-11-26T06:00:00+00:00', spend: 170, owed: -170, gst: null, gst_status: 'inter_company', detail }
+    const invOut = { ...invIn, kind: 'invoice_transfer_out', spend: -170, owed: 170, detail: { ...detail, other_company: 'nvs_travel_solutions' } }
+
+    it('reads the invoice, the other company and the job card', () => {
+        const e = describeEntry(invIn, 'nvs_travel_solutions')
+        expect(e.title).toBe('Job card invoice B-77 · HKGN from NVS Travels')
+        expect(e.sub).toBe('KA51AJ3479 · Billed to NVS Travels before go-live')
+        expect(e.link).toEqual({ to: '/job-cards/1838', label: 'Job card 1838' })
+        const out = describeEntry(invOut, 'nvs_travels')
+        expect(out.title).toBe('Job card invoice B-77 · HKGN to NVS Travel Solutions Pvt Ltd')
+        expect(out.sub).toBe('KA51AJ3479 · Billed to NVS Travels before go-live')
+    })
+
+    it('shows its effect on spending, signed, and moves both figures', () => {
+        expect(isSigned(invOut)).toBe(true)
+        expect(lineAmount(invOut)).toBe(-170)
+        expect(lineAmount(invIn)).toBe(170)
+        const invoice = { kind: 'job_card', spend: 170, owed: 0, gst: null, gst_status: 'not_reconciled', detail: {} }
+        const t = ledgerTotals([invoice, invOut])
+        expect([t.spent, t.owed]).toEqual([0, 170])
     })
 })
