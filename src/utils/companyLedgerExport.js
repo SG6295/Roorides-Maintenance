@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { describeEntry, ENTRY_TAGS, GST_STATUSES } from './companyLedger'
+import { describeEntry, ENTRY_TAGS, GST_STATUSES, isAdjustment, lineAmount } from './companyLedger'
 import { companyLabel } from '../constants/vehicleCompanies'
 import { formatAs } from './datetime'
 
@@ -9,15 +9,16 @@ import { formatAs } from './datetime'
  */
 export function exportCompanyLedger(company, lines, today) {
     const sheet = lines.map(l => {
-        const { title, sub, link } = describeEntry(l)
+        const { title, sub, link } = describeEntry(l, company)
+        const adj = isAdjustment(l)
         return {
             'Entered':                formatAs(l.entry_at, 'dd MMM yyyy HH:mm', ''),
             'Type':                   ENTRY_TAGS[l.kind]?.label ?? l.kind,
             'Entry':                  [title, link?.label].filter(Boolean).join(' · '),
             'Detail':                 sub,
-            'Amount (incl. GST)':     Number(l.spend) !== 0 ? Number(l.spend) : Math.abs(Number(l.owed)),
-            'GST':                    l.gst == null ? 'Not recorded' : Number(l.gst),
-            'GST status':             GST_STATUSES[l.gst_status]?.label ?? l.gst_status,
+            'Amount (incl. GST)':     lineAmount(l),
+            'GST':                    adj ? '' : l.gst == null ? 'Not recorded' : Number(l.gst),
+            'GST status':             adj ? '' : GST_STATUSES[l.gst_status]?.label ?? l.gst_status,
             'Spent to date':          Number(l.spent_to_date),
             'Owed between companies': Number(l.owed_balance),
         }

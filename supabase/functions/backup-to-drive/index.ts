@@ -21,7 +21,7 @@ const TABLES = [
   'scrap_writeoff', 'scrap_writeoff_items', 'scrap_excluded_parts',
   'scrap_refurbishments', 'refurbished_part_links',
   // Outsource invoices (per-invoice payments went in MAIN-118) and the supplier ledger (MAIN-119)
-  'outsource_invoices', 'supplier_payments', 'supplier_ledger_adjustments', 'advance_repayments',
+  'outsource_invoices', 'supplier_payments', 'supplier_ledger_adjustments', 'company_ledger_adjustments', 'advance_repayments',
   // Multi-vehicle outsource invoices (MAIN-99)
   'batch_services', 'batch_service_vehicles',
   // Workshop locations

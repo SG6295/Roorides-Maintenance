@@ -234,6 +234,75 @@ export type Database = {
           },
         ]
       }
+      company_ledger_adjustments: {
+        Row: {
+          amount: number | null
+          as_of: string
+          balance: string
+          company: string
+          confirmed_against: string
+          confirmed_balance: number
+          created_at: string
+          created_by: string | null
+          id: string
+          reason: string
+          reverse_reason: string | null
+          reversed_at: string | null
+          reversed_by: string | null
+          status: string
+          system_balance: number
+        }
+        Insert: {
+          amount?: number | null
+          as_of: string
+          balance: string
+          company: string
+          confirmed_against?: string
+          confirmed_balance: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason: string
+          reverse_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          status?: string
+          system_balance: number
+        }
+        Update: {
+          amount?: number | null
+          as_of?: string
+          balance?: string
+          company?: string
+          confirmed_against?: string
+          confirmed_balance?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason?: string
+          reverse_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          status?: string
+          system_balance?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_ledger_adjustments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_ledger_adjustments_reversed_by_fkey"
+            columns: ["reversed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       finance_entries: {
         Row: {
           accounting_status: string | null
@@ -3224,6 +3293,10 @@ export type Database = {
         Args: { p_purchase_invoice_id: string }
         Returns: boolean
       }
+      reconcile_company_ledger: {
+        Args: { p_company: string; p_reconciliation: Json }
+        Returns: string
+      }
       reconcile_supplier_balance: {
         Args: {
           p_as_of: string
@@ -3263,6 +3336,10 @@ export type Database = {
       }
       resubmit_outsource_invoice: {
         Args: { p_invoice_id: string; p_resubmission: Json }
+        Returns: undefined
+      }
+      reverse_company_ledger_adjustment: {
+        Args: { p_adjustment_id: string; p_reason: string }
         Returns: undefined
       }
       reverse_ledger_adjustment: {
