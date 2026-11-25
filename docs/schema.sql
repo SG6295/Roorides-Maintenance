@@ -1138,6 +1138,112 @@ $$;
 ALTER FUNCTION public.add_part_to_inventory() OWNER TO postgres;
 
 --
+-- Name: add_spare(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.add_spare(p_spare jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_issue   uuid    := (p_spare ->> 'issue_id')::uuid;
+    v_part    uuid    := (p_spare ->> 'part_id')::uuid;
+    v_qty     numeric := (p_spare ->> 'quantity_used')::numeric;
+    v_confirm numeric := (p_spare -> 'confirm_transfer' ->> 'amount')::numeric;
+    v_id      uuid;
+    v_quote   jsonb;
+    v_hint    text;
+    v_detail  text;
+    v_user    text;
+    v_tid     uuid;
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION 'Only maintenance executives can add spares.' USING ERRCODE = '42501';
+    END IF;
+    IF v_issue IS NULL OR v_part IS NULL THEN
+        RAISE EXCEPTION 'Choose the work item and the part.' USING ERRCODE = '22023';
+    END IF;
+    IF v_qty IS NULL OR v_qty <= 0 THEN
+        RAISE EXCEPTION 'Enter a quantity greater than 0.' USING ERRCODE = '22023';
+    END IF;
+
+    IF v_confirm IS NULL THEN
+        BEGIN
+            INSERT INTO public.issue_parts (issue_id, part_id, quantity_used, added_by)
+            VALUES (v_issue, v_part, v_qty, auth.uid())
+            RETURNING id INTO v_id;
+            RETURN jsonb_build_object('issue_part_id', v_id, 'transfer', NULL);
+        EXCEPTION WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS v_hint = PG_EXCEPTION_HINT;
+            IF v_hint IS DISTINCT FROM 'NEEDS_TRANSFER' THEN
+                RAISE;
+            END IF;
+        END;
+
+        -- Work out the quote by adding the spare for real, then rolling it back.
+        BEGIN
+            PERFORM set_config('app.spare_transfer', 'on', true);
+            INSERT INTO public.issue_parts (issue_id, part_id, quantity_used, added_by)
+            VALUES (v_issue, v_part, v_qty, auth.uid())
+            RETURNING id INTO v_id;
+            v_quote := public.spare_transfer_quote(v_id);
+            RAISE EXCEPTION 'quote' USING HINT = 'TRANSFER_QUOTE_ROLLBACK', DETAIL = coalesce(v_quote, '{}'::jsonb)::text;
+        EXCEPTION WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS v_hint = PG_EXCEPTION_HINT, v_detail = PG_EXCEPTION_DETAIL;
+            IF v_hint IS DISTINCT FROM 'TRANSFER_QUOTE_ROLLBACK' THEN
+                RAISE;   -- e.g. PART_NEEDS_PRICE for the other company's stock
+            END IF;
+            v_quote := v_detail::jsonb;
+        END;
+
+        RAISE EXCEPTION 'This spare needs % % transferred from %. Confirm the transfer to add it.',
+            v_quote ->> 'quantity', coalesce(v_quote ->> 'unit', ''), public.stock_company_label(v_quote ->> 'from_company')
+            USING HINT = 'NEEDS_TRANSFER', DETAIL = (v_quote - 'issue_part_id')::text;
+    END IF;
+
+    -- Confirmed.
+    PERFORM set_config('app.spare_transfer', 'on', true);
+    INSERT INTO public.issue_parts (issue_id, part_id, quantity_used, added_by)
+    VALUES (v_issue, v_part, v_qty, auth.uid())
+    RETURNING id INTO v_id;
+    PERFORM set_config('app.spare_transfer', '', true);
+
+    v_quote := public.spare_transfer_quote(v_id);
+
+    IF v_quote IS NULL THEN
+        -- The vehicle's company has enough stock now: nothing to transfer.
+        RETURN jsonb_build_object('issue_part_id', v_id, 'transfer', NULL);
+    END IF;
+
+    IF round((v_quote ->> 'amount')::numeric, 2) <> round(v_confirm, 2) THEN
+        RAISE EXCEPTION 'The transfer now comes to ₹% instead of ₹% — the stock or its prices changed. Check the new figures and confirm again.',
+            to_char((v_quote ->> 'amount')::numeric, 'FM999999990.00'), to_char(v_confirm, 'FM999999990.00')
+            USING HINT = 'TRANSFER_CHANGED', DETAIL = (v_quote - 'issue_part_id')::text;
+    END IF;
+
+    SELECT name INTO v_user FROM public.users WHERE id = auth.uid();
+
+    INSERT INTO public.spare_transfers (
+        issue_part_id, issue_id, job_card_id, job_card_number, vehicle_number,
+        part_id, part_name, unit, quantity, from_company, to_company,
+        amount, gst, gst_breakdown, source, posted_by, posted_by_name)
+    SELECT v_id, v_issue, i.job_card_id, (v_quote ->> 'job_card_number')::integer, v_quote ->> 'vehicle',
+           v_part, v_quote ->> 'part_name', v_quote ->> 'unit', (v_quote ->> 'quantity')::numeric,
+           v_quote ->> 'from_company', v_quote ->> 'to_company',
+           (v_quote ->> 'amount')::numeric, (v_quote ->> 'gst')::numeric, v_quote -> 'gst_breakdown',
+           'job_card', auth.uid(), v_user
+    FROM   public.issues i WHERE i.id = v_issue
+    RETURNING id INTO v_tid;
+
+    RETURN jsonb_build_object('issue_part_id', v_id,
+                              'transfer', (v_quote - 'issue_part_id') || jsonb_build_object('id', v_tid));
+END;
+$$;
+
+
+ALTER FUNCTION public.add_spare(p_spare jsonb) OWNER TO postgres;
+
+--
 -- Name: add_working_days(timestamp with time zone, integer, integer[], date[]); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2356,6 +2462,42 @@ CREATE FUNCTION public.company_ledger_lines(p_company text) RETURNS TABLE(entry_
   left join public.users u  on u.id  = a.created_by
   left join public.users ru on ru.id = a.reversed_by
   where  a.company = p_company
+
+  union all
+
+  -- MAIN-159: spares transferred between the companies. The vehicle's company spends the
+  -- amount and owes it; the supplying company's spending goes down by it and it is owed.
+  -- GST moves with the spending. A reversal is its own line, the other way round, on the
+  -- day the spare was removed.
+  select x.at, x.seq, t.id,
+         case when t.to_company = p_company then 'spare_transfer_in' else 'spare_transfer_out' end
+             || case when x.reversal then '_reversed' else '' end,
+         (x.at at time zone 'Asia/Kolkata')::date,
+         x.sign * case when t.to_company = p_company then t.amount else -t.amount end,
+         x.sign * case when t.to_company = p_company then -t.amount else t.amount end,
+         x.sign * case when t.to_company = p_company then t.gst else -t.gst end,
+         'inter_company',
+         jsonb_build_object(
+             'job_card_number', t.job_card_number,
+             'vehicle',         t.vehicle_number,
+             'part',            t.part_name,
+             'unit',            t.unit,
+             'quantity',        t.quantity,
+             'amount',          t.amount,
+             'gst_breakdown',   t.gst_breakdown,
+             'other_company',   case when t.to_company = p_company then t.from_company else t.to_company end,
+             'source',          t.source,
+             'posted_at',       t.posted_at,
+             'posted_by',       t.posted_by_name,
+             'reversed_at',     t.reversed_at,
+             'reversed_by',     t.reversed_by_name)
+  from   public.spare_transfers t
+  cross join lateral (
+      select t.posted_at as at, 5 as seq, 1 as sign, false as reversal
+      union all
+      select t.reversed_at, 6, -1, true where t.status = 'Reversed'
+  ) x
+  where  p_company in (t.from_company, t.to_company)
 $$;
 
 
@@ -2639,7 +2781,7 @@ DECLARE
     v_have_first    numeric;
     v_have_total    numeric;
     v_take_first    numeric;
-    v_part          text;
+    v_part          record;
     v_location      text;
 BEGIN
     SELECT jc.id, jc.type, jc.location_id INTO v_job_card_id, v_job_card_type, v_location_id
@@ -2670,14 +2812,34 @@ BEGIN
     FROM   public.part_stock
     WHERE  part_id = NEW.part_id AND location_id = v_location_id;
 
+    SELECT name, unit INTO v_part FROM public.parts WHERE id = NEW.part_id;
+
     IF v_have_total < NEW.quantity_used THEN
-        SELECT name INTO v_part     FROM public.parts              WHERE id = NEW.part_id;
         SELECT name INTO v_location FROM public.workshop_locations WHERE id = v_location_id;
         RAISE EXCEPTION 'Not enough stock: % has % available at %, needed %.',
-            COALESCE(v_part, 'part'), v_have_total, COALESCE(v_location, 'this location'), NEW.quantity_used;
+            COALESCE(v_part.name, 'part'), v_have_total, COALESCE(v_location, 'this location'), NEW.quantity_used;
     END IF;
 
     v_take_first := least(v_have_first, NEW.quantity_used);
+
+    IF NEW.quantity_used - v_take_first > 0
+       AND auth.uid() IS NOT NULL
+       AND coalesce(current_setting('app.spare_transfer', true), '') <> 'on' THEN
+        RAISE EXCEPTION '%: % must be transferred from %, which holds the stock at this workshop.',
+            v_part.name,
+            CASE WHEN v_take_first > 0
+                 THEN format('%s %s are under %s, the other %s', v_take_first, coalesce(v_part.unit, ''),
+                             public.stock_company_label(v_first), NEW.quantity_used - v_take_first)
+                 ELSE format('%s has none, so all %s', public.stock_company_label(v_first), NEW.quantity_used)
+            END,
+            public.stock_company_label(v_second)
+            USING HINT = 'NEEDS_TRANSFER',
+                  DETAIL = json_build_object('part_id', NEW.part_id, 'part_name', v_part.name, 'unit', v_part.unit,
+                                             'to_company', v_first, 'from_company', v_second,
+                                             'own_quantity', v_take_first,
+                                             'quantity', NEW.quantity_used - v_take_first)::text;
+    END IF;
+
     NEW.stock_draws := '{}'::jsonb;
 
     IF v_take_first > 0 THEN
@@ -4281,6 +4443,32 @@ $$;
 ALTER FUNCTION public.guard_ticket_reject_with_issues() OWNER TO postgres;
 
 --
+-- Name: guard_transferred_spare(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_transferred_spare() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF (NEW.part_id, NEW.issue_id, NEW.quantity_used, NEW.stock_draws)
+       IS NOT DISTINCT FROM (OLD.part_id, OLD.issue_id, OLD.quantity_used, OLD.stock_draws) THEN
+        RETURN NEW;
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.spare_transfers WHERE issue_part_id = OLD.id AND status = 'Active') THEN
+        RAISE EXCEPTION 'This spare came from the other company''s stock through a transfer, so it cannot be changed. Remove it and add it again.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_transferred_spare() OWNER TO postgres;
+
+--
 -- Name: guard_unassigned_vehicle(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4674,12 +4862,12 @@ CREATE FUNCTION public.job_card_value(jc public.job_cards) RETURNS numeric
         WHEN EXISTS (
             SELECT 1 FROM public.issues i
             JOIN   public.issue_parts ip ON ip.issue_id = i.id
-            JOIN   public.stock_cost_draws d ON d.issue_part_id = ip.id
-            WHERE  i.job_card_id = jc.id AND d.unit_cost IS NULL) THEN NULL
+            WHERE  i.job_card_id = jc.id
+              AND  EXISTS (SELECT 1 FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id)
+              AND  public.spare_cost_amount(ip.id) IS NULL) THEN NULL
         ELSE coalesce((
-            SELECT sum(d.amount) FROM public.issues i
+            SELECT sum(public.spare_cost_amount(ip.id)) FROM public.issues i
             JOIN   public.issue_parts ip ON ip.issue_id = i.id
-            JOIN   public.stock_cost_draws d ON d.issue_part_id = ip.id
             WHERE  i.job_card_id = jc.id), 0)
     END;
 $$;
@@ -5087,6 +5275,31 @@ $$;
 
 
 ALTER FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) OWNER TO postgres;
+
+--
+-- Name: part_latest_cost_gst_rate(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.part_latest_cost_gst_rate(p_part_id uuid) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT x.rate FROM (
+        SELECT pii.gst_rate::numeric AS rate, 1 AS r, pi.invoice_date::timestamp AS t, pi.created_at AS t2
+        FROM   public.purchase_invoice_items pii
+        JOIN   public.purchase_invoices pi ON pi.id = pii.invoice_id
+        WHERE  pii.part_id = p_part_id AND NOT public.is_workshop_move_invoice(pi.purchase_number)
+        UNION ALL
+        SELECT o.gst_rate::numeric, 0, o.created_at::timestamp, o.created_at::timestamp
+        FROM   public.opening_stock_lots o
+        WHERE  o.part_id = p_part_id
+    ) x
+    ORDER BY x.r DESC, x.t DESC, x.t2 DESC
+    LIMIT 1;
+$$;
+
+
+ALTER FUNCTION public.part_latest_cost_gst_rate(p_part_id uuid) OWNER TO postgres;
 
 --
 -- Name: part_name_key(text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -6734,6 +6947,28 @@ $$;
 ALTER FUNCTION public.reverse_part_inventory_on_delete() OWNER TO postgres;
 
 --
+-- Name: reverse_spare_transfer_on_delete(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.reverse_spare_transfer_on_delete() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    UPDATE public.spare_transfers t
+    SET    status           = 'Reversed',
+           reversed_at      = now(),
+           reversed_by      = auth.uid(),
+           reversed_by_name = (SELECT name FROM public.users WHERE id = auth.uid())
+    WHERE  t.issue_part_id = OLD.id AND t.status = 'Active';
+    RETURN OLD;
+END;
+$$;
+
+
+ALTER FUNCTION public.reverse_spare_transfer_on_delete() OWNER TO postgres;
+
+--
 -- Name: save_batch_service_invoice(uuid, jsonb, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -8224,14 +8459,139 @@ CREATE FUNCTION public.spare_cost(ip public.issue_parts) RETURNS numeric
     AS $$
     SELECT CASE
         WHEN NOT (public.is_maintenance_exec() OR public.is_finance()) THEN NULL
-        WHEN NOT EXISTS (SELECT 1 FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id) THEN NULL
-        WHEN EXISTS (SELECT 1 FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id AND d.unit_cost IS NULL) THEN NULL
-        ELSE (SELECT sum(d.amount) FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id)
+        ELSE public.spare_cost_amount(ip.id)
     END;
 $$;
 
 
 ALTER FUNCTION public.spare_cost(ip public.issue_parts) OWNER TO postgres;
+
+--
+-- Name: spare_cost_amount(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.spare_cost_amount(p_issue_part_id uuid) RETURNS numeric
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    WITH t AS (
+        SELECT from_company, amount FROM public.spare_transfers
+        WHERE  issue_part_id = p_issue_part_id AND status = 'Active'
+    )
+    SELECT CASE
+        WHEN NOT EXISTS (SELECT 1 FROM public.stock_cost_draws d WHERE d.issue_part_id = p_issue_part_id) THEN NULL
+        WHEN EXISTS (SELECT 1 FROM public.stock_cost_draws d
+                     WHERE d.issue_part_id = p_issue_part_id AND d.unit_cost IS NULL
+                       AND d.company IS DISTINCT FROM (SELECT from_company FROM t)) THEN NULL
+        ELSE coalesce((SELECT sum(d.amount) FROM public.stock_cost_draws d
+                       WHERE d.issue_part_id = p_issue_part_id
+                         AND d.company IS DISTINCT FROM (SELECT from_company FROM t)), 0)
+           + coalesce((SELECT amount FROM t), 0)
+    END;
+$$;
+
+
+ALTER FUNCTION public.spare_cost_amount(p_issue_part_id uuid) OWNER TO postgres;
+
+--
+-- Name: spare_transfer(public.issue_parts); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.spare_transfer(ip public.issue_parts) RETURNS jsonb
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT jsonb_build_object(
+               'id',           t.id,
+               'from_company', t.from_company,
+               'to_company',   t.to_company,
+               'quantity',     t.quantity,
+               'amount',       CASE WHEN public.is_maintenance_exec() OR public.is_finance() THEN t.amount END,
+               'gst',          CASE WHEN public.is_maintenance_exec() OR public.is_finance() THEN t.gst END,
+               'posted_at',    t.posted_at)
+    FROM   public.spare_transfers t
+    WHERE  t.issue_part_id = ip.id AND t.status = 'Active';
+$$;
+
+
+ALTER FUNCTION public.spare_transfer(ip public.issue_parts) OWNER TO postgres;
+
+--
+-- Name: spare_transfer_quote(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_ip        record;
+    v_to        text;
+    v_from      text;
+    v_qty       numeric;
+    v_rows      jsonb;
+    v_amount    numeric;
+    v_gst       numeric;
+BEGIN
+    SELECT ip.*, jc.id AS jc_id, jc.job_card_number, jc.vehicle_number, p.name AS part_name, p.unit
+    INTO   v_ip
+    FROM   public.issue_parts ip
+    JOIN   public.issues    i  ON i.id = ip.issue_id
+    JOIN   public.job_cards jc ON jc.id = i.job_card_id
+    JOIN   public.parts     p  ON p.id = ip.part_id
+    WHERE  ip.id = p_issue_part_id;
+
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+
+    v_to   := public.job_card_stock_company(v_ip.jc_id);
+    v_from := CASE v_to WHEN 'nvs_travels' THEN 'nvs_travel_solutions' ELSE 'nvs_travels' END;
+    v_qty  := coalesce((v_ip.stock_draws ->> v_from)::numeric, 0);
+
+    IF v_qty <= 0 THEN
+        RETURN NULL;
+    END IF;
+
+    WITH d AS (
+        SELECT d.amount,
+               coalesce(pii.gst_rate, o.gst_rate,
+                        CASE WHEN d.found_audit_item_id IS NOT NULL THEN public.part_latest_cost_gst_rate(d.part_id) END,
+                        0)::numeric AS rate
+        FROM   public.stock_cost_draws d
+        LEFT JOIN public.purchase_invoice_items pii ON pii.id = d.purchase_item_id
+        LEFT JOIN public.opening_stock_lots     o   ON o.id   = d.opening_lot_id
+        WHERE  d.issue_part_id = p_issue_part_id AND d.company = v_from
+    ), r AS (
+        SELECT rate, sum(amount) AS incl,
+               round(sum(amount) * 100 / (100 + rate), 2) AS before
+        FROM   d GROUP BY rate
+    )
+    SELECT jsonb_agg(jsonb_build_object('rate', rate, 'before_gst', before, 'gst', incl - before, 'incl_gst', incl)
+                     ORDER BY rate),
+           sum(incl), sum(incl - before)
+    INTO   v_rows, v_amount, v_gst
+    FROM   r;
+
+    RETURN jsonb_build_object(
+        'issue_part_id',   p_issue_part_id,
+        'part_id',         v_ip.part_id,
+        'part_name',       v_ip.part_name,
+        'unit',            v_ip.unit,
+        'from_company',    v_from,
+        'to_company',      v_to,
+        'quantity',        v_qty,
+        'own_quantity',    v_ip.quantity_used - v_qty,
+        'amount',          coalesce(v_amount, 0),
+        'gst',             coalesce(v_gst, 0),
+        'gst_breakdown',   coalesce(v_rows, '[]'::jsonb),
+        'job_card_number', v_ip.job_card_number,
+        'vehicle',         v_ip.vehicle_number);
+END;
+$$;
+
+
+ALTER FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) OWNER TO postgres;
 
 --
 -- Name: stamp_outsource_invoice_accepted_at(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -14271,6 +14631,52 @@ COMMENT ON COLUMN public.sla_versions.weekly_offs IS 'Days of the week that are 
 
 
 --
+-- Name: spare_transfers; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.spare_transfers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_part_id uuid NOT NULL,
+    issue_id uuid,
+    job_card_id uuid,
+    job_card_number integer,
+    vehicle_number text,
+    part_id uuid NOT NULL,
+    part_name text NOT NULL,
+    unit text,
+    quantity numeric(12,2) NOT NULL,
+    from_company text NOT NULL,
+    to_company text NOT NULL,
+    amount numeric(14,2) NOT NULL,
+    gst numeric(14,2) NOT NULL,
+    gst_breakdown jsonb DEFAULT '[]'::jsonb NOT NULL,
+    source text DEFAULT 'job_card'::text NOT NULL,
+    posted_at timestamp with time zone DEFAULT now() NOT NULL,
+    posted_by uuid,
+    posted_by_name text,
+    status text DEFAULT 'Active'::text NOT NULL,
+    reversed_at timestamp with time zone,
+    reversed_by uuid,
+    reversed_by_name text,
+    CONSTRAINT spare_transfers_amount_check CHECK (((amount >= (0)::numeric) AND (gst >= (0)::numeric) AND (gst <= amount))),
+    CONSTRAINT spare_transfers_companies_check CHECK (((from_company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text])) AND (to_company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text])) AND (from_company <> to_company))),
+    CONSTRAINT spare_transfers_quantity_check CHECK ((quantity > (0)::numeric)),
+    CONSTRAINT spare_transfers_reversed_check CHECK (((status = 'Reversed'::text) = (reversed_at IS NOT NULL))),
+    CONSTRAINT spare_transfers_source_check CHECK ((source = ANY (ARRAY['job_card'::text, 'backfill'::text]))),
+    CONSTRAINT spare_transfers_status_check CHECK ((status = ANY (ARRAY['Active'::text, 'Reversed'::text])))
+);
+
+
+ALTER TABLE public.spare_transfers OWNER TO postgres;
+
+--
+-- Name: TABLE spare_transfers; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.spare_transfers IS 'MAIN-159: spares one company''s stock supplied to the other company''s vehicle. Amount (incl. GST) frozen when posted; posted only by add_spare() (and MAIN-160''s backfill). Reversed, never deleted, when the spare is removed. Read by company_ledger_lines.';
+
+
+--
 -- Name: stock_audit_item_reasons; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -15912,6 +16318,14 @@ ALTER TABLE ONLY public.sla_versions
 
 
 --
+-- Name: spare_transfers spare_transfers_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.spare_transfers
+    ADD CONSTRAINT spare_transfers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: stock_audit_item_reasons stock_audit_item_reasons_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -17194,6 +17608,34 @@ CREATE INDEX site_workshops_location_id_idx ON public.site_workshops USING btree
 
 
 --
+-- Name: spare_transfers_from_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX spare_transfers_from_idx ON public.spare_transfers USING btree (from_company);
+
+
+--
+-- Name: spare_transfers_issue_part_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX spare_transfers_issue_part_idx ON public.spare_transfers USING btree (issue_part_id);
+
+
+--
+-- Name: spare_transfers_one_active_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX spare_transfers_one_active_idx ON public.spare_transfers USING btree (issue_part_id) WHERE (status = 'Active'::text);
+
+
+--
+-- Name: spare_transfers_to_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX spare_transfers_to_idx ON public.spare_transfers USING btree (to_company);
+
+
+--
 -- Name: stock_audit_items_audit_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -17670,6 +18112,13 @@ CREATE TRIGGER trg_guard_ticket_sla_version BEFORE UPDATE OF sla_version_id ON p
 
 
 --
+-- Name: issue_parts trg_guard_transferred_spare; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_guard_transferred_spare BEFORE UPDATE ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.guard_transferred_spare();
+
+
+--
 -- Name: batch_service_vehicles trg_guard_unassigned_vehicle; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -17723,6 +18172,13 @@ CREATE TRIGGER trg_guard_vehicle_company BEFORE INSERT OR UPDATE OF company ON p
 --
 
 CREATE TRIGGER trg_issue_sla_dynamic BEFORE INSERT OR UPDATE ON public.issues FOR EACH ROW EXECUTE FUNCTION public.calculate_issue_sla_dynamic();
+
+
+--
+-- Name: issue_parts trg_reverse_spare_transfer; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_reverse_spare_transfer BEFORE DELETE ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.reverse_spare_transfer_on_delete();
 
 
 --
@@ -18740,6 +19196,14 @@ ALTER TABLE ONLY public.sla_version_turnaround
 
 
 --
+-- Name: spare_transfers spare_transfers_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.spare_transfers
+    ADD CONSTRAINT spare_transfers_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id);
+
+
+--
 -- Name: stock_audit_item_reasons stock_audit_item_reasons_audit_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -19391,6 +19855,13 @@ CREATE POLICY "Exec and finance view refurbished_part_links" ON public.refurbish
 --
 
 CREATE POLICY "Exec and finance view scrap_refurbishments" ON public.scrap_refurbishments FOR SELECT TO authenticated USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
+-- Name: spare_transfers Exec and finance view spare transfers; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view spare transfers" ON public.spare_transfers FOR SELECT USING ((public.is_maintenance_exec() OR public.is_finance()));
 
 
 --
@@ -20278,6 +20749,12 @@ ALTER TABLE public.sla_version_turnaround ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.sla_versions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: spare_transfers; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.spare_transfers ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: stock_audit_item_reasons; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -21211,6 +21688,16 @@ GRANT ALL ON FUNCTION public.add_part_to_inventory() TO service_role;
 
 
 --
+-- Name: FUNCTION add_spare(p_spare jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.add_spare(p_spare jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.add_spare(p_spare jsonb) TO anon;
+GRANT ALL ON FUNCTION public.add_spare(p_spare jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.add_spare(p_spare jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION add_working_days(start_ts timestamp with time zone, n_days integer, p_weekly_offs integer[], p_holidays date[]); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21765,6 +22252,15 @@ GRANT ALL ON FUNCTION public.guard_ticket_reject_with_issues() TO service_role;
 
 
 --
+-- Name: FUNCTION guard_transferred_spare(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_transferred_spare() TO anon;
+GRANT ALL ON FUNCTION public.guard_transferred_spare() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_transferred_spare() TO service_role;
+
+
+--
 -- Name: FUNCTION guard_unassigned_vehicle(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21996,6 +22492,16 @@ GRANT ALL ON FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) TO s
 
 
 --
+-- Name: FUNCTION part_latest_cost_gst_rate(p_part_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.part_latest_cost_gst_rate(p_part_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.part_latest_cost_gst_rate(p_part_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.part_latest_cost_gst_rate(p_part_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.part_latest_cost_gst_rate(p_part_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION part_name_key(p_name text); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -22181,6 +22687,15 @@ GRANT ALL ON FUNCTION public.reverse_ledger_adjustment(p_adjustment_id uuid, p_r
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO anon;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO authenticated;
 GRANT ALL ON FUNCTION public.reverse_part_inventory_on_delete() TO service_role;
+
+
+--
+-- Name: FUNCTION reverse_spare_transfer_on_delete(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.reverse_spare_transfer_on_delete() TO anon;
+GRANT ALL ON FUNCTION public.reverse_spare_transfer_on_delete() TO authenticated;
+GRANT ALL ON FUNCTION public.reverse_spare_transfer_on_delete() TO service_role;
 
 
 --
@@ -22418,6 +22933,36 @@ GRANT ALL ON TABLE public.issue_parts TO service_role;
 REVOKE ALL ON FUNCTION public.spare_cost(ip public.issue_parts) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.spare_cost(ip public.issue_parts) TO authenticated;
 GRANT ALL ON FUNCTION public.spare_cost(ip public.issue_parts) TO service_role;
+
+
+--
+-- Name: FUNCTION spare_cost_amount(p_issue_part_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.spare_cost_amount(p_issue_part_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.spare_cost_amount(p_issue_part_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.spare_cost_amount(p_issue_part_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.spare_cost_amount(p_issue_part_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION spare_transfer(ip public.issue_parts); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.spare_transfer(ip public.issue_parts) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.spare_transfer(ip public.issue_parts) TO anon;
+GRANT ALL ON FUNCTION public.spare_transfer(ip public.issue_parts) TO authenticated;
+GRANT ALL ON FUNCTION public.spare_transfer(ip public.issue_parts) TO service_role;
+
+
+--
+-- Name: FUNCTION spare_transfer_quote(p_issue_part_id uuid); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) TO anon;
+GRANT ALL ON FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) TO service_role;
 
 
 --
@@ -23443,6 +23988,15 @@ GRANT ALL ON TABLE public.sla_version_turnaround TO service_role;
 GRANT ALL ON TABLE public.sla_versions TO anon;
 GRANT ALL ON TABLE public.sla_versions TO authenticated;
 GRANT ALL ON TABLE public.sla_versions TO service_role;
+
+
+--
+-- Name: TABLE spare_transfers; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.spare_transfers TO anon;
+GRANT ALL ON TABLE public.spare_transfers TO authenticated;
+GRANT ALL ON TABLE public.spare_transfers TO service_role;
 
 
 --
