@@ -9,7 +9,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useFeedback'
 import {
     LEDGER_COMPANIES, ENTRY_TAGS, GST_STATUSES, RECONCILE_FIGURES, companyFromSlug, companyLedgerPath,
-    describeEntry, owedWording, ledgerTotals, linesInRange, isAdjustment, isVoided, lineAmount, lastReconciled,
+    describeEntry, owedWording, ledgerTotals, linesInRange, isAdjustment, isSigned, isVoided, lineAmount, lastReconciled,
 } from '../utils/companyLedger'
 import { companyLabel } from '../constants/vehicleCompanies'
 import { LEDGER_WRITE_ROLES } from '../constants/supplierLedger'
@@ -176,7 +176,10 @@ function Ledger({ company }) {
                             An invoice enters when finance accepts it, and leaves again if it goes back to Hold or on to Reject.
                             A purchase recorded before purchases went to finance counts from when it was recorded. Spares used on
                             an in-house job card are not entered: their cost was counted when the stock was bought. A vehicle bought
-                            from the other company counts in Owed between companies, not in Spent. A reconciliation adjustment
+                            from the other company counts in Owed between companies, not in Spent. A spare transferred from the other
+                            company&apos;s stock to this company&apos;s vehicle adds to this company&apos;s Spent and to what it owes; one
+                            transferred to the other company&apos;s vehicle takes it off this company&apos;s Spent and is owed back. Removing
+                            the spare reverses it on the day it was removed. A reconciliation adjustment
                             moves only the figure it reconciles, and has no GST.
                         </p>
                     </>
@@ -250,6 +253,7 @@ function Row({ line, company, onReverse }) {
     const { title, sub, link } = describeEntry(line, company)
     const tag = ENTRY_TAGS[line.kind]
     const adjustment = isAdjustment(line)
+    const signed = isSigned(line)
     const status = adjustment ? null : GST_STATUSES[line.gst_status]
     const amount = lineAmount(line)
     const voided = isVoided(line) ? 'line-through text-gray-400' : ''
@@ -266,12 +270,13 @@ function Row({ line, company, onReverse }) {
                 )}
             </td>
             <td className={`px-3 py-3 text-right tabular-nums whitespace-nowrap align-top ${voided}`}>
-                {adjustment ? signedMoney(amount) : fmtMoney(amount)}
+                {signed ? signedMoney(amount) : fmtMoney(amount)}
                 {adjustment && <span className="block text-[11px] font-normal text-gray-500 no-underline">{RECONCILE_FIGURES[line.detail?.balance]?.label}</span>}
             </td>
             <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap align-top">
                 {adjustment ? <span className="text-gray-400">—</span>
-                    : line.gst == null ? <span className="text-xs text-gray-400">Not recorded</span> : fmtMoney(line.gst)}
+                    : line.gst == null ? <span className="text-xs text-gray-400">Not recorded</span>
+                    : signed ? signedMoney(Number(line.gst)) : fmtMoney(line.gst)}
             </td>
             <td className={`px-3 py-3 whitespace-nowrap align-top text-xs font-medium ${status?.className ?? ''}`}>{adjustment ? '' : status?.label ?? line.gst_status}</td>
             <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap align-top font-semibold text-gray-900">{fmtMoney(line.spent_to_date)}</td>

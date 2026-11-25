@@ -61,3 +61,41 @@ export function priceFormError({ unitPrice, gstRate }) {
     if (gstRate === '' || gstRate === null || gstRate === undefined) return 'Choose the GST %.'
     return null
 }
+
+/**
+ * A spare that needs stock from the other company (MAIN-159): HINT NEEDS_TRANSFER (asked
+ * for the first time) or TRANSFER_CHANGED (the confirmed amount no longer matches).
+ * Returns the quote from the error's detail — { changed, partName, unit, fromCompany,
+ * toCompany, quantity, ownQuantity, amount, gst, gstBreakdown, jobCardNumber, vehicle } —
+ * or null. `amount` is what add_spare must be sent back to confirm.
+ */
+export function transferQuoteError(error) {
+    if (error?.hint !== 'NEEDS_TRANSFER' && error?.hint !== 'TRANSFER_CHANGED') return null
+    let d
+    try {
+        d = JSON.parse(error.details)
+    } catch {
+        return null
+    }
+    if (d?.amount === undefined || d?.amount === null) return null
+    return {
+        changed: error.hint === 'TRANSFER_CHANGED',
+        message: error.message,
+        partName: d.part_name,
+        unit: d.unit,
+        fromCompany: d.from_company,
+        toCompany: d.to_company,
+        quantity: Number(d.quantity),
+        ownQuantity: Number(d.own_quantity ?? 0),
+        amount: Number(d.amount),
+        gst: Number(d.gst ?? 0),
+        gstBreakdown: (d.gst_breakdown ?? []).map(r => ({
+            rate: Number(r.rate),
+            beforeGst: Number(r.before_gst),
+            gst: Number(r.gst),
+            inclGst: Number(r.incl_gst),
+        })),
+        jobCardNumber: d.job_card_number,
+        vehicle: d.vehicle,
+    }
+}

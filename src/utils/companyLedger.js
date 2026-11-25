@@ -9,6 +9,8 @@ import { formatAs, toDate } from './datetime'
  * Two running figures, never mixed: `spent_to_date` (purchases and invoices billed to the
  * company, incl. GST) and `owed_balance` (between the two companies — positive means the
  * other company owes this one). A vehicle bought from the other company is owed, not spent.
+ * A spare transfer (MAIN-159) moves both: the vehicle's company spends it and owes it, the
+ * supplying company's spending goes down by it and it is owed; a reversal is its own line.
  */
 
 /** Address slug ↔ company value. `/company-ledger/nvs-travels`. */
@@ -34,6 +36,10 @@ export const ENTRY_TAGS = {
     multi_vehicle:  { label: 'Multi-vehicle invoice', className: 'bg-indigo-100 text-indigo-800' },
     vehicle_sold:   { label: 'Vehicle sold',          className: 'bg-emerald-100 text-emerald-800' },
     vehicle_bought: { label: 'Vehicle bought',        className: 'bg-amber-100 text-amber-800' },
+    spare_transfer_in:           { label: 'Spare transfer in',           className: 'bg-amber-100 text-amber-800' },
+    spare_transfer_out:          { label: 'Spare transfer out',          className: 'bg-emerald-100 text-emerald-800' },
+    spare_transfer_in_reversed:  { label: 'Spare transfer in reversed',  className: 'bg-red-100 text-red-800' },
+    spare_transfer_out_reversed: { label: 'Spare transfer out reversed', className: 'bg-red-100 text-red-800' },
     adjustment:          { label: 'Adjustment', className: 'bg-orange-100 text-orange-800' },
     reversed_adjustment: { label: 'Reversed',   className: 'bg-red-100 text-red-800' },
 }
@@ -60,12 +66,22 @@ export const isSpend = line => Number(line.spend) !== 0
 
 /** A reconciliation adjustment (MAIN-163), active or reversed. It carries no GST. */
 export const isAdjustment = line => line.kind === 'adjustment' || line.kind === 'reversed_adjustment'
+/** A spare transfer (MAIN-159) or its reversal: moves both figures, signed. */
+export const isSpareTransfer = line => typeof line.kind === 'string' && line.kind.startsWith('spare_transfer_')
+/** A line whose Amount is shown with its sign: an adjustment or a spare transfer. */
+export const isSigned = line => isAdjustment(line) || isSpareTransfer(line)
+/** A vehicle sale between the companies: its GST is not spending. */
+const isVehicleSale = line => line.kind === 'vehicle_sold' || line.kind === 'vehicle_bought'
 /** A reversed adjustment: shown struck through, adds nothing. */
 export const isVoided = line => line.kind === 'reversed_adjustment'
 
-/** The signed amount a line shows: an adjustment's own (+/−), else the spend or the owed amount. */
+/**
+ * The amount a line shows: an adjustment's own (+/−), a spare transfer's effect on this
+ * company's spending (+/−), else the spend or the owed amount.
+ */
 export function lineAmount(line) {
     if (isAdjustment(line)) return Number(line.detail?.amount ?? 0)
+    if (isSpareTransfer(line)) return Number(line.spend)
     return isSpend(line) ? Number(line.spend) : Math.abs(Number(line.owed))
 }
 export const entryDay = line => formatAs(line.entry_at, 'yyyy-MM-dd', '')
@@ -125,6 +141,28 @@ export function describeEntry(line, company) {
                 sub: [`GST ${Number(d.gst_percent)}% included`, d.performed_by && `Recorded by ${d.performed_by}`]
                     .filter(Boolean).join(' · '),
                 link: null,
+            }
+        }
+        case 'spare_transfer_in':
+        case 'spare_transfer_out':
+        case 'spare_transfer_in_reversed':
+        case 'spare_transfer_out_reversed': {
+            const incoming = line.kind.startsWith('spare_transfer_in')
+            const reversed = line.kind.endsWith('_reversed')
+            const qty = `${Number(d.quantity)} ${d.unit ?? ''}`.trim()
+            const rates = (d.gst_breakdown ?? []).map(r => `${Number(r.rate)}%`).join(', ')
+            return {
+                title: `${d.part} × ${qty} ${incoming ? 'from' : 'to'} ${companyLabel(d.other_company)}${reversed ? ' — reversed' : ''}`,
+                sub: [
+                    d.vehicle,
+                    rates && `GST ${rates} included`,
+                    reversed
+                        ? [`Spare removed`, d.reversed_by && `by ${d.reversed_by}`, d.posted_at && `(transferred ${fmtDay(d.posted_at)})`].filter(Boolean).join(' ')
+                        : d.posted_by && `Transferred by ${d.posted_by}`,
+                ].filter(Boolean).join(' · '),
+                link: d.job_card_number != null
+                    ? { to: `/job-cards/${d.job_card_number}`, label: `Job card ${d.job_card_number}` }
+                    : null,
             }
         }
         case 'adjustment':
@@ -199,7 +237,7 @@ export function lastReconciled(lines, balance) {
  */
 export function ledgerTotals(lines) {
     const gstByStatus = Object.fromEntries(Object.keys(GST_STATUSES).map(k => [k, 0]))
-    let spent = 0, owed = 0, gst = 0, gstNotRecorded = 0, gstNotRecordedAmount = 0
+    let spent = 0, owed = 0, gst = 0, saleGst = 0, gstNotRecorded = 0, gstNotRecordedAmount = 0
     for (const l of lines) {
         spent += paise(l.spend)
         owed += paise(l.owed)
@@ -210,6 +248,7 @@ export function ledgerTotals(lines) {
             gstNotRecordedAmount += paise(l.spend)
         } else {
             gst += paise(l.gst)
+            if (isVehicleSale(l)) saleGst += paise(l.gst)
             if (l.gst_status in gstByStatus) gstByStatus[l.gst_status] += paise(l.gst)
         }
     }
@@ -217,8 +256,9 @@ export function ledgerTotals(lines) {
         spent: spent / 100,
         owed: owed / 100,
         gst: gst / 100,
-        // GST on purchases and invoices only — the GST on a vehicle sale is not spending.
-        spendGst: (gst - gstByStatus.inter_company) / 100,
+        // GST on spending only — the GST on a vehicle sale is not spending; a spare
+        // transfer's moves with its spending (MAIN-159).
+        spendGst: (gst - saleGst) / 100,
         gstByStatus: Object.fromEntries(Object.entries(gstByStatus).map(([k, v]) => [k, v / 100])),
         gstNotRecorded,
         gstNotRecordedAmount: gstNotRecordedAmount / 100,
