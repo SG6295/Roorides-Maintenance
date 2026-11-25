@@ -168,6 +168,21 @@ export default function Dashboard() {
               </Link>
             )}
 
+            {/* Company ledgers (MAIN-156) */}
+            {(['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)) && (
+              <Link
+                to="/company-ledger"
+                className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"
+              >
+                <div className="w-12 h-12 bg-sky-100 rounded-full flex items-center justify-center mb-4 group-hover:bg-sky-200 transition-colors">
+                  <svg className="w-6 h-6 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">Company Ledger</h3>
+              </Link>
+            )}
+
             {/* Suppliers */}
             {(['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)) && (
               <Link
