@@ -1,7 +1,7 @@
 import { STOCK_COMPANIES, companyLabel, companyShortLabel } from '../constants/vehicleCompanies'
 import { formatPurchaseNumber, purchaseInvoicePath } from './purchaseInvoice'
 import { formatBatchNumber, batchPath } from './batchNumber'
-import { formatAs } from './datetime'
+import { formatAs, toDate } from './datetime'
 
 /**
  * The company ledgers (MAIN-156, epic MAIN-154), read from `get_company_ledger` rows.
@@ -69,6 +69,13 @@ export function lineAmount(line) {
     return isSpend(line) ? Number(line.spend) : Math.abs(Number(line.owed))
 }
 export const entryDay = line => formatAs(line.entry_at, 'yyyy-MM-dd', '')
+
+const IST_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
+/** The IST day (`yyyy-MM-dd`) a line was entered — the clock reconcile_company_ledger cuts off on, whatever the browser's. */
+export const entryIstDay = line => {
+    const d = toDate(line.entry_at)
+    return d ? IST_DAY.format(d) : ''
+}
 
 const fmtDay = d => formatAs(d, 'dd MMM yyyy', '')
 
@@ -174,7 +181,7 @@ export function figureInWords(value, company) {
 export function figureAsOf(lines, balance, day) {
     const column = RECONCILE_FIGURES[balance]?.column
     if (!column) return 0
-    return lines.reduce((sum, l) => (entryDay(l) <= day ? sum + paise(l[column]) : sum), 0)
+    return lines.reduce((sum, l) => (entryIstDay(l) <= day ? sum + paise(l[column]) : sum), 0)
 }
 
 /** The latest as-of date an active adjustment reconciled `balance` to, or null. */
