@@ -1837,6 +1837,92 @@ export type Database = {
         }
         Relationships: []
       }
+      spare_transfers: {
+        Row: {
+          amount: number
+          from_company: string
+          gst: number
+          gst_breakdown: Json
+          id: string
+          issue_id: string | null
+          issue_part_id: string
+          job_card_id: string | null
+          job_card_number: number | null
+          part_id: string
+          part_name: string
+          posted_at: string
+          posted_by: string | null
+          posted_by_name: string | null
+          quantity: number
+          reversed_at: string | null
+          reversed_by: string | null
+          reversed_by_name: string | null
+          source: string
+          status: string
+          to_company: string
+          unit: string | null
+          vehicle_number: string | null
+        }
+        Insert: {
+          amount: number
+          from_company: string
+          gst: number
+          gst_breakdown?: Json
+          id?: string
+          issue_id?: string | null
+          issue_part_id: string
+          job_card_id?: string | null
+          job_card_number?: number | null
+          part_id: string
+          part_name: string
+          posted_at?: string
+          posted_by?: string | null
+          posted_by_name?: string | null
+          quantity: number
+          reversed_at?: string | null
+          reversed_by?: string | null
+          reversed_by_name?: string | null
+          source?: string
+          status?: string
+          to_company: string
+          unit?: string | null
+          vehicle_number?: string | null
+        }
+        Update: {
+          amount?: number
+          from_company?: string
+          gst?: number
+          gst_breakdown?: Json
+          id?: string
+          issue_id?: string | null
+          issue_part_id?: string
+          job_card_id?: string | null
+          job_card_number?: number | null
+          part_id?: string
+          part_name?: string
+          posted_at?: string
+          posted_by?: string | null
+          posted_by_name?: string | null
+          quantity?: number
+          reversed_at?: string | null
+          reversed_by?: string | null
+          reversed_by_name?: string | null
+          source?: string
+          status?: string
+          to_company?: string
+          unit?: string | null
+          vehicle_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spare_transfers_part_id_fkey"
+            columns: ["part_id"]
+            isOneToOne: false
+            referencedRelation: "parts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stock_audit_item_reasons: {
         Row: {
           audit_item_id: string
@@ -3042,6 +3128,7 @@ export type Database = {
         Args: { p_part_id: string; p_price: Json }
         Returns: Json
       }
+      add_spare: { Args: { p_spare: Json }; Returns: Json }
       add_working_days: {
         Args: {
           n_days: number
@@ -3461,6 +3548,10 @@ export type Database = {
           unit_cost: number
         }[]
       }
+      part_latest_cost_gst_rate: {
+        Args: { p_part_id: string }
+        Returns: number
+      }
       part_name_key: { Args: { p_name: string }; Returns: string }
       payment_run_for: { Args: { p_date: string }; Returns: string }
       preview_sla_changes: { Args: { p_change: Json }; Returns: Json }
@@ -3644,6 +3735,12 @@ export type Database = {
         Args: { ip: Database["public"]["Tables"]["issue_parts"]["Row"] }
         Returns: number
       }
+      spare_cost_amount: { Args: { p_issue_part_id: string }; Returns: number }
+      spare_transfer: {
+        Args: { ip: Database["public"]["Tables"]["issue_parts"]["Row"] }
+        Returns: Json
+      }
+      spare_transfer_quote: { Args: { p_issue_part_id: string }; Returns: Json }
       start_stock_audit: {
         Args: { p_location_id: string; p_notes?: string }
         Returns: string
