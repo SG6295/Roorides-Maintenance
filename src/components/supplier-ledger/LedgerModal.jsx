@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+import { companyLabel } from '../../constants/vehicleCompanies'
 
 /**
  * The frame every supplier-ledger dialog shares (MAIN-119): title, close button, body
@@ -48,5 +49,22 @@ export function PrimaryButton({ children, tone = 'blue', ...props }) {
         >
             {children}
         </button>
+    )
+}
+
+/**
+ * The company a ledger entry is recorded for (MAIN-162) — the tab's, shown and never
+ * editable. An entry under the wrong company is cancelled with a reason and recorded again
+ * on the other company's tab.
+ */
+export function CompanyLine({ company, what = 'entry' }) {
+    return (
+        <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm">
+            <span className="text-gray-500">For </span>
+            <span className="font-semibold text-gray-900">{companyLabel(company)}</span>
+            <p className="text-xs text-gray-500 mt-0.5">
+                Set by the tab you are on. For the other company, record the {what} on its tab instead.
+            </p>
+        </div>
     )
 }

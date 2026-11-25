@@ -21,6 +21,7 @@ export type Database = {
           cancel_reason: string | null
           cancelled_at: string | null
           cancelled_by: string | null
+          company: string
           created_at: string
           id: string
           paid_on: string
@@ -36,6 +37,7 @@ export type Database = {
           cancel_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
+          company?: string
           created_at?: string
           id?: string
           paid_on: string
@@ -51,6 +53,7 @@ export type Database = {
           cancel_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
+          company?: string
           created_at?: string
           id?: string
           paid_on?: string
@@ -2031,6 +2034,7 @@ export type Database = {
         Row: {
           amount: number | null
           as_of: string
+          company: string
           confirmed_against: string
           confirmed_balance: number
           created_at: string
@@ -2047,6 +2051,7 @@ export type Database = {
         Insert: {
           amount?: number | null
           as_of: string
+          company?: string
           confirmed_against: string
           confirmed_balance: number
           created_at?: string
@@ -2063,6 +2068,7 @@ export type Database = {
         Update: {
           amount?: number | null
           as_of?: string
+          company?: string
           confirmed_against?: string
           confirmed_balance?: number
           created_at?: string
@@ -2107,6 +2113,7 @@ export type Database = {
           cancel_reason: string | null
           cancelled_at: string | null
           cancelled_by: string | null
+          company: string
           created_at: string
           id: string
           ledger: string
@@ -2124,6 +2131,7 @@ export type Database = {
           cancel_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
+          company?: string
           created_at?: string
           id?: string
           ledger?: string
@@ -2141,6 +2149,7 @@ export type Database = {
           cancel_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
+          company?: string
           created_at?: string
           id?: string
           ledger?: string
@@ -2836,6 +2845,7 @@ export type Database = {
         Returns: {
           amount: number
           batch_number: number
+          company: string
           counts: boolean
           detail: Json
           due_date: string
@@ -2853,6 +2863,7 @@ export type Database = {
           amount: number
           batch_number: number
           bucket: string
+          company: string
           due_date: string
           entry_at: string
           invoice_no: string
@@ -2875,6 +2886,7 @@ export type Database = {
         Returns: undefined
       }
       apply_sla_change: { Args: { p_change: Json }; Returns: Json }
+      assert_ledger_company: { Args: { p_company: string }; Returns: undefined }
       assert_ledger_writer: { Args: never; Returns: undefined }
       assert_vehicle_assigned: {
         Args: { p_registration: string }
@@ -2944,7 +2956,7 @@ export type Database = {
         Returns: Json
       }
       get_advance_balances: {
-        Args: never
+        Args: { p_company: string }
         Returns: {
           due_next_wednesday: number
           due_this_wednesday: number
@@ -2956,7 +2968,7 @@ export type Database = {
         }[]
       }
       get_advance_open_items: {
-        Args: { p_person: string }
+        Args: { p_company: string; p_person: string }
         Returns: {
           amount: number
           batch_number: number
@@ -2972,7 +2984,7 @@ export type Database = {
         }[]
       }
       get_advance_statement: {
-        Args: { p_person: string }
+        Args: { p_company: string; p_person: string }
         Returns: {
           amount: number
           balance: number
@@ -3107,7 +3119,7 @@ export type Database = {
         }[]
       }
       get_supplier_balances: {
-        Args: { p_supplier_id?: string }
+        Args: { p_company: string; p_supplier_id?: string }
         Returns: {
           awaiting_acceptance: number
           credit_days: number
@@ -3125,7 +3137,7 @@ export type Database = {
         }[]
       }
       get_supplier_open_items: {
-        Args: { p_supplier_id: string }
+        Args: { p_company: string; p_supplier_id: string }
         Returns: {
           amount: number
           batch_number: number
@@ -3141,7 +3153,7 @@ export type Database = {
         }[]
       }
       get_supplier_statement: {
-        Args: { p_supplier_id: string }
+        Args: { p_company: string; p_supplier_id: string }
         Returns: {
           amount: number
           balance: number
@@ -3215,6 +3227,7 @@ export type Database = {
       reconcile_supplier_balance: {
         Args: {
           p_as_of: string
+          p_company: string
           p_confirmed_against: string
           p_confirmed_balance: number
           p_reason: string
@@ -3401,6 +3414,7 @@ export type Database = {
         Returns: {
           amount: number
           batch_number: number
+          company: string
           counts: boolean
           detail: Json
           due_date: string
@@ -3420,6 +3434,7 @@ export type Database = {
           amount: number
           batch_number: number
           bucket: string
+          company: string
           due_date: string
           entry_at: string
           invoice_no: string

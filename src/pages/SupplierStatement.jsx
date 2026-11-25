@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import Navigation from '../components/shared/Navigation'
 import CreditDaysEditor from '../components/supplier-ledger/CreditDaysEditor'
 import RecordPaymentModal from '../components/supplier-ledger/RecordPaymentModal'
@@ -18,32 +18,41 @@ import { useSupplierIdByNumber } from '../hooks/useSuppliers'
 import { exportSupplierStatement } from '../utils/supplierLedgerExport'
 import { todayLocal } from '../utils/datetime'
 import { fmtMoney, fmtDate } from '../components/outsource-invoices/format'
+import { ledgerCompanyFrom, supplierLedgerHome, withLedgerCompany, possessive } from '../utils/ledgerCompany'
+import { companyLabel } from '../constants/vehicleCompanies'
 
 /**
  * One supplier's ledger statement (MAIN-119): every invoice, advance, payment and
  * adjustment in the order it was recorded, with the running balance; what is still open
  * and which Wednesday it goes in; and finance's actions — record or cancel a payment,
  * reconcile or reverse an adjustment, set credit days. Exec reads only.
+ *
+ * One company's statement (MAIN-162, `?co=` in the address; none = NVS Travels). A payment
+ * or reconciliation recorded here is that company's — the forms show it and don't let it
+ * change; one recorded under the wrong company is cancelled and recorded on the other.
  */
 export default function SupplierStatement() {
     const { supplierNumber } = useParams()
+    const [searchParams] = useSearchParams()
+    const company = ledgerCompanyFrom(searchParams)
+    const companyName = companyLabel(company)
     const { userProfile } = useAuth()
     const canWrite = LEDGER_WRITE_ROLES.includes(userProfile?.role)
     // The address carries SUP-<n> (MAIN-143); the ledger readers take the id.
     const { data: supplierId, isLoading: resolving } = useSupplierIdByNumber(supplierNumber)
-    const { data: supplier, isLoading: loadingBalance, error } = useSupplierBalance(supplierId)
+    const { data: supplier, isLoading: loadingBalance, error } = useSupplierBalance(company, supplierId)
     const isLoading = resolving || loadingBalance
-    const { data: lines = [], isLoading: linesLoading } = useSupplierStatement(supplierId)
-    const { data: openItems = [] } = useSupplierOpenItems(supplierId)
+    const { data: lines = [], isLoading: linesLoading } = useSupplierStatement(company, supplierId)
+    const { data: openItems = [] } = useSupplierOpenItems(company, supplierId)
     const recordPayment = useRecordSupplierPayment()
     const cancelPayment = useCancelSupplierPayment()
     const reverseAdjustment = useReverseAdjustment()
     const [dialog, setDialog] = useState(null)
     const today = todayLocal()
 
-    if (isLoading) return <Page><div className="p-8 text-center text-sm text-gray-500">Loading…</div></Page>
+    if (isLoading) return <Page company={company}><div className="p-8 text-center text-sm text-gray-500">Loading…</div></Page>
     if (error || !supplier) {
-        return <Page><div className="p-8 text-center text-sm text-red-600">{error ? `Could not load the ledger: ${error.message}` : 'Supplier not found.'}</div></Page>
+        return <Page company={company}><div className="p-8 text-center text-sm text-red-600">{error ? `Could not load the ledger: ${error.message}` : 'Supplier not found.'}</div></Page>
     }
 
     const close = () => setDialog(null)
@@ -55,7 +64,7 @@ export default function SupplierStatement() {
     }
 
     return (
-        <Page name={supplier.entity_name}>
+        <Page company={company} name={supplier.entity_name}>
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">
@@ -63,13 +72,15 @@ export default function SupplierStatement() {
                         <span className="ml-2 text-base font-medium text-gray-500">{formatSupplierNumber(supplier.supplier_number)}</span>
                     </h1>
                     <p className="text-sm text-gray-600 mt-1 flex flex-wrap items-center gap-x-1">
+                        <span className="font-medium text-gray-800">{companyName}</span>
+                        <span className="text-gray-400">·</span>
                         Credit period <CreditDaysEditor supplierId={supplier.supplier_id} value={supplier.credit_days} canEdit={canWrite} /> days
                         <span className="text-gray-400">·</span>
                         {supplier.last_reconciled_on ? `Last reconciled as of ${fmtDate(supplier.last_reconciled_on)}` : 'Not reconciled yet'}
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <ExportButton onClick={() => exportSupplierStatement(supplier.entity_name, lines, today)} disabled={lines.length === 0} />
+                    <ExportButton onClick={() => exportSupplierStatement(supplier.entity_name, company, lines, today)} disabled={lines.length === 0} />
                     {canWrite && (
                         <>
                             <button type="button" onClick={() => setDialog({ type: 'reconcile' })} className="text-sm px-3 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
@@ -98,23 +109,26 @@ export default function SupplierStatement() {
                 describe={describeLine}
                 actionFor={actionFor}
                 hasActions={canWrite}
-                emptyText="Nothing in this ledger yet. Invoices appear once finance accepts them."
+                emptyText={`Nothing in ${possessive(companyName)} ledger for this supplier yet. Invoices appear once finance accepts them.`}
             />
 
             <p className="text-xs text-gray-500">
                 Entries are in the order they were recorded. An invoice enters when finance accepts it; its due date
                 still counts from the day it reached finance. Advances paid by {advancePeopleNames('or')} are
-                repaid to them under <Link to="/supplier-ledger#advances" className="text-blue-600 hover:underline">Advances to repay</Link>.
+                repaid to them under <Link to={withLedgerCompany('/supplier-ledger#advances', company)} className="text-blue-600 hover:underline">Advances to repay</Link>.
+                Only {possessive(companyName)} invoices, payments and reconciliations are here — the other company's are on its own tab.
             </p>
 
             {dialog?.type === 'payment' && (
                 <RecordPaymentModal
                     title="Record payment"
                     subtitle={`${supplier.entity_name} · Bill accounted`}
+                    company={company}
                     balance={supplier.outstanding}
                     withTds
                     mutation={recordPayment}
                     onSubmit={p => recordPayment.mutate({
+                        company,
                         supplierId: supplier.supplier_id,
                         payment: { amount_paid: p.amount, tds_amount: p.tds, paid_on: p.paid_on, payment_method: p.payment_method, bank: p.bank, utr: p.utr },
                     }, { onSuccess: close })}
@@ -122,7 +136,7 @@ export default function SupplierStatement() {
                 />
             )}
             {dialog?.type === 'reconcile' && (
-                <ReconcileModal supplier={{ id: supplier.supplier_id, entity_name: supplier.entity_name }} lines={lines} onClose={close} />
+                <ReconcileModal company={company} supplier={{ id: supplier.supplier_id, entity_name: supplier.entity_name }} lines={lines} onClose={close} />
             )}
             {dialog?.type === 'cancel' && (
                 <ReasonModal
@@ -152,10 +166,10 @@ export default function SupplierStatement() {
     )
 }
 
-function Page({ name, children }) {
+function Page({ company, name, children }) {
     return (
         <div className="min-h-screen bg-gray-50">
-            <Navigation breadcrumbs={[{ label: 'Supplier ledger', href: '/supplier-ledger' }, ...(name ? [{ label: name }] : [])]} />
+            <Navigation breadcrumbs={[{ label: 'Supplier ledger', href: supplierLedgerHome(company) }, { label: companyLabel(company), href: supplierLedgerHome(company) }, ...(name ? [{ label: name }] : [])]} />
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">{children}</div>
         </div>
     )

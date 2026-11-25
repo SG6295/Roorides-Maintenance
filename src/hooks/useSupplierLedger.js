@@ -5,6 +5,9 @@ import { supabase } from '../lib/supabase'
  * The supplier ledger (MAIN-119). Every figure comes from database functions, which
  * check the caller is exec, super_admin or finance; every write goes through a function
  * that allows finance and super_admin only.
+ *
+ * Every reader and writer is for one company (MAIN-162): `company` is `nvs_travels` or
+ * `nvs_travel_solutions`, and a supplier or person has a separate balance in each.
  */
 
 const toNumber = v => (v == null ? 0 : Number(v))
@@ -22,22 +25,22 @@ function normaliseBalance(row) {
 }
 
 /** One row per supplier: outstanding and the Wednesday buckets. */
-export function useSupplierBalances() {
+export function useSupplierBalances(company) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'balances'],
+        queryKey: ['supplier_ledger', 'balances', company],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_supplier_balances')
+            const { data, error } = await supabase.rpc('get_supplier_balances', { p_company: company })
             if (error) throw error
             return (data ?? []).map(normaliseBalance)
         },
     })
 }
 
-export function useSupplierBalance(supplierId) {
+export function useSupplierBalance(company, supplierId) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'balance', supplierId],
+        queryKey: ['supplier_ledger', 'balance', company, supplierId],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_supplier_balances', { p_supplier_id: supplierId })
+            const { data, error } = await supabase.rpc('get_supplier_balances', { p_company: company, p_supplier_id: supplierId })
             if (error) throw error
             return data?.[0] ? normaliseBalance(data[0]) : null
         },
@@ -46,11 +49,11 @@ export function useSupplierBalance(supplierId) {
 }
 
 /** Every line, oldest first, with the running balance. */
-export function useSupplierStatement(supplierId) {
+export function useSupplierStatement(company, supplierId) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'statement', supplierId],
+        queryKey: ['supplier_ledger', 'statement', company, supplierId],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_supplier_statement', { p_supplier_id: supplierId })
+            const { data, error } = await supabase.rpc('get_supplier_statement', { p_company: company, p_supplier_id: supplierId })
             if (error) throw error
             return data ?? []
         },
@@ -59,11 +62,11 @@ export function useSupplierStatement(supplierId) {
 }
 
 /** What is still open, oldest payments clearing the oldest invoices first. */
-export function useSupplierOpenItems(supplierId) {
+export function useSupplierOpenItems(company, supplierId) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'open', supplierId],
+        queryKey: ['supplier_ledger', 'open', company, supplierId],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_supplier_open_items', { p_supplier_id: supplierId })
+            const { data, error } = await supabase.rpc('get_supplier_open_items', { p_company: company, p_supplier_id: supplierId })
             if (error) throw error
             return data ?? []
         },
@@ -84,10 +87,10 @@ function useLedgerMutation(mutationFn, alsoInvalidate = []) {
 
 /** payment: { amount_paid, tds_amount, paid_on, payment_method, bank, utr } — always Bill accounted. */
 export function useRecordSupplierPayment() {
-    return useLedgerMutation(async ({ supplierId, payment }) => {
+    return useLedgerMutation(async ({ company, supplierId, payment }) => {
         const { data, error } = await supabase.rpc('record_supplier_payment', {
             p_supplier_id: supplierId,
-            p_payment: payment,
+            p_payment: { ...payment, company },
         })
         if (error) throw error
         return data
@@ -105,8 +108,9 @@ export function useCancelSupplierPayment() {
 }
 
 export function useReconcileSupplierBalance() {
-    return useLedgerMutation(async ({ supplierId, asOf, confirmedAgainst, confirmedBalance, reason }) => {
+    return useLedgerMutation(async ({ company, supplierId, asOf, confirmedAgainst, confirmedBalance, reason }) => {
         const { data, error } = await supabase.rpc('reconcile_supplier_balance', {
+            p_company:           company,
             p_supplier_id:       supplierId,
             p_as_of:             asOf,
             p_confirmed_against: confirmedAgainst,
@@ -143,11 +147,11 @@ export function useReverseAdjustment() {
 // ── Advances to repay ───────────────────────────────────────────────────────────
 
 /** One row per person who pays suppliers upfront: owed, and the Wednesday buckets. */
-export function useAdvanceBalances() {
+export function useAdvanceBalances(company) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'advances'],
+        queryKey: ['supplier_ledger', 'advances', company],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_advance_balances')
+            const { data, error } = await supabase.rpc('get_advance_balances', { p_company: company })
             if (error) throw error
             return (data ?? []).map(row => ({
                 ...row,
@@ -161,11 +165,11 @@ export function useAdvanceBalances() {
     })
 }
 
-export function useAdvanceStatement(person) {
+export function useAdvanceStatement(company, person) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'advance_statement', person],
+        queryKey: ['supplier_ledger', 'advance_statement', company, person],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_advance_statement', { p_person: person })
+            const { data, error } = await supabase.rpc('get_advance_statement', { p_company: company, p_person: person })
             if (error) throw error
             return data ?? []
         },
@@ -173,11 +177,11 @@ export function useAdvanceStatement(person) {
     })
 }
 
-export function useAdvanceOpenItems(person) {
+export function useAdvanceOpenItems(company, person) {
     return useQuery({
-        queryKey: ['supplier_ledger', 'advance_open', person],
+        queryKey: ['supplier_ledger', 'advance_open', company, person],
         queryFn: async () => {
-            const { data, error } = await supabase.rpc('get_advance_open_items', { p_person: person })
+            const { data, error } = await supabase.rpc('get_advance_open_items', { p_company: company, p_person: person })
             if (error) throw error
             return data ?? []
         },
@@ -187,10 +191,10 @@ export function useAdvanceOpenItems(person) {
 
 /** payment: { amount, paid_on, payment_method, bank, utr } */
 export function useRecordAdvanceRepayment() {
-    return useLedgerMutation(async ({ person, payment }) => {
+    return useLedgerMutation(async ({ company, person, payment }) => {
         const { data, error } = await supabase.rpc('record_advance_repayment', {
             p_person: person,
-            p_payment: payment,
+            p_payment: { ...payment, company },
         })
         if (error) throw error
         return data

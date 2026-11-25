@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import Navigation from '../components/shared/Navigation'
 import CreditDaysEditor from '../components/supplier-ledger/CreditDaysEditor'
 import { Tile } from '../components/supplier-ledger/LedgerParts'
@@ -11,6 +11,9 @@ import { exportSupplierBalances } from '../utils/supplierLedgerExport'
 import { todayLocal, formatAs } from '../utils/datetime'
 import { fmtMoney, fmtDate } from '../components/outsource-invoices/format'
 import { formatSupplierNumber, supplierLedgerPath } from '../utils/supplierNumber'
+import { LEDGER_COMPANIES, companyLedgerPath } from '../utils/companyLedger'
+import { ledgerCompanyFrom, supplierLedgerHome, advanceStatementPath, possessive } from '../utils/ledgerCompany'
+import { companyLabel } from '../constants/vehicleCompanies'
 
 const FILTERS = [
     { key: 'balance', label: 'With a balance', test: r => r.outstanding !== 0 },
@@ -24,11 +27,20 @@ const money = v => (v ? fmtMoney(v) : '—')
  * The supplier ledger (MAIN-119): what each supplier is owed for accepted invoices, less
  * advances and payments, split by Wednesday payment run. Finance and super_admin set
  * credit days here; exec reads.
+ *
+ * One tab per company (MAIN-162): each company owes its suppliers and repays its people
+ * separately, so every figure on a tab is that company's. The tab is `?co=` in the address.
  */
 export default function SupplierLedger() {
+    const [searchParams] = useSearchParams()
+    const company = ledgerCompanyFrom(searchParams)
+    return <Ledger key={company} company={company} />
+}
+
+function Ledger({ company }) {
     const { userProfile } = useAuth()
     const canWrite = LEDGER_WRITE_ROLES.includes(userProfile?.role)
-    const { data: rows = [], isLoading, error } = useSupplierBalances()
+    const { data: rows = [], isLoading, error } = useSupplierBalances(company)
     const [search, setSearch] = useState('')
     const [filter, setFilter] = useState('balance')
 
@@ -53,21 +65,34 @@ export default function SupplierLedger() {
 
     return (
         <div className="min-h-screen bg-gray-50">
-            <Navigation breadcrumbs={[{ label: 'Supplier ledger' }]} />
+            <Navigation breadcrumbs={[{ label: 'Supplier ledger', href: supplierLedgerHome(company) }, { label: companyLabel(company) }]} />
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">Supplier ledger</h1>
-                        <p className="text-sm text-gray-500 mt-1">
-                            What each supplier is owed for accepted invoices, less advances and payments.
+                        <div className="mt-2 inline-flex rounded-lg border border-gray-300 bg-white p-0.5" role="tablist">
+                            {LEDGER_COMPANIES.map(c => (
+                                <Link
+                                    key={c.value}
+                                    to={supplierLedgerHome(c.value)}
+                                    role="tab"
+                                    aria-selected={c.value === company}
+                                    className={`px-3 py-1.5 text-sm rounded-md ${c.value === company ? 'bg-blue-600 text-white font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                                >
+                                    {c.label}
+                                </Link>
+                            ))}
+                        </div>
+                        <p className="text-sm text-gray-500 mt-2">
+                            What {companyLabel(company)} owes each supplier for its accepted invoices, less advances and payments.
                             Payments go out every Wednesday. Each company's own spending is in
-                            the <Link to="/company-ledger" className="text-blue-600 hover:underline">Company ledger</Link>.
+                            the <Link to={companyLedgerPath(company)} className="text-blue-600 hover:underline">Company ledger</Link>.
                         </p>
                     </div>
                     <button
                         type="button"
-                        onClick={() => exportSupplierBalances(visible, { thisRun, nextRun, today })}
+                        onClick={() => exportSupplierBalances(visible, { company, thisRun, nextRun, today })}
                         disabled={visible.length === 0}
                         className="text-sm px-3 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
                     >
@@ -133,7 +158,7 @@ export default function SupplierLedger() {
                                 {visible.map(r => (
                                     <tr key={r.supplier_id} className="hover:bg-gray-50">
                                         <td className="px-3 py-3 whitespace-nowrap">
-                                            <Link to={supplierLedgerPath(r.supplier_number)} className="font-semibold text-blue-600 hover:underline">
+                                            <Link to={supplierLedgerPath(r.supplier_number, company)} className="font-semibold text-blue-600 hover:underline">
                                                 {r.entity_name}
                                             </Link>
                                             <span className="ml-1.5 text-xs text-gray-500">{formatSupplierNumber(r.supplier_number)}</span>
@@ -160,13 +185,13 @@ export default function SupplierLedger() {
                     )}
                 </div>
 
-                <AdvancesPanel thisRun={thisRun} nextRun={nextRun} />
+                <AdvancesPanel company={company} thisRun={thisRun} nextRun={nextRun} />
 
                 <p className="text-xs text-gray-500">
                     An invoice is due its submission date plus the supplier's credit days (blank counts as 0) and goes
                     in the first Wednesday run on or after that; it is overdue once that run has passed. The due figures
                     assume payments clear the oldest invoices first — nothing is stored against an invoice.
-                    {totals.awaiting > 0 && <> {totals.awaiting} submitted invoice{totals.awaiting === 1 ? ' is' : 's are'} waiting for finance to accept {totals.awaiting === 1 ? 'it' : 'them'} and {totals.awaiting === 1 ? 'is' : 'are'} not counted — see <Link to="/invoices?fs=New&fs=Hold" className="text-blue-600 hover:underline">Invoices</Link>.</>}
+                    {totals.awaiting > 0 && <> {totals.awaiting} submitted invoice{totals.awaiting === 1 ? ' is' : 's are'} waiting for finance to accept {totals.awaiting === 1 ? 'it' : 'them'} and {totals.awaiting === 1 ? 'is' : 'are'} not counted — see <Link to={`/invoices?fs=New&fs=Hold&co=${company}`} className="text-blue-600 hover:underline">Invoices</Link>.</>}
                 </p>
             </div>
         </div>
@@ -178,15 +203,15 @@ export default function SupplierLedger() {
  * supplier Approved − Advance and repays the advance to whoever paid it, so its total
  * outflow is the approved value and each person's balance keeps returning to zero.
  */
-function AdvancesPanel({ thisRun, nextRun }) {
-    const { data: rows = [], isLoading, error } = useAdvanceBalances()
+function AdvancesPanel({ company, thisRun, nextRun }) {
+    const { data: rows = [], isLoading, error } = useAdvanceBalances(company)
     const runLabel = iso => formatAs(iso, 'dd MMM')
 
     return (
         <section id="advances" className="space-y-2">
             <div>
                 <h2 className="text-lg font-semibold text-gray-900">Advances to repay</h2>
-                <p className="text-sm text-gray-500">Advances {advancePeopleNames()} paid to suppliers on accepted invoices, less what accounts has repaid them.</p>
+                <p className="text-sm text-gray-500">Advances {advancePeopleNames()} paid to suppliers on {possessive(companyLabel(company))} accepted invoices, less what it has repaid them.</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
                 {isLoading ? (
@@ -213,7 +238,7 @@ function AdvancesPanel({ thisRun, nextRun }) {
                                 return (
                                     <tr key={r.person} className="hover:bg-gray-50">
                                         <td className="px-3 py-3 whitespace-nowrap">
-                                            <Link to={`/supplier-ledger/advances/${encodeURIComponent(r.person)}`} className="font-semibold text-blue-600 hover:underline">
+                                            <Link to={advanceStatementPath(r.person, company)} className="font-semibold text-blue-600 hover:underline">
                                                 {p?.name ?? r.person}
                                             </Link>
                                         </td>

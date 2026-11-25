@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import LedgerModal, { PrimaryButton, SecondaryButton } from './LedgerModal'
+import LedgerModal, { CompanyLine, PrimaryButton, SecondaryButton } from './LedgerModal'
 import { useReconcileSupplierBalance } from '../../hooks/useSupplierLedger'
 import { RECONCILE_SOURCES } from '../../constants/supplierLedger'
 import { balanceAsOf } from '../../utils/supplierLedger'
@@ -13,8 +13,10 @@ import { fmtMoney } from '../outsource-invoices/format'
  * figure on that date is frozen and the difference posted as an adjustment line.
  * The figure shown here is from the statement; reconcile_supplier_balance recomputes
  * it when posting.
+ *
+ * One company's balance (MAIN-162): `company` is the statement's and can't be changed here.
  */
-export default function ReconcileModal({ supplier, lines, onClose }) {
+export default function ReconcileModal({ company, supplier, lines, onClose }) {
     const today = todayLocal()
     const reconcile = useReconcileSupplierBalance()
     const [asOf, setAsOf] = useState(today)
@@ -44,6 +46,7 @@ export default function ReconcileModal({ supplier, lines, onClose }) {
             return
         }
         reconcile.mutate({
+            company,
             supplierId: supplier.id,
             asOf,
             confirmedAgainst: source,
@@ -66,6 +69,7 @@ export default function ReconcileModal({ supplier, lines, onClose }) {
                 </PrimaryButton>
             </>}
         >
+            <CompanyLine company={company} what="reconciliation" />
             <p className="text-sm text-gray-600">
                 Enter the balance you confirmed in Tally or the vendor's statement. The app counts everything
                 entered up to the end of that day (up to now, for today), keeps its own figure, and posts the
