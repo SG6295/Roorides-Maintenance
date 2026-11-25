@@ -46,6 +46,33 @@ export function useUpsertOutsourceInvoice() {
     })
 }
 
+/**
+ * Adds the GST breakdown to a job card invoice saved before MAIN-166, once its card is
+ * Completed and its details are read-only. Writes only gst_breakdown; the database checks
+ * it adds up to the Invoice Value and refuses it once finance has accepted or rejected
+ * the invoice.
+ */
+export function useSaveInvoiceGstBreakdown() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async ({ id, breakdown }) => {
+            const { data, error } = await supabase
+                .from('outsource_invoices')
+                .update({ gst_breakdown: breakdown })
+                .eq('id', id)
+                .select()
+                .single()
+            if (error) throw error
+            return data
+        },
+        onSuccess: () => {
+            for (const queryKey of [
+                ['outsource_invoice'], ['outsource_invoices'], ['outsource_invoice_history'], ['company_ledger'],
+            ]) queryClient.invalidateQueries({ queryKey })
+        },
+    })
+}
+
 const PAGE_SIZE = 50
 
 /**

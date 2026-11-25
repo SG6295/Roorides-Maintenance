@@ -3,6 +3,7 @@ import { fmtMoney, fmtDate, fmtDateTime } from './format'
 import { groupBatchLines } from './historyEntries'
 import { workTypeLabel } from '../../constants/batchWorkTypes'
 import { companyLabel } from '../../constants/vehicleCompanies'
+import { breakdownLines } from '../../utils/gstBreakdown'
 
 const FIELD_LABELS = {
     invoice_no:                 'Invoice No',
@@ -16,12 +17,14 @@ const FIELD_LABELS = {
     advance_amount:             'Advance',
     payby_date:                 'Pay-by date',
     submitted_on:               'Submitted to finance',
+    gst_breakdown:              'GST breakdown',
 }
 
 const MONEY_FIELDS = ['invoice_value', 'approved_amount', 'advance_amount']
 
 function fmtValue(field, value) {
     if (value == null || value === '') return '—'
+    if (field === 'gst_breakdown') return breakdownLines(value).join('; ') || '—'
     if (MONEY_FIELDS.includes(field)) return fmtMoney(value)
     if (field === 'payby_date' || field === 'submitted_on' || field === 'date_of_activity') return fmtDate(value)
     if (field === 'finance_remark') return `"${value}"`

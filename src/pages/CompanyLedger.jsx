@@ -175,6 +175,8 @@ function GstBreakdown({ totals }) {
             <p className="text-xs text-gray-500 mt-3">
                 Claimed = GST reconciled &amp; closed · No GST = GST not applicable &amp; closed · Not yet reconciled = still Accepted ·
                 Unknown = a purchase recorded before purchases went to finance.
+                A job card or multi-vehicle invoice counts its bill&apos;s GST in proportion to the Approved Amount
+                (GST × Approved ÷ Invoice Value); Not recorded = an invoice saved without a GST breakdown.
             </p>
         </section>
     )

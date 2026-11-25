@@ -22,18 +22,9 @@ import {
     syncLineDiscount,
     distributeTotalDiscount,
 } from '../../lib/invoiceDiscount'
+import { gstRateOptions } from '../../constants/gstRates'
 
 const NEW_PART_SENTINEL = '__NEW__'
-const GST_RATES = [
-    { label: 'None', value: 0 },
-    { label: '5%', value: 5 },
-    { label: '12%', value: 12 },
-    { label: '18%', value: 18 },
-    { label: '28%', value: 28 },
-]
-// CustomSelect can't show a selected value of 0 (it reads `opt.value || …`), so the
-// dropdown works in strings — as Record Refurbishment's does — and the line keeps a number.
-const GST_OPTIONS = GST_RATES.map(r => ({ label: r.label, value: String(r.value) }))
 // Line-item columns. Qty needs more than a 12th of the row so 2-decimal
 // quantities aren't clipped by the in-field unit suffix; the trailing
 // remove-button column needs less.
@@ -379,9 +370,9 @@ export default function PurchaseModal({ onClose }) {
                                             <div className="pt-1">
                                                 <CustomSelect
                                                     compact
-                                                    value={String(line.gst_rate)}
+                                                    value={String(Number(line.gst_rate))}
                                                     onChange={v => updateLine(i, 'gst_rate', Number(v))}
-                                                    options={GST_OPTIONS}
+                                                    options={gstRateOptions(line.gst_rate)}
                                                 />
                                             </div>
                                             <div className="text-sm text-gray-700 text-right pr-1 pt-3">

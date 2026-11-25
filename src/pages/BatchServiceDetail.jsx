@@ -149,7 +149,7 @@ function BatchForm({ batch }) {
         return <BatchReadOnly batch={batch} lockedByFinance={isExec && lockedByFinance && !cancelled} canRestore={isExec && cancelled} />
     }
 
-    const invoiceErrs = validateInvoiceForm(invoiceForm, todayStr)
+    const invoiceErrs = validateInvoiceForm(invoiceForm, todayStr, { gst: true })
     const summary = linesSummary(lines, invoiceForm.approvedAmount)
     const errors = {
         ...(supplierId ? {} : { supplier: 'Required' }),
@@ -244,7 +244,7 @@ function BatchForm({ batch }) {
                 batchId: batch?.id,
                 batch: { supplier_id: supplierId, invoice_url: invoiceUrl, billed_to: billedTo },
                 invoice: {
-                    ...invoiceFormToRow(invoiceForm),
+                    ...invoiceFormToRow(invoiceForm, { gst: true }),
                     ...(rejected ? { resubmit: true, resubmit_note: resubmitNote.trim() || null } : {}),
                 },
                 lines: lines.map(l => ({
@@ -490,6 +490,7 @@ function BatchForm({ batch }) {
                     errors={invoiceErrs}
                     showErrors={showErrors}
                     todayStr={todayStr}
+                    gst
                 />
             </section>
 
@@ -841,7 +842,7 @@ function BatchReadOnly({ batch, lockedByFinance, canRestore }) {
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                 <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-3">Invoice Details</h2>
-                <InvoiceDetailsReadOnly invoice={batch.invoice} />
+                <InvoiceDetailsReadOnly invoice={batch.invoice} gst />
             </section>
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
