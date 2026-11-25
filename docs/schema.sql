@@ -1612,6 +1612,23 @@ $$;
 ALTER FUNCTION public.assert_vehicle_assigned(p_registration text) OWNER TO postgres;
 
 --
+-- Name: backfill_transfers_on_assignment(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.backfill_transfers_on_assignment() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    PERFORM public.post_backfill_spare_transfers(NEW.registration_number);
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.backfill_transfers_on_assignment() OWNER TO postgres;
+
+--
 -- Name: calculate_issue_sla_dynamic(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -2498,6 +2515,37 @@ CREATE FUNCTION public.company_ledger_lines(p_company text) RETURNS TABLE(entry_
       select t.reversed_at, 6, -1, true where t.status = 'Reversed'
   ) x
   where  p_company in (t.from_company, t.to_company)
+
+  union all
+
+  -- MAIN-160: a job card invoice that stays with one company (from before go-live,
+  -- MAIN-161) on a card that belongs to the other moves its Approved Amount across,
+  -- like a spare transfer, while finance has it accepted.
+  select coalesce(oi.accepted_at, oi.updated_at), 7, oi.id,
+         case when o.owner = p_company then 'invoice_transfer_in' else 'invoice_transfer_out' end,
+         oi.date_of_activity,
+         case when o.owner = p_company then oi.approved_amount else -oi.approved_amount end,
+         case when o.owner = p_company then -oi.approved_amount else oi.approved_amount end,
+         (case when o.owner = p_company then 1 else -1 end)
+             * round(public.gst_breakdown_total(oi.gst_breakdown) * oi.approved_amount
+                     / nullif(oi.invoice_value, 0), 2),
+         'inter_company',
+         jsonb_build_object(
+             'invoice_no',      oi.invoice_no,
+             'supplier',        s.entity_name,
+             'finance_status',  oi.finance_payment_status,
+             'job_card_number', jc.job_card_number,
+             'vehicle',         jc.vehicle_number,
+             'other_company',   case when o.owner = p_company then oi.company else o.owner end)
+  from   public.outsource_invoices oi
+  join   public.job_cards jc on jc.id = oi.job_card_id
+  left join public.suppliers s on s.id = jc.supplier_id
+  cross join lateral (
+      select public.vehicle_company_at(jc.vehicle_number, jc.created_at at time zone 'UTC') as owner) o
+  where  oi.finance_payment_status in ('Accepted', 'GST reconciled & closed', 'GST not applicable & closed')
+    and  o.owner in ('nvs_travels', 'nvs_travel_solutions')
+    and  o.owner <> oi.company
+    and  p_company in (oi.company, o.owner)
 $$;
 
 
@@ -5333,6 +5381,48 @@ $$;
 ALTER FUNCTION public.payment_run_for(p_date date) OWNER TO postgres;
 
 --
+-- Name: post_backfill_spare_transfers(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.post_backfill_spare_transfers(p_registration text) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_n integer;
+BEGIN
+    INSERT INTO public.spare_transfers (
+        issue_part_id, issue_id, job_card_id, job_card_number, vehicle_number,
+        part_id, part_name, unit, quantity, from_company, to_company,
+        amount, gst, gst_breakdown, source, posted_at)
+    SELECT ip.id, ip.issue_id, jc.id, jc.job_card_number, jc.vehicle_number,
+           ip.part_id, p.name, p.unit, (ip.stock_draws ->> o.from_co)::numeric, o.from_co, o.owner,
+           (q.q ->> 'amount')::numeric, (q.q ->> 'gst')::numeric, q.q -> 'gst_breakdown',
+           'backfill', coalesce(ip.added_at, jc.created_at) AT TIME ZONE 'UTC'
+    FROM   public.job_cards   jc
+    JOIN   public.issues      i  ON i.job_card_id = jc.id
+    JOIN   public.issue_parts ip ON ip.issue_id = i.id
+    JOIN   public.parts       p  ON p.id = ip.part_id
+    CROSS  JOIN LATERAL (
+        SELECT x.owner, CASE x.owner WHEN 'nvs_travels' THEN 'nvs_travel_solutions' ELSE 'nvs_travels' END AS from_co
+        FROM   (SELECT public.vehicle_company_at(jc.vehicle_number, jc.created_at AT TIME ZONE 'UTC') AS owner) x
+    ) o
+    CROSS  JOIN LATERAL (SELECT public.spare_draw_quote(ip.id, o.from_co) AS q) q
+    WHERE  jc.vehicle_number = p_registration
+      AND  jc.type = 'InHouse'
+      AND  o.owner IN ('nvs_travels', 'nvs_travel_solutions')
+      AND  coalesce((ip.stock_draws ->> o.from_co)::numeric, 0) > 0
+      AND  NOT EXISTS (SELECT 1 FROM public.spare_transfers t WHERE t.issue_part_id = ip.id);
+
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RETURN v_n;
+END;
+$$;
+
+
+ALTER FUNCTION public.post_backfill_spare_transfers(p_registration text) OWNER TO postgres;
+
+--
 -- Name: preview_sla_changes(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -5475,6 +5565,9 @@ BEGIN
             END IF;
         END LOOP;
     END LOOP;
+
+    -- MAIN-160: backfilled transfers follow the new cost; live ones stay frozen.
+    PERFORM public.refresh_backfill_transfers(p_part_id, p_company);
 END;
 $$;
 
@@ -6476,6 +6569,33 @@ $$;
 
 
 ALTER FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) OWNER TO postgres;
+
+--
+-- Name: refresh_backfill_transfers(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.refresh_backfill_transfers(p_part_id uuid, p_company text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    UPDATE public.spare_transfers t
+    SET    amount        = (q.q ->> 'amount')::numeric,
+           gst           = (q.q ->> 'gst')::numeric,
+           gst_breakdown = q.q -> 'gst_breakdown'
+    FROM   public.spare_transfers t2
+    CROSS  JOIN LATERAL (SELECT public.spare_draw_quote(t2.issue_part_id, t2.from_company) AS q) q
+    WHERE  t2.id = t.id
+      AND  t.source = 'backfill' AND t.status = 'Active'
+      AND  t.part_id = p_part_id AND t.from_company = p_company
+      AND  (q.q ->> 'priced')::boolean
+      AND  ((q.q ->> 'amount')::numeric, (q.q ->> 'gst')::numeric, q.q -> 'gst_breakdown')
+           IS DISTINCT FROM (t.amount, t.gst, t.gst_breakdown);
+END;
+$$;
+
+
+ALTER FUNCTION public.refresh_backfill_transfers(p_part_id uuid, p_company text) OWNER TO postgres;
 
 --
 -- Name: refresh_overdue_slas(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -8494,6 +8614,41 @@ $$;
 ALTER FUNCTION public.spare_cost_amount(p_issue_part_id uuid) OWNER TO postgres;
 
 --
+-- Name: spare_draw_quote(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.spare_draw_quote(p_issue_part_id uuid, p_from text) RETURNS jsonb
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    WITH d AS (
+        SELECT d.quantity, d.amount,
+               coalesce(pii.gst_rate, o.gst_rate,
+                        CASE WHEN d.found_audit_item_id IS NOT NULL THEN public.part_latest_cost_gst_rate(d.part_id) END,
+                        0)::numeric AS rate
+        FROM   public.stock_cost_draws d
+        LEFT JOIN public.purchase_invoice_items pii ON pii.id = d.purchase_item_id
+        LEFT JOIN public.opening_stock_lots     o   ON o.id   = d.opening_lot_id
+        WHERE  d.issue_part_id = p_issue_part_id AND d.company = p_from
+    ), r AS (
+        SELECT rate, sum(amount) AS incl,
+               round(sum(amount) * 100 / (100 + rate), 2) AS before
+        FROM   d WHERE amount IS NOT NULL GROUP BY rate
+    )
+    SELECT jsonb_build_object(
+        'quantity',      (SELECT coalesce(sum(quantity), 0) FROM d),
+        'amount',        coalesce((SELECT sum(incl) FROM r), 0),
+        'gst',           coalesce((SELECT sum(incl - before) FROM r), 0),
+        'gst_breakdown', coalesce((SELECT jsonb_agg(jsonb_build_object('rate', rate, 'before_gst', before,
+                                                                      'gst', incl - before, 'incl_gst', incl)
+                                                    ORDER BY rate) FROM r), '[]'::jsonb),
+        'priced',        NOT EXISTS (SELECT 1 FROM d WHERE amount IS NULL))
+$$;
+
+
+ALTER FUNCTION public.spare_draw_quote(p_issue_part_id uuid, p_from text) OWNER TO postgres;
+
+--
 -- Name: spare_transfer(public.issue_parts); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -8525,13 +8680,11 @@ CREATE FUNCTION public.spare_transfer_quote(p_issue_part_id uuid) RETURNS jsonb
     SET search_path TO 'public'
     AS $$
 DECLARE
-    v_ip        record;
-    v_to        text;
-    v_from      text;
-    v_qty       numeric;
-    v_rows      jsonb;
-    v_amount    numeric;
-    v_gst       numeric;
+    v_ip   record;
+    v_to   text;
+    v_from text;
+    v_qty  numeric;
+    v_q    jsonb;
 BEGIN
     SELECT ip.*, jc.id AS jc_id, jc.job_card_number, jc.vehicle_number, p.name AS part_name, p.unit
     INTO   v_ip
@@ -8553,25 +8706,7 @@ BEGIN
         RETURN NULL;
     END IF;
 
-    WITH d AS (
-        SELECT d.amount,
-               coalesce(pii.gst_rate, o.gst_rate,
-                        CASE WHEN d.found_audit_item_id IS NOT NULL THEN public.part_latest_cost_gst_rate(d.part_id) END,
-                        0)::numeric AS rate
-        FROM   public.stock_cost_draws d
-        LEFT JOIN public.purchase_invoice_items pii ON pii.id = d.purchase_item_id
-        LEFT JOIN public.opening_stock_lots     o   ON o.id   = d.opening_lot_id
-        WHERE  d.issue_part_id = p_issue_part_id AND d.company = v_from
-    ), r AS (
-        SELECT rate, sum(amount) AS incl,
-               round(sum(amount) * 100 / (100 + rate), 2) AS before
-        FROM   d GROUP BY rate
-    )
-    SELECT jsonb_agg(jsonb_build_object('rate', rate, 'before_gst', before, 'gst', incl - before, 'incl_gst', incl)
-                     ORDER BY rate),
-           sum(incl), sum(incl - before)
-    INTO   v_rows, v_amount, v_gst
-    FROM   r;
+    v_q := public.spare_draw_quote(p_issue_part_id, v_from);
 
     RETURN jsonb_build_object(
         'issue_part_id',   p_issue_part_id,
@@ -8582,9 +8717,9 @@ BEGIN
         'to_company',      v_to,
         'quantity',        v_qty,
         'own_quantity',    v_ip.quantity_used - v_qty,
-        'amount',          coalesce(v_amount, 0),
-        'gst',             coalesce(v_gst, 0),
-        'gst_breakdown',   coalesce(v_rows, '[]'::jsonb),
+        'amount',          v_q -> 'amount',
+        'gst',             v_q -> 'gst',
+        'gst_breakdown',   v_q -> 'gst_breakdown',
         'job_card_number', v_ip.job_card_number,
         'vehicle',         v_ip.vehicle_number);
 END;
@@ -9566,6 +9701,44 @@ $$;
 
 
 ALTER FUNCTION public.update_ticket_status_on_issue_change() OWNER TO postgres;
+
+--
+-- Name: vehicle_company_at(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT coalesce(
+        -- The latest sale on or before then.
+        (SELECT c.new_company
+         FROM   public.vehicle_company_changes c
+         JOIN   public.vehicles v ON v.id = c.vehicle_id
+         WHERE  v.registration_number = p_registration
+           AND  c.kind = 'sale' AND c.created_at <= p_at
+         ORDER  BY c.created_at DESC
+         LIMIT  1),
+        -- Else the first company it was recorded under, which counts from the beginning.
+        (SELECT c.new_company
+         FROM   public.vehicle_company_changes c
+         JOIN   public.vehicles v ON v.id = c.vehicle_id
+         WHERE  v.registration_number = p_registration
+           AND  c.kind IN ('initial_load', 'assignment')
+         ORDER  BY c.created_at
+         LIMIT  1),
+        'unknown')
+$$;
+
+
+ALTER FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) OWNER TO postgres;
+
+--
+-- Name: FUNCTION vehicle_company_at(p_registration text, p_at timestamp with time zone); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) IS 'MAIN-160: the company a vehicle belonged to at a moment — the latest sale on or before it, else its first recorded company (initial load or first assignment, counting from the beginning), else unknown.';
+
 
 --
 -- Name: vehicle_open_work(text); Type: FUNCTION; Schema: public; Owner: postgres
@@ -14673,7 +14846,7 @@ ALTER TABLE public.spare_transfers OWNER TO postgres;
 -- Name: TABLE spare_transfers; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON TABLE public.spare_transfers IS 'MAIN-159: spares one company''s stock supplied to the other company''s vehicle. Amount (incl. GST) frozen when posted; posted only by add_spare() (and MAIN-160''s backfill). Reversed, never deleted, when the spare is removed. Read by company_ledger_lines.';
+COMMENT ON TABLE public.spare_transfers IS 'MAIN-159: spares one company''s stock supplied to the other company''s vehicle. Posted by add_spare() (source job_card, amount incl. GST frozen when confirmed) and by MAIN-160''s backfill (source backfill, amount follows the spare''s cost through rebuild_part_cost). Reversed, never deleted, when the spare is removed. Read by company_ledger_lines.';
 
 
 --
@@ -18046,6 +18219,13 @@ CREATE TRIGGER purchase_invoices_sync_invoice_company AFTER UPDATE OF billed_to 
 --
 
 CREATE TRIGGER trg_acceptance_sla_on_first_issue AFTER INSERT ON public.issues FOR EACH ROW EXECUTE FUNCTION public.trg_set_acceptance_sla_on_first_issue();
+
+
+--
+-- Name: vehicle_company_changes trg_backfill_transfers_on_assignment; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_backfill_transfers_on_assignment AFTER INSERT ON public.vehicle_company_changes FOR EACH ROW WHEN ((new.kind = 'assignment'::text)) EXECUTE FUNCTION public.backfill_transfers_on_assignment();
 
 
 --
@@ -21784,6 +21964,15 @@ GRANT ALL ON FUNCTION public.assert_vehicle_assigned(p_registration text) TO ser
 
 
 --
+-- Name: FUNCTION backfill_transfers_on_assignment(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.backfill_transfers_on_assignment() TO anon;
+GRANT ALL ON FUNCTION public.backfill_transfers_on_assignment() TO authenticated;
+GRANT ALL ON FUNCTION public.backfill_transfers_on_assignment() TO service_role;
+
+
+--
 -- Name: FUNCTION calculate_issue_sla_dynamic(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -22520,6 +22709,16 @@ GRANT ALL ON FUNCTION public.payment_run_for(p_date date) TO service_role;
 
 
 --
+-- Name: FUNCTION post_backfill_spare_transfers(p_registration text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.post_backfill_spare_transfers(p_registration text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.post_backfill_spare_transfers(p_registration text) TO anon;
+GRANT ALL ON FUNCTION public.post_backfill_spare_transfers(p_registration text) TO authenticated;
+GRANT ALL ON FUNCTION public.post_backfill_spare_transfers(p_registration text) TO service_role;
+
+
+--
 -- Name: FUNCTION preview_sla_changes(p_change jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -22615,6 +22814,16 @@ GRANT ALL ON FUNCTION public.record_scrap_writeoff(p_header jsonb, p_items jsonb
 GRANT ALL ON FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) TO anon;
 GRANT ALL ON FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.record_supplier_payment(p_supplier_id uuid, p_payment jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION refresh_backfill_transfers(p_part_id uuid, p_company text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.refresh_backfill_transfers(p_part_id uuid, p_company text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.refresh_backfill_transfers(p_part_id uuid, p_company text) TO anon;
+GRANT ALL ON FUNCTION public.refresh_backfill_transfers(p_part_id uuid, p_company text) TO authenticated;
+GRANT ALL ON FUNCTION public.refresh_backfill_transfers(p_part_id uuid, p_company text) TO service_role;
 
 
 --
@@ -22946,6 +23155,16 @@ GRANT ALL ON FUNCTION public.spare_cost_amount(p_issue_part_id uuid) TO service_
 
 
 --
+-- Name: FUNCTION spare_draw_quote(p_issue_part_id uuid, p_from text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.spare_draw_quote(p_issue_part_id uuid, p_from text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.spare_draw_quote(p_issue_part_id uuid, p_from text) TO anon;
+GRANT ALL ON FUNCTION public.spare_draw_quote(p_issue_part_id uuid, p_from text) TO authenticated;
+GRANT ALL ON FUNCTION public.spare_draw_quote(p_issue_part_id uuid, p_from text) TO service_role;
+
+
+--
 -- Name: FUNCTION spare_transfer(ip public.issue_parts); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -23167,6 +23386,16 @@ GRANT ALL ON FUNCTION public.trg_stamp_acceptance_deadline() TO service_role;
 GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO anon;
 GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO authenticated;
 GRANT ALL ON FUNCTION public.update_ticket_status_on_issue_change() TO service_role;
+
+
+--
+-- Name: FUNCTION vehicle_company_at(p_registration text, p_at timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) TO anon;
+GRANT ALL ON FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) TO authenticated;
+GRANT ALL ON FUNCTION public.vehicle_company_at(p_registration text, p_at timestamp with time zone) TO service_role;
 
 
 --

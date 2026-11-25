@@ -179,7 +179,10 @@ function Ledger({ company }) {
                             from the other company counts in Owed between companies, not in Spent. A spare transferred from the other
                             company&apos;s stock to this company&apos;s vehicle adds to this company&apos;s Spent and to what it owes; one
                             transferred to the other company&apos;s vehicle takes it off this company&apos;s Spent and is owed back. Removing
-                            the spare reverses it on the day it was removed. A reconciliation adjustment
+                            the spare reverses it on the day it was removed. Spares used before transfers were recorded are
+                            transferred on the day they were used, at their current cost. A job card invoice from before go-live
+                            stays with NVS Travels; if the card belongs to Pvt Ltd, an invoice transfer moves its Approved Amount
+                            across once finance accepts it. A reconciliation adjustment
                             moves only the figure it reconciles, and has no GST.
                         </p>
                     </>
