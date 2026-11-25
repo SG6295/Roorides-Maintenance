@@ -1053,6 +1053,67 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
 ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO supabase_admin;
 
 --
+-- Name: add_opening_stock_price(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.add_opening_stock_price(p_part_id uuid, p_price jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_price   numeric;
+    v_gst     numeric;
+    v_company text;
+    v_gap     numeric;
+    v_name    text;
+    v_added   jsonb := '[]'::jsonb;
+BEGIN
+    IF NOT public.is_maintenance_exec() THEN
+        RAISE EXCEPTION 'Only a maintenance exec can set a part''s price.' USING ERRCODE = '42501';
+    END IF;
+
+    PERFORM 1 FROM public.parts WHERE id = p_part_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Part not found.';
+    END IF;
+
+    BEGIN
+        v_price := (p_price ->> 'unit_price')::numeric;
+        v_gst   := (p_price ->> 'gst_rate')::numeric;
+    EXCEPTION WHEN others THEN
+        RAISE EXCEPTION 'Enter the price and the GST %%.';
+    END;
+    IF v_price IS NULL OR v_price < 0 THEN
+        RAISE EXCEPTION 'Enter a price of 0 or more.';
+    END IF;
+    IF v_gst IS NULL OR NOT (v_gst = ANY (public.gst_rates())) THEN
+        RAISE EXCEPTION 'Choose a GST %% from the list.';
+    END IF;
+
+    SELECT name INTO v_name FROM public.users WHERE id = auth.uid();
+
+    FOREACH v_company IN ARRAY ARRAY['nvs_travels', 'nvs_travel_solutions']
+    LOOP
+        v_gap := public.part_cost_gap(p_part_id, v_company);
+        IF v_gap > 0 THEN
+            INSERT INTO public.opening_stock_lots (part_id, company, quantity, unit_price, gst_rate, source, created_by, created_by_name)
+            VALUES (p_part_id, v_company, v_gap, round(v_price, 2), v_gst, 'exec', auth.uid(), coalesce(v_name, ''));
+            v_added := v_added || jsonb_build_object('company', v_company, 'quantity', v_gap);
+        END IF;
+    END LOOP;
+
+    IF jsonb_array_length(v_added) = 0 THEN
+        RAISE EXCEPTION 'All of this part''s stock already has a price.';
+    END IF;
+
+    RETURN v_added;
+END;
+$$;
+
+
+ALTER FUNCTION public.add_opening_stock_price(p_part_id uuid, p_price jsonb) OWNER TO postgres;
+
+--
 -- Name: add_part_to_inventory(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4479,6 +4540,22 @@ $$;
 ALTER FUNCTION public.is_super_admin() OWNER TO postgres;
 
 --
+-- Name: is_workshop_move_invoice(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.is_workshop_move_invoice(p_purchase_number integer) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
+    AS $$
+    -- "Bannerghatta Hub", ₹1 lines: stock moved Bannerghatta → Mahadevpura before stock
+    -- transfers existed. Also left out of company_ledger_lines.
+    SELECT p_purchase_number IN (176, 180, 183, 185);
+$$;
+
+
+ALTER FUNCTION public.is_workshop_move_invoice(p_purchase_number integer) OWNER TO postgres;
+
+--
 -- Name: job_card_invoice_company(uuid); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4544,6 +4621,71 @@ $$;
 
 
 ALTER FUNCTION public.job_card_stock_company(p_job_card_id uuid) OWNER TO postgres;
+
+--
+-- Name: job_cards; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.job_cards (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    job_card_number integer NOT NULL,
+    created_at timestamp without time zone DEFAULT now(),
+    type public.work_type_enum NOT NULL,
+    assigned_mechanic_id uuid,
+    vehicle_number text NOT NULL,
+    site text NOT NULL,
+    status public.job_card_status DEFAULT 'Open'::public.job_card_status,
+    completed_at timestamp without time zone,
+    remarks text,
+    supplier_id uuid,
+    invoice_url text,
+    odometer integer,
+    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
+    CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at))),
+    CONSTRAINT job_cards_odometer_check CHECK (((odometer IS NULL) OR (odometer >= 0)))
+);
+
+
+ALTER TABLE public.job_cards OWNER TO postgres;
+
+--
+-- Name: COLUMN job_cards.location_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.job_cards.location_id IS 'Workshop where the repair happens. InHouse cards consume stock from this location. Distinct from job_cards.site, which is the customer site the vehicle runs at.';
+
+
+--
+-- Name: job_card_value(public.job_cards); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.job_card_value(jc public.job_cards) RETURNS numeric
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT CASE
+        WHEN NOT (public.is_maintenance_exec() OR public.is_finance()) THEN NULL
+        WHEN jc.type = 'Outsource' THEN coalesce(
+            (SELECT max(oi.approved_amount) FROM public.outsource_invoices oi WHERE oi.job_card_id = jc.id),
+            (SELECT sum(bsv.amount)
+             FROM   public.batch_service_vehicles bsv
+             JOIN   public.batch_services bs ON bs.id = bsv.batch_service_id
+             WHERE  bsv.job_card_id = jc.id AND bs.status <> 'Cancelled'))
+        WHEN EXISTS (
+            SELECT 1 FROM public.issues i
+            JOIN   public.issue_parts ip ON ip.issue_id = i.id
+            JOIN   public.stock_cost_draws d ON d.issue_part_id = ip.id
+            WHERE  i.job_card_id = jc.id AND d.unit_cost IS NULL) THEN NULL
+        ELSE coalesce((
+            SELECT sum(d.amount) FROM public.issues i
+            JOIN   public.issue_parts ip ON ip.issue_id = i.id
+            JOIN   public.stock_cost_draws d ON d.issue_part_id = ip.id
+            WHERE  i.job_card_id = jc.id), 0)
+    END;
+$$;
+
+
+ALTER FUNCTION public.job_card_value(jc public.job_cards) OWNER TO postgres;
 
 --
 -- Name: log_batch_service_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4851,6 +4993,102 @@ $$;
 ALTER FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_service_id uuid, p_purchase_kind text) OWNER TO postgres;
 
 --
+-- Name: part_cost_consumers(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.part_cost_consumers(p_part_id uuid, p_company text) RETURNS TABLE(kind text, consumer_id uuid, quantity numeric, at_time timestamp without time zone)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT 'spare'::text, ip.id,
+           CASE WHEN ip.stock_draws ? p_company THEN (ip.stock_draws ->> p_company)::numeric
+                ELSE ip.quantity_used::numeric END,
+           coalesce(ip.added_at, 'epoch'::timestamp)
+    FROM   public.issue_parts ip
+    JOIN   public.issues i ON i.id = ip.issue_id
+    JOIN   public.job_cards jc ON jc.id = i.job_card_id
+    WHERE  ip.part_id = p_part_id
+      AND  (ip.stock_draws ? p_company
+            OR (ip.stock_draws = '{}'::jsonb AND jc.type = 'InHouse' AND p_company = 'nvs_travels'))
+    UNION ALL
+    SELECT 'audit', i.id, -i.applied_delta::numeric, a.completed_at
+    FROM   public.stock_audit_items i
+    JOIN   public.stock_audits a ON a.id = i.audit_id
+    WHERE  a.status = 'completed' AND i.part_id = p_part_id AND i.company = p_company
+      AND  i.applied_delta < 0;
+$$;
+
+
+ALTER FUNCTION public.part_cost_consumers(p_part_id uuid, p_company text) OWNER TO postgres;
+
+--
+-- Name: part_cost_gap(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.part_cost_gap(p_part_id uuid, p_company text) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT coalesce((SELECT sum(quantity) FROM public.part_stock WHERE part_id = p_part_id AND company = p_company), 0)
+         + coalesce((SELECT sum(quantity) FROM public.part_cost_consumers(p_part_id, p_company)), 0)
+         - coalesce((SELECT sum(quantity) FROM public.part_cost_lots(p_part_id, p_company)), 0);
+$$;
+
+
+ALTER FUNCTION public.part_cost_gap(p_part_id uuid, p_company text) OWNER TO postgres;
+
+--
+-- Name: part_cost_lots(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) RETURNS TABLE(kind text, lot_id uuid, quantity numeric, unit_cost numeric, rnk integer, at_time timestamp without time zone, recorded_at timestamp without time zone)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_found_cost numeric;
+BEGIN
+    -- Stock found in an audit takes the part's latest cost: its latest purchase, else
+    -- its latest opening price, else nothing.
+    SELECT x.cost INTO v_found_cost FROM (
+        SELECT ((pii.quantity * pii.unit_price - pii.discount_amount) * (1 + pii.gst_rate / 100.0)) / pii.quantity AS cost,
+               1 AS r, pi.invoice_date::timestamp AS t, pi.created_at AS t2
+        FROM   public.purchase_invoice_items pii
+        JOIN   public.purchase_invoices pi ON pi.id = pii.invoice_id
+        WHERE  pii.part_id = p_part_id AND NOT public.is_workshop_move_invoice(pi.purchase_number)
+        UNION ALL
+        SELECT o.unit_cost, 0, o.created_at::timestamp, o.created_at::timestamp
+        FROM   public.opening_stock_lots o
+        WHERE  o.part_id = p_part_id
+    ) x
+    ORDER BY x.r DESC, x.t DESC, x.t2 DESC
+    LIMIT 1;
+
+    RETURN QUERY
+    SELECT 'opening'::text, o.id, o.quantity::numeric, o.unit_cost::numeric, 0, o.created_at::timestamp, o.created_at::timestamp
+    FROM   public.opening_stock_lots o
+    WHERE  o.part_id = p_part_id AND o.company = p_company
+    UNION ALL
+    SELECT 'purchase', pii.id, pii.quantity::numeric,
+           ((pii.quantity * pii.unit_price - pii.discount_amount) * (1 + pii.gst_rate / 100.0)) / pii.quantity,
+           1, pi.invoice_date::timestamp, pi.created_at
+    FROM   public.purchase_invoice_items pii
+    JOIN   public.purchase_invoices pi ON pi.id = pii.invoice_id
+    WHERE  pii.part_id = p_part_id AND pi.billed_to = p_company
+      AND  NOT public.is_workshop_move_invoice(pi.purchase_number)
+    UNION ALL
+    SELECT 'found', i.id, i.applied_delta::numeric, coalesce(v_found_cost, 0), 1, a.completed_at, a.completed_at
+    FROM   public.stock_audit_items i
+    JOIN   public.stock_audits a ON a.id = i.audit_id
+    WHERE  a.status = 'completed' AND i.part_id = p_part_id AND i.company = p_company
+      AND  i.applied_delta > 0;
+END;
+$$;
+
+
+ALTER FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) OWNER TO postgres;
+
+--
 -- Name: part_name_key(text); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -4944,6 +5182,91 @@ $$;
 
 
 ALTER FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) OWNER TO postgres;
+
+--
+-- Name: rebuild_part_cost(uuid, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.rebuild_part_cost(p_part_id uuid, p_company text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_kind  text[];
+    v_id    uuid[];
+    v_qty   numeric[];
+    v_cost  numeric[];
+    v_n     integer;
+    v_i     integer := 1;
+    v_left  numeric := 0;
+    v_need  numeric;
+    v_take  numeric;
+    c       record;
+BEGIN
+    IF p_part_id IS NULL OR p_company IS NULL THEN
+        RETURN;
+    END IF;
+
+    PERFORM pg_advisory_xact_lock(hashtextextended('stock_cost:' || p_part_id::text || ':' || p_company, 0));
+
+    DELETE FROM public.stock_cost_draws WHERE part_id = p_part_id AND company = p_company;
+
+    SELECT array_agg(l.kind     ORDER BY l.rnk, l.at_time, l.recorded_at, l.lot_id),
+           array_agg(l.lot_id   ORDER BY l.rnk, l.at_time, l.recorded_at, l.lot_id),
+           array_agg(l.quantity ORDER BY l.rnk, l.at_time, l.recorded_at, l.lot_id),
+           array_agg(l.unit_cost ORDER BY l.rnk, l.at_time, l.recorded_at, l.lot_id)
+    INTO   v_kind, v_id, v_qty, v_cost
+    FROM   public.part_cost_lots(p_part_id, p_company) l;
+
+    v_n := coalesce(cardinality(v_id), 0);
+    IF v_n > 0 THEN
+        v_left := v_qty[1];
+    END IF;
+
+    FOR c IN
+        SELECT * FROM public.part_cost_consumers(p_part_id, p_company) x
+        ORDER BY x.at_time, x.consumer_id
+    LOOP
+        v_need := c.quantity;
+        WHILE v_need > 0 LOOP
+            -- Step past used-up lots.
+            WHILE v_i <= v_n AND v_left <= 0 LOOP
+                v_i := v_i + 1;
+                IF v_i <= v_n THEN
+                    v_left := v_qty[v_i];
+                END IF;
+            END LOOP;
+
+            IF v_i > v_n THEN
+                -- No lot left: this quantity has no price.
+                INSERT INTO public.stock_cost_draws (part_id, company, issue_part_id, audit_item_id, quantity, unit_cost)
+                VALUES (p_part_id, p_company,
+                        CASE WHEN c.kind = 'spare' THEN c.consumer_id END,
+                        CASE WHEN c.kind = 'audit' THEN c.consumer_id END,
+                        v_need, NULL);
+                v_need := 0;
+            ELSE
+                v_take := least(v_need, v_left);
+                INSERT INTO public.stock_cost_draws (part_id, company, issue_part_id, audit_item_id,
+                                                     purchase_item_id, opening_lot_id, found_audit_item_id,
+                                                     quantity, unit_cost)
+                VALUES (p_part_id, p_company,
+                        CASE WHEN c.kind = 'spare' THEN c.consumer_id END,
+                        CASE WHEN c.kind = 'audit' THEN c.consumer_id END,
+                        CASE WHEN v_kind[v_i] = 'purchase' THEN v_id[v_i] END,
+                        CASE WHEN v_kind[v_i] = 'opening'  THEN v_id[v_i] END,
+                        CASE WHEN v_kind[v_i] = 'found'    THEN v_id[v_i] END,
+                        v_take, v_cost[v_i]);
+                v_left := v_left - v_take;
+                v_need := v_need - v_take;
+            END IF;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
+
+ALTER FUNCTION public.rebuild_part_cost(p_part_id uuid, p_company text) OWNER TO postgres;
 
 --
 -- Name: recalculate_ticket_sla_on_status_change(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -7864,6 +8187,53 @@ $$;
 ALTER FUNCTION public.sla_version_at(p_at timestamp with time zone) OWNER TO postgres;
 
 --
+-- Name: issue_parts; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.issue_parts (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    issue_id uuid NOT NULL,
+    part_id uuid NOT NULL,
+    quantity_used numeric(10,2) NOT NULL,
+    added_by uuid,
+    added_at timestamp without time zone DEFAULT now(),
+    outsource_part_disposition public.outsource_part_disposition,
+    outsource_vendor_credit_amount numeric(10,2),
+    stock_draws jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT issue_parts_outsource_credit_consistency CHECK (((outsource_part_disposition = 'retained_by_vendor_with_credit'::public.outsource_part_disposition) = (outsource_vendor_credit_amount IS NOT NULL))),
+    CONSTRAINT issue_parts_quantity_used_check CHECK ((quantity_used > (0)::numeric))
+);
+
+
+ALTER TABLE public.issue_parts OWNER TO postgres;
+
+--
+-- Name: COLUMN issue_parts.stock_draws; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.issue_parts.stock_draws IS 'How much of this spare came from each company''s stock, e.g. {"nvs_travels": 2} (MAIN-157). Empty on outsourced cards. Removing the spare returns exactly this. An empty object on an in-house line from before MAIN-157 reaching an environment means it was all NVS Travels.';
+
+
+--
+-- Name: spare_cost(public.issue_parts); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.spare_cost(ip public.issue_parts) RETURNS numeric
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+    SELECT CASE
+        WHEN NOT (public.is_maintenance_exec() OR public.is_finance()) THEN NULL
+        WHEN NOT EXISTS (SELECT 1 FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id) THEN NULL
+        WHEN EXISTS (SELECT 1 FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id AND d.unit_cost IS NULL) THEN NULL
+        ELSE (SELECT sum(d.amount) FROM public.stock_cost_draws d WHERE d.issue_part_id = ip.id)
+    END;
+$$;
+
+
+ALTER FUNCTION public.spare_cost(ip public.issue_parts) OWNER TO postgres;
+
+--
 -- Name: stamp_outsource_invoice_accepted_at(); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -8124,6 +8494,180 @@ ALTER FUNCTION public.stock_company_label(p_company text) OWNER TO postgres;
 
 COMMENT ON FUNCTION public.stock_company_label(p_company text) IS 'Display name of a stock company (MAIN-157). Mirrors companyLabel() in src/constants/vehicleCompanies.js.';
 
+
+--
+-- Name: stock_cost_on_audit_completed(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stock_cost_on_audit_completed() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN
+        SELECT DISTINCT part_id, company FROM public.stock_audit_items
+        WHERE  audit_id = NEW.id AND coalesce(applied_delta, 0) <> 0
+    LOOP
+        PERFORM public.rebuild_part_cost(r.part_id, r.company);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.stock_cost_on_audit_completed() OWNER TO postgres;
+
+--
+-- Name: stock_cost_on_issue_part_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stock_cost_on_issue_part_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_company text;
+    v_qty     numeric;
+    v_part    record;
+BEGIN
+    -- Closure writes outsource_part_disposition onto spares; nothing that costs them.
+    IF TG_OP = 'UPDATE'
+       AND (NEW.part_id, NEW.issue_id, NEW.quantity_used, NEW.stock_draws, NEW.added_at)
+           IS NOT DISTINCT FROM (OLD.part_id, OLD.issue_id, OLD.quantity_used, OLD.stock_draws, OLD.added_at) THEN
+        RETURN NULL;
+    END IF;
+
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        FOR v_company IN
+            SELECT k FROM jsonb_object_keys(OLD.stock_draws) k
+            UNION SELECT 'nvs_travels' WHERE OLD.stock_draws = '{}'::jsonb
+        LOOP
+            PERFORM public.rebuild_part_cost(OLD.part_id, v_company);
+        END LOOP;
+    END IF;
+
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        FOR v_company IN
+            SELECT k FROM jsonb_object_keys(NEW.stock_draws) k
+            UNION SELECT 'nvs_travels' WHERE NEW.stock_draws = '{}'::jsonb
+        LOOP
+            PERFORM public.rebuild_part_cost(NEW.part_id, v_company);
+        END LOOP;
+
+        IF TG_OP = 'INSERT' AND auth.uid() IS NOT NULL THEN
+            SELECT d.company, sum(d.quantity) INTO v_company, v_qty
+            FROM   public.stock_cost_draws d
+            WHERE  d.issue_part_id = NEW.id AND d.unit_cost IS NULL
+            GROUP  BY d.company
+            LIMIT  1;
+
+            IF v_qty IS NOT NULL THEN
+                SELECT name, unit INTO v_part FROM public.parts WHERE id = NEW.part_id;
+                RAISE EXCEPTION 'No price is recorded for % (%): some of its stock never came in on a recorded purchase.',
+                    v_part.name, public.stock_company_label(v_company)
+                    USING HINT = 'PART_NEEDS_PRICE',
+                          DETAIL = json_build_object('part_id', NEW.part_id, 'part_name', v_part.name,
+                                                     'unit', v_part.unit, 'company', v_company,
+                                                     'quantity', v_qty)::text;
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.stock_cost_on_issue_part_change() OWNER TO postgres;
+
+--
+-- Name: stock_cost_on_opening_lot_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stock_cost_on_opening_lot_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        PERFORM public.rebuild_part_cost(OLD.part_id, OLD.company);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        PERFORM public.rebuild_part_cost(NEW.part_id, NEW.company);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.stock_cost_on_opening_lot_change() OWNER TO postgres;
+
+--
+-- Name: stock_cost_on_purchase_header_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stock_cost_on_purchase_header_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_part uuid;
+BEGIN
+    IF (NEW.billed_to, NEW.invoice_date, NEW.purchase_number)
+       IS NOT DISTINCT FROM (OLD.billed_to, OLD.invoice_date, OLD.purchase_number) THEN
+        RETURN NULL;
+    END IF;
+
+    FOR v_part IN SELECT DISTINCT part_id FROM public.purchase_invoice_items WHERE invoice_id = NEW.id
+    LOOP
+        PERFORM public.rebuild_part_cost(v_part, OLD.billed_to);
+        IF NEW.billed_to <> OLD.billed_to THEN
+            PERFORM public.rebuild_part_cost(v_part, NEW.billed_to);
+        END IF;
+    END LOOP;
+
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.stock_cost_on_purchase_header_change() OWNER TO postgres;
+
+--
+-- Name: stock_cost_on_purchase_line_change(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.stock_cost_on_purchase_line_change() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_company text;
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        SELECT billed_to INTO v_company FROM public.purchase_invoices WHERE id = OLD.invoice_id;
+        IF v_company IS NULL THEN
+            -- The invoice itself is being deleted: rebuild both companies.
+            PERFORM public.rebuild_part_cost(OLD.part_id, 'nvs_travels');
+            PERFORM public.rebuild_part_cost(OLD.part_id, 'nvs_travel_solutions');
+        ELSE
+            PERFORM public.rebuild_part_cost(OLD.part_id, v_company);
+        END IF;
+    END IF;
+
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        SELECT billed_to INTO v_company FROM public.purchase_invoices WHERE id = NEW.invoice_id;
+        PERFORM public.rebuild_part_cost(NEW.part_id, v_company);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.stock_cost_on_purchase_line_change() OWNER TO postgres;
 
 --
 -- Name: submit_invoice_on_insert(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -12984,34 +13528,6 @@ CREATE TABLE public.issue_labour (
 ALTER TABLE public.issue_labour OWNER TO postgres;
 
 --
--- Name: issue_parts; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.issue_parts (
-    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    issue_id uuid NOT NULL,
-    part_id uuid NOT NULL,
-    quantity_used numeric(10,2) NOT NULL,
-    added_by uuid,
-    added_at timestamp without time zone DEFAULT now(),
-    outsource_part_disposition public.outsource_part_disposition,
-    outsource_vendor_credit_amount numeric(10,2),
-    stock_draws jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_parts_outsource_credit_consistency CHECK (((outsource_part_disposition = 'retained_by_vendor_with_credit'::public.outsource_part_disposition) = (outsource_vendor_credit_amount IS NOT NULL))),
-    CONSTRAINT issue_parts_quantity_used_check CHECK ((quantity_used > (0)::numeric))
-);
-
-
-ALTER TABLE public.issue_parts OWNER TO postgres;
-
---
--- Name: COLUMN issue_parts.stock_draws; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.issue_parts.stock_draws IS 'How much of this spare came from each company''s stock, e.g. {"nvs_travels": 2} (MAIN-157). Empty on outsourced cards. Removing the spare returns exactly this. An empty object on an in-house line from before MAIN-157 reaching an environment means it was all NVS Travels.';
-
-
---
 -- Name: issues; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -13068,39 +13584,6 @@ COMMENT ON COLUMN public.issues.completed_at IS 'Activity complete time: when th
 --
 
 COMMENT ON COLUMN public.issues.sla_version_id IS 'SLA version active when the issue was added: its Turnaround Time. Working days follow the ticket''s version. NULL on tickets raised before SLA tracking (MAIN-136).';
-
-
---
--- Name: job_cards; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.job_cards (
-    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    job_card_number integer NOT NULL,
-    created_at timestamp without time zone DEFAULT now(),
-    type public.work_type_enum NOT NULL,
-    assigned_mechanic_id uuid,
-    vehicle_number text NOT NULL,
-    site text NOT NULL,
-    status public.job_card_status DEFAULT 'Open'::public.job_card_status,
-    completed_at timestamp without time zone,
-    remarks text,
-    supplier_id uuid,
-    invoice_url text,
-    odometer integer,
-    location_id uuid DEFAULT 'a1e1d4c0-0000-4000-8000-000000000001'::uuid NOT NULL,
-    CONSTRAINT check_completed_after_created CHECK (((completed_at IS NULL) OR (completed_at >= created_at))),
-    CONSTRAINT job_cards_odometer_check CHECK (((odometer IS NULL) OR (odometer >= 0)))
-);
-
-
-ALTER TABLE public.job_cards OWNER TO postgres;
-
---
--- Name: COLUMN job_cards.location_id; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.job_cards.location_id IS 'Workshop where the repair happens. InHouse cards consume stock from this location. Distinct from job_cards.site, which is the customer site the vehicle runs at.';
 
 
 --
@@ -13208,6 +13691,40 @@ CREATE VIEW public.maintenance_dashboard_stats AS
 
 
 ALTER VIEW public.maintenance_dashboard_stats OWNER TO postgres;
+
+--
+-- Name: opening_stock_lots; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.opening_stock_lots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    part_id uuid NOT NULL,
+    company text DEFAULT 'nvs_travels'::text NOT NULL,
+    quantity numeric(12,2) NOT NULL,
+    unit_price numeric(12,2) NOT NULL,
+    gst_rate numeric(5,2) DEFAULT 0 NOT NULL,
+    unit_cost numeric(14,4) GENERATED ALWAYS AS (round((unit_price * ((1)::numeric + (gst_rate / 100.0))), 4)) STORED,
+    source text DEFAULT 'price_sheet'::text NOT NULL,
+    note text,
+    created_by uuid,
+    created_by_name text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT opening_stock_lots_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
+    CONSTRAINT opening_stock_lots_gst_rate_check CHECK (((gst_rate >= (0)::numeric) AND (gst_rate <= (100)::numeric))),
+    CONSTRAINT opening_stock_lots_quantity_check CHECK ((quantity > (0)::numeric)),
+    CONSTRAINT opening_stock_lots_source_check CHECK ((source = ANY (ARRAY['price_sheet'::text, 'exec'::text]))),
+    CONSTRAINT opening_stock_lots_unit_price_check CHECK ((unit_price >= (0)::numeric))
+);
+
+
+ALTER TABLE public.opening_stock_lots OWNER TO postgres;
+
+--
+-- Name: TABLE opening_stock_lots; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.opening_stock_lots IS 'MAIN-158: stock that never came in through a recorded purchase, priced. Always first in the first-in-first-out queue. Written only by the MAIN-158 migration and add_opening_stock_price().';
+
 
 --
 -- Name: part_stock; Type: TABLE; Schema: public; Owner: postgres
@@ -13932,6 +14449,39 @@ ALTER SEQUENCE public.stock_audits_audit_number_seq OWNER TO postgres;
 --
 
 ALTER SEQUENCE public.stock_audits_audit_number_seq OWNED BY public.stock_audits.audit_number;
+
+
+--
+-- Name: stock_cost_draws; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.stock_cost_draws (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    part_id uuid NOT NULL,
+    company text NOT NULL,
+    issue_part_id uuid,
+    audit_item_id uuid,
+    purchase_item_id uuid,
+    opening_lot_id uuid,
+    found_audit_item_id uuid,
+    quantity numeric(12,2) NOT NULL,
+    unit_cost numeric(14,4),
+    amount numeric(14,2) GENERATED ALWAYS AS (round((quantity * unit_cost), 2)) STORED,
+    CONSTRAINT stock_cost_draws_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
+    CONSTRAINT stock_cost_draws_cost_check CHECK (((unit_cost IS NULL) = (num_nonnulls(purchase_item_id, opening_lot_id, found_audit_item_id) = 0))),
+    CONSTRAINT stock_cost_draws_one_consumer_check CHECK ((num_nonnulls(issue_part_id, audit_item_id) = 1)),
+    CONSTRAINT stock_cost_draws_one_lot_check CHECK ((num_nonnulls(purchase_item_id, opening_lot_id, found_audit_item_id) <= 1)),
+    CONSTRAINT stock_cost_draws_quantity_check CHECK ((quantity > (0)::numeric))
+);
+
+
+ALTER TABLE public.stock_cost_draws OWNER TO postgres;
+
+--
+-- Name: TABLE stock_cost_draws; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.stock_cost_draws IS 'MAIN-158: first-in-first-out allocation of lots to spares and audit losses. Derived: rebuilt per part and company by rebuild_part_cost(); never edited.';
 
 
 --
@@ -15122,6 +15672,14 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
+-- Name: opening_stock_lots opening_stock_lots_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.opening_stock_lots
+    ADD CONSTRAINT opening_stock_lots_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: outsource_invoices outsource_invoices_batch_service_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -15383,6 +15941,14 @@ ALTER TABLE ONLY public.stock_audit_items
 
 ALTER TABLE ONLY public.stock_audits
     ADD CONSTRAINT stock_audits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_pkey PRIMARY KEY (id);
 
 
 --
@@ -16509,6 +17075,20 @@ CREATE INDEX idx_tickets_vehicle_number ON public.tickets USING btree (vehicle_n
 
 
 --
+-- Name: issue_parts_issue_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX issue_parts_issue_id_idx ON public.issue_parts USING btree (issue_id);
+
+
+--
+-- Name: issue_parts_part_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX issue_parts_part_id_idx ON public.issue_parts USING btree (part_id);
+
+
+--
 -- Name: issues_sla_version_id_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -16520,6 +17100,13 @@ CREATE INDEX issues_sla_version_id_idx ON public.issues USING btree (sla_version
 --
 
 CREATE INDEX job_cards_location_idx ON public.job_cards USING btree (location_id);
+
+
+--
+-- Name: opening_stock_lots_part_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX opening_stock_lots_part_idx ON public.opening_stock_lots USING btree (part_id, company);
 
 
 --
@@ -16569,6 +17156,13 @@ CREATE INDEX part_stock_location_idx ON public.part_stock USING btree (location_
 --
 
 CREATE UNIQUE INDEX parts_name_key_key ON public.parts USING btree (name_key);
+
+
+--
+-- Name: purchase_invoice_items_part_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX purchase_invoice_items_part_id_idx ON public.purchase_invoice_items USING btree (part_id);
 
 
 --
@@ -16646,6 +17240,20 @@ CREATE INDEX stock_audits_started_idx ON public.stock_audits USING btree (starte
 --
 
 CREATE INDEX stock_audits_status_idx ON public.stock_audits USING btree (status);
+
+
+--
+-- Name: stock_cost_draws_issue_part_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_cost_draws_issue_part_idx ON public.stock_cost_draws USING btree (issue_part_id) WHERE (issue_part_id IS NOT NULL);
+
+
+--
+-- Name: stock_cost_draws_part_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX stock_cost_draws_part_idx ON public.stock_cost_draws USING btree (part_id, company);
 
 
 --
@@ -17150,6 +17758,41 @@ CREATE TRIGGER trg_stamp_rejected_at_and_acceptance_sla BEFORE UPDATE ON public.
 --
 
 CREATE TRIGGER trg_stamp_ticket_resolved_closed_at BEFORE UPDATE OF status ON public.tickets FOR EACH ROW EXECUTE FUNCTION public.stamp_ticket_resolved_closed_at();
+
+
+--
+-- Name: stock_audits trg_stock_cost_audit_completed; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_stock_cost_audit_completed AFTER UPDATE OF status ON public.stock_audits FOR EACH ROW WHEN (((new.status = 'completed'::text) AND (old.status IS DISTINCT FROM 'completed'::text))) EXECUTE FUNCTION public.stock_cost_on_audit_completed();
+
+
+--
+-- Name: issue_parts trg_stock_cost_issue_part; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_stock_cost_issue_part AFTER INSERT OR DELETE OR UPDATE ON public.issue_parts FOR EACH ROW EXECUTE FUNCTION public.stock_cost_on_issue_part_change();
+
+
+--
+-- Name: opening_stock_lots trg_stock_cost_opening_lot; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_stock_cost_opening_lot AFTER INSERT OR DELETE OR UPDATE ON public.opening_stock_lots FOR EACH ROW EXECUTE FUNCTION public.stock_cost_on_opening_lot_change();
+
+
+--
+-- Name: purchase_invoices trg_stock_cost_purchase_header; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_stock_cost_purchase_header AFTER UPDATE ON public.purchase_invoices FOR EACH ROW EXECUTE FUNCTION public.stock_cost_on_purchase_header_change();
+
+
+--
+-- Name: purchase_invoice_items trg_stock_cost_purchase_line; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_stock_cost_purchase_line AFTER INSERT OR DELETE OR UPDATE ON public.purchase_invoice_items FOR EACH ROW EXECUTE FUNCTION public.stock_cost_on_purchase_line_change();
 
 
 --
@@ -17753,6 +18396,14 @@ ALTER TABLE ONLY public.job_cards
 
 
 --
+-- Name: opening_stock_lots opening_stock_lots_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.opening_stock_lots
+    ADD CONSTRAINT opening_stock_lots_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id);
+
+
+--
 -- Name: outsource_invoices outsource_invoices_batch_service_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -18150,6 +18801,54 @@ ALTER TABLE ONLY public.stock_audits
 
 ALTER TABLE ONLY public.stock_audits
     ADD CONSTRAINT stock_audits_started_by_fkey FOREIGN KEY (started_by) REFERENCES public.users(id);
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_audit_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_audit_item_id_fkey FOREIGN KEY (audit_item_id) REFERENCES public.stock_audit_items(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_found_audit_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_found_audit_item_id_fkey FOREIGN KEY (found_audit_item_id) REFERENCES public.stock_audit_items(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_issue_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_issue_part_id_fkey FOREIGN KEY (issue_part_id) REFERENCES public.issue_parts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_opening_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_opening_lot_id_fkey FOREIGN KEY (opening_lot_id) REFERENCES public.opening_stock_lots(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.parts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_cost_draws stock_cost_draws_purchase_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stock_cost_draws
+    ADD CONSTRAINT stock_cost_draws_purchase_item_id_fkey FOREIGN KEY (purchase_item_id) REFERENCES public.purchase_invoice_items(id) ON DELETE CASCADE;
 
 
 --
@@ -18674,6 +19373,13 @@ CREATE POLICY "Exec and finance view invoices" ON public.purchase_invoices FOR S
 
 
 --
+-- Name: opening_stock_lots Exec and finance view opening stock lots; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view opening stock lots" ON public.opening_stock_lots FOR SELECT TO authenticated USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
 -- Name: refurbished_part_links Exec and finance view refurbished_part_links; Type: POLICY; Schema: public; Owner: postgres
 --
 
@@ -18685,6 +19391,13 @@ CREATE POLICY "Exec and finance view refurbished_part_links" ON public.refurbish
 --
 
 CREATE POLICY "Exec and finance view scrap_refurbishments" ON public.scrap_refurbishments FOR SELECT TO authenticated USING ((public.is_maintenance_exec() OR public.is_finance()));
+
+
+--
+-- Name: stock_cost_draws Exec and finance view stock cost draws; Type: POLICY; Schema: public; Owner: postgres
+--
+
+CREATE POLICY "Exec and finance view stock cost draws" ON public.stock_cost_draws FOR SELECT TO authenticated USING ((public.is_maintenance_exec() OR public.is_finance()));
 
 
 --
@@ -19441,6 +20154,12 @@ ALTER TABLE public.issues ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.job_cards ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: opening_stock_lots; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.opening_stock_lots ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: outsource_invoices; Type: ROW SECURITY; Schema: public; Owner: postgres
 --
 
@@ -19577,6 +20296,12 @@ ALTER TABLE public.stock_audit_items ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.stock_audits ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: stock_cost_draws; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.stock_cost_draws ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: stock_transfer_items; Type: ROW SECURITY; Schema: public; Owner: postgres
@@ -20468,6 +21193,15 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
+-- Name: FUNCTION add_opening_stock_price(p_part_id uuid, p_price jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.add_opening_stock_price(p_part_id uuid, p_price jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.add_opening_stock_price(p_part_id uuid, p_price jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.add_opening_stock_price(p_part_id uuid, p_price jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION add_part_to_inventory(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21121,6 +21855,15 @@ GRANT ALL ON FUNCTION public.is_super_admin() TO service_role;
 
 
 --
+-- Name: FUNCTION is_workshop_move_invoice(p_purchase_number integer); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.is_workshop_move_invoice(p_purchase_number integer) TO anon;
+GRANT ALL ON FUNCTION public.is_workshop_move_invoice(p_purchase_number integer) TO authenticated;
+GRANT ALL ON FUNCTION public.is_workshop_move_invoice(p_purchase_number integer) TO service_role;
+
+
+--
 -- Name: FUNCTION job_card_invoice_company(p_job_card_id uuid); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21145,6 +21888,24 @@ GRANT ALL ON FUNCTION public.job_card_site_accessible_to_user(p_job_card_id uuid
 REVOKE ALL ON FUNCTION public.job_card_stock_company(p_job_card_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.job_card_stock_company(p_job_card_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.job_card_stock_company(p_job_card_id uuid) TO service_role;
+
+
+--
+-- Name: TABLE job_cards; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.job_cards TO anon;
+GRANT ALL ON TABLE public.job_cards TO authenticated;
+GRANT ALL ON TABLE public.job_cards TO service_role;
+
+
+--
+-- Name: FUNCTION job_card_value(jc public.job_cards); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.job_card_value(jc public.job_cards) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.job_card_value(jc public.job_cards) TO authenticated;
+GRANT ALL ON FUNCTION public.job_card_value(jc public.job_cards) TO service_role;
 
 
 --
@@ -21211,6 +21972,30 @@ GRANT ALL ON FUNCTION public.outsource_invoice_type(p_job_card_id uuid, p_batch_
 
 
 --
+-- Name: FUNCTION part_cost_consumers(p_part_id uuid, p_company text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.part_cost_consumers(p_part_id uuid, p_company text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.part_cost_consumers(p_part_id uuid, p_company text) TO service_role;
+
+
+--
+-- Name: FUNCTION part_cost_gap(p_part_id uuid, p_company text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.part_cost_gap(p_part_id uuid, p_company text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.part_cost_gap(p_part_id uuid, p_company text) TO service_role;
+
+
+--
+-- Name: FUNCTION part_cost_lots(p_part_id uuid, p_company text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) TO service_role;
+
+
+--
 -- Name: FUNCTION part_name_key(p_name text); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21244,6 +22029,14 @@ GRANT ALL ON FUNCTION public.preview_sla_changes(p_change jsonb) TO service_role
 GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.purchase_invoice_file_missing(p_purchase_invoice_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION rebuild_part_cost(p_part_id uuid, p_company text); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.rebuild_part_cost(p_part_id uuid, p_company text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.rebuild_part_cost(p_part_id uuid, p_company text) TO service_role;
 
 
 --
@@ -21610,6 +22403,24 @@ GRANT ALL ON FUNCTION public.sla_version_at(p_at timestamp with time zone) TO se
 
 
 --
+-- Name: TABLE issue_parts; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.issue_parts TO anon;
+GRANT ALL ON TABLE public.issue_parts TO authenticated;
+GRANT ALL ON TABLE public.issue_parts TO service_role;
+
+
+--
+-- Name: FUNCTION spare_cost(ip public.issue_parts); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.spare_cost(ip public.issue_parts) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.spare_cost(ip public.issue_parts) TO authenticated;
+GRANT ALL ON FUNCTION public.spare_cost(ip public.issue_parts) TO service_role;
+
+
+--
 -- Name: FUNCTION stamp_outsource_invoice_accepted_at(); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -21661,6 +22472,51 @@ GRANT ALL ON FUNCTION public.stock_audit_movements(p_audit_id uuid) TO service_r
 GRANT ALL ON FUNCTION public.stock_company_label(p_company text) TO anon;
 GRANT ALL ON FUNCTION public.stock_company_label(p_company text) TO authenticated;
 GRANT ALL ON FUNCTION public.stock_company_label(p_company text) TO service_role;
+
+
+--
+-- Name: FUNCTION stock_cost_on_audit_completed(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_cost_on_audit_completed() TO anon;
+GRANT ALL ON FUNCTION public.stock_cost_on_audit_completed() TO authenticated;
+GRANT ALL ON FUNCTION public.stock_cost_on_audit_completed() TO service_role;
+
+
+--
+-- Name: FUNCTION stock_cost_on_issue_part_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_cost_on_issue_part_change() TO anon;
+GRANT ALL ON FUNCTION public.stock_cost_on_issue_part_change() TO authenticated;
+GRANT ALL ON FUNCTION public.stock_cost_on_issue_part_change() TO service_role;
+
+
+--
+-- Name: FUNCTION stock_cost_on_opening_lot_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_cost_on_opening_lot_change() TO anon;
+GRANT ALL ON FUNCTION public.stock_cost_on_opening_lot_change() TO authenticated;
+GRANT ALL ON FUNCTION public.stock_cost_on_opening_lot_change() TO service_role;
+
+
+--
+-- Name: FUNCTION stock_cost_on_purchase_header_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_cost_on_purchase_header_change() TO anon;
+GRANT ALL ON FUNCTION public.stock_cost_on_purchase_header_change() TO authenticated;
+GRANT ALL ON FUNCTION public.stock_cost_on_purchase_header_change() TO service_role;
+
+
+--
+-- Name: FUNCTION stock_cost_on_purchase_line_change(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.stock_cost_on_purchase_line_change() TO anon;
+GRANT ALL ON FUNCTION public.stock_cost_on_purchase_line_change() TO authenticated;
+GRANT ALL ON FUNCTION public.stock_cost_on_purchase_line_change() TO service_role;
 
 
 --
@@ -22365,30 +23221,12 @@ GRANT ALL ON TABLE public.issue_labour TO service_role;
 
 
 --
--- Name: TABLE issue_parts; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.issue_parts TO anon;
-GRANT ALL ON TABLE public.issue_parts TO authenticated;
-GRANT ALL ON TABLE public.issue_parts TO service_role;
-
-
---
 -- Name: TABLE issues; Type: ACL; Schema: public; Owner: postgres
 --
 
 GRANT ALL ON TABLE public.issues TO anon;
 GRANT ALL ON TABLE public.issues TO authenticated;
 GRANT ALL ON TABLE public.issues TO service_role;
-
-
---
--- Name: TABLE job_cards; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.job_cards TO anon;
-GRANT ALL ON TABLE public.job_cards TO authenticated;
-GRANT ALL ON TABLE public.job_cards TO service_role;
 
 
 --
@@ -22416,6 +23254,15 @@ GRANT ALL ON TABLE public.tickets TO service_role;
 GRANT ALL ON TABLE public.maintenance_dashboard_stats TO anon;
 GRANT ALL ON TABLE public.maintenance_dashboard_stats TO authenticated;
 GRANT ALL ON TABLE public.maintenance_dashboard_stats TO service_role;
+
+
+--
+-- Name: TABLE opening_stock_lots; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.opening_stock_lots TO anon;
+GRANT ALL ON TABLE public.opening_stock_lots TO authenticated;
+GRANT ALL ON TABLE public.opening_stock_lots TO service_role;
 
 
 --
@@ -22632,6 +23479,15 @@ GRANT ALL ON TABLE public.stock_audits TO service_role;
 GRANT ALL ON SEQUENCE public.stock_audits_audit_number_seq TO anon;
 GRANT ALL ON SEQUENCE public.stock_audits_audit_number_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.stock_audits_audit_number_seq TO service_role;
+
+
+--
+-- Name: TABLE stock_cost_draws; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.stock_cost_draws TO anon;
+GRANT ALL ON TABLE public.stock_cost_draws TO authenticated;
+GRANT ALL ON TABLE public.stock_cost_draws TO service_role;
 
 
 --

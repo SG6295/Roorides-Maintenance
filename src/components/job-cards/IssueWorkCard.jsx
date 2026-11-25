@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { XMarkIcon, CalendarDaysIcon } from '@heroicons/react/24/outline'
 import { formatAs, formatDateTime } from '../../utils/datetime'
 import { useUpdateIssue } from '../../hooks/useIssues'
-import { useAddIssuePart, useDeleteIssuePart, useCreatePart } from '../../hooks/useParts'
+import { useAddIssuePart, useDeleteIssuePart, useCreatePart, useAddOpeningStockPrice } from '../../hooks/useParts'
 import { usePartUnits } from '../../hooks/useInventory'
 import { useAddIssueLabour, useUpdateIssueLabour, useDeleteIssueLabour } from '../../hooks/useIssueLabour'
 import { ScrapRPCError } from '../../hooks/useScrap'
@@ -16,6 +16,8 @@ import DuplicatePartNotice from '../inventory/DuplicatePartNotice'
 import CustomSelect from '../shared/CustomSelect'
 import SLAStatusBadge from '../shared/SLAStatusBadge'
 import { useToast } from '../../hooks/useFeedback'
+import { canSeeCosts, needsPriceError, rupees } from '../../utils/jobCardValue'
+import PartPriceModal from './PartPriceModal'
 
 /**
  * IssueWorkCard - displays a single issue within a Job Card with labour, parts, and status controls
@@ -52,6 +54,10 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
     const addIssuePart = useAddIssuePart(jobCardId)
     const deleteIssuePart = useDeleteIssuePart(jobCardId)
     const createPart = useCreatePart()
+    const addOpeningPrice = useAddOpeningStockPrice()
+    // MAIN-158: a spare refused because its stock has no price — the exec is asked for one.
+    const [priceNeeded, setPriceNeeded] = useState(null)
+    const showCosts = canSeeCosts(userProfile?.role)
     const { data: partUnits = [] } = usePartUnits()
 
     const isOutsource = jobCardType === 'Outsource'
@@ -107,18 +113,46 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             return
         }
         setAddPartError(null)
+        const spare = {
+            issue_id: issue.id,
+            part_id: form.selectedPartId,
+            quantity_used: qty,
+            added_by: userProfile?.id,
+        }
         try {
-            await addIssuePart.mutateAsync({
-                issue_id: issue.id,
-                part_id: form.selectedPartId,
-                quantity_used: qty,
-                added_by: userProfile?.id,
-            })
+            await addIssuePart.mutateAsync(spare)
             setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
         } catch (e) {
+            const missing = needsPriceError(e)
+            if (missing) {
+                if (['maintenance_exec', 'super_admin'].includes(userProfile?.role)) {
+                    addOpeningPrice.reset()
+                    setPriceNeeded({ ...missing, spare })
+                } else {
+                    toast.error(`${e.message} Ask a maintenance exec to add this spare — they will be asked for its price.`)
+                }
+                return
+            }
             // The database refuses to issue more than this workshop holds, and its
             // message already names the part, the quantity and the workshop.
             toast.error(e.message)
+        }
+    }
+
+    const handlePriceConfirm = async ({ unitPrice, gstRate }) => {
+        try {
+            await addOpeningPrice.mutateAsync({ partId: priceNeeded.partId ?? priceNeeded.spare.part_id, unitPrice, gstRate })
+        } catch {
+            return // shown in the popup
+        }
+        const { spare } = priceNeeded
+        setPriceNeeded(null)
+        try {
+            await addIssuePart.mutateAsync(spare)
+            setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
+            toast.success('Price saved and spare added.')
+        } catch (e) {
+            toast.error(`Price saved, but the spare was not added: ${e.message}`)
         }
     }
 
@@ -303,6 +337,11 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                 {issue.issue_parts.map(ip => (
                                     <span key={ip.id} className="inline-flex items-center gap-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1">
                                         {ip.part?.name} &times; {ip.quantity_used} {ip.part?.unit}
+                                        {showCosts && !isOutsource && (
+                                            <span className="text-xs text-gray-500" title="First-in-first-out cost, incl. GST">
+                                                · {ip.cost !== null && ip.cost !== undefined ? rupees(ip.cost) : 'no price'}
+                                            </span>
+                                        )}
                                         {canEdit && (
                                             <button
                                                 onClick={() => handleDeletePart(ip.id)}
@@ -454,6 +493,16 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                         </button>
                     )}
                 </div>
+            )}
+
+            {priceNeeded && (
+                <PartPriceModal
+                    part={priceNeeded}
+                    onConfirm={handlePriceConfirm}
+                    onCancel={() => setPriceNeeded(null)}
+                    isSaving={addOpeningPrice.isPending || addIssuePart.isPending}
+                    error={addOpeningPrice.error}
+                />
             )}
         </div>
     )

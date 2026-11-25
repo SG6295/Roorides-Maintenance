@@ -69,8 +69,27 @@ export function useAddIssuePart(jobCardId) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['job_card', jobCardId] })
+            queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['parts'] })
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
+        },
+    })
+}
+
+/**
+ * Prices stock of a part that never came in on a recorded purchase (MAIN-158). Asked for
+ * when adding a spare is refused with PART_NEEDS_PRICE; adds an opening lot for each
+ * company's unpriced quantity. Exec and super_admin only.
+ */
+export function useAddOpeningStockPrice() {
+    return useMutation({
+        mutationFn: async ({ partId, unitPrice, gstRate }) => {
+            const { data, error } = await supabase.rpc('add_opening_stock_price', {
+                p_part_id: partId,
+                p_price: { unit_price: Number(unitPrice), gst_rate: Number(gstRate) },
+            })
+            if (error) throw error
+            return data
         },
     })
 }
@@ -100,6 +119,7 @@ export function useDeleteIssuePart(jobCardId) {
             queryClient.invalidateQueries({ queryKey: ['parts'] })
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['scrap_inventory'] })
+            queryClient.invalidateQueries({ queryKey: ['job_cards'] })
         },
     })
 }

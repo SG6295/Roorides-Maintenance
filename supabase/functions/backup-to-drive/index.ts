@@ -28,6 +28,8 @@ const TABLES = [
   'workshop_locations', 'site_workshops', 'part_stock', 'stock_transfers', 'stock_transfer_items',
   // Stock audits
   'stock_audits', 'stock_audit_items', 'stock_audit_item_reasons',
+  // First-in-first-out costing (MAIN-158): opening prices and which lot each spare took
+  'opening_stock_lots', 'stock_cost_draws',
 ]
 
 // Batches are ordered by primary key, so each table not keyed on `id` must be listed here.
