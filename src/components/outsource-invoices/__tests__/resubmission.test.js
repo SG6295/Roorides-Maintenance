@@ -124,3 +124,22 @@ describe('rejectionEntry', () => {
         expect(rejectionEntry([])).toBeNull()
     })
 })
+
+describe('GST breakdown (MAIN-166)', () => {
+    const gst = [{ rate: 18, before_gst: 847.46, gst: 152.54, incl_gst: 1000 }]
+
+    it('a GST-only correction counts as a change, and the payload carries it', () => {
+        const start = resubmissionStart(row({ gst_breakdown: null }))
+        expect(start.form.gstRows).toEqual([])
+        const current = edited(start, {}, { gstRows: [{ rate: '18', amount: '1000', entered: 'incl' }] })
+        const changes = resubmissionChanges(start, current)
+        expect(changes).toEqual(['GST breakdown: — → 18%: ₹847.46 + ₹152.54 GST = ₹1,000.00'])
+        expect(resubmissionPayload(current, '', { gst: true }).gst_breakdown).toEqual(gst)
+        expect(resubmissionPayload(current, '')).not.toHaveProperty('gst_breakdown')
+    })
+
+    it('an unchanged breakdown is not a change', () => {
+        const start = resubmissionStart(row({ gst_breakdown: gst }))
+        expect(resubmissionChanges(start, edited(start))).toEqual([])
+    })
+})

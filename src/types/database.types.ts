@@ -659,6 +659,7 @@ export type Database = {
           date_of_activity: string | null
           finance_payment_status: string
           finance_remark: string | null
+          gst_breakdown: Json | null
           id: string
           invoice_no: string | null
           invoice_value: number | null
@@ -681,6 +682,7 @@ export type Database = {
           date_of_activity?: string | null
           finance_payment_status?: string
           finance_remark?: string | null
+          gst_breakdown?: Json | null
           id?: string
           invoice_no?: string | null
           invoice_value?: number | null
@@ -703,6 +705,7 @@ export type Database = {
           date_of_activity?: string | null
           finance_payment_status?: string
           finance_remark?: string | null
+          gst_breakdown?: Json | null
           id?: string
           invoice_no?: string | null
           invoice_value?: number | null
@@ -3154,6 +3157,12 @@ export type Database = {
           line_id: string
         }[]
       }
+      gst_breakdown_problem: {
+        Args: { p_invoice_value: number; p_rows: Json }
+        Returns: string
+      }
+      gst_breakdown_total: { Args: { p_rows: Json }; Returns: number }
+      gst_rates: { Args: never; Returns: number[] }
       has_labour_on_job_card: {
         Args: { p_job_card_id: string }
         Returns: boolean

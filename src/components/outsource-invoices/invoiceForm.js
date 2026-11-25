@@ -1,3 +1,10 @@
+import {
+    breakdownToGstRows,
+    gstBreakdownProblem,
+    gstRowsToBreakdown,
+    isGstBreakdownEmpty,
+} from '../../utils/gstBreakdown'
+
 /**
  * The outsource invoice form's values and rules — shared by the job card (one vehicle)
  * and the multi-vehicle invoice page (MAIN-99), so the two cannot drift apart. The form
@@ -11,6 +18,9 @@ export const EMPTY_INVOICE_FORM = {
     approvedAmount: '',
     advanceAmount: '',
     maintenancePaymentStatus: '',
+    // The GST breakdown (MAIN-166) — only job card and multi-vehicle invoices use it
+    // (`{ gst: true }` below); purchases keep their GST on their lines.
+    gstRows: [],
 }
 
 /** An outsource_invoices row as form values. */
@@ -23,12 +33,17 @@ export function invoiceFormFromRow(row) {
         approvedAmount: row.approved_amount != null ? String(row.approved_amount) : '',
         advanceAmount: row.advance_amount != null ? String(row.advance_amount) : '',
         maintenancePaymentStatus: row.maintenance_payment_status || '',
+        gstRows: breakdownToGstRows(row.gst_breakdown),
     }
 }
 
-/** Form values as outsource_invoices columns. Call only once validateInvoiceForm passes. */
-export function invoiceFormToRow(f) {
+/**
+ * Form values as outsource_invoices columns. Call only once validateInvoiceForm passes.
+ * `gst` adds the GST breakdown, for a job card or multi-vehicle invoice.
+ */
+export function invoiceFormToRow(f, { gst = false } = {}) {
     return {
+        ...(gst ? { gst_breakdown: gstRowsToBreakdown(f.gstRows) } : {}),
         date_of_activity: f.dateOfActivity,
         invoice_no: f.invoiceNo.trim(),
         paid_by: f.paidBy,
@@ -41,10 +56,12 @@ export function invoiceFormToRow(f) {
 
 /** True when nothing has been typed — a job card's invoice is optional until started. */
 export function isInvoiceFormEmpty(f) {
-    return Object.values(f).every(v => String(v).trim() === '')
+    const { gstRows, ...fields } = f
+    return isGstBreakdownEmpty(gstRows) && Object.values(fields).every(v => String(v).trim() === '')
 }
 
-export function validateInvoiceForm(f, today) {
+/** `gst` checks the GST breakdown too, for a job card or multi-vehicle invoice. */
+export function validateInvoiceForm(f, today, { gst = false } = {}) {
     const errors = {}
     if (!f.dateOfActivity) errors.dateOfActivity = 'Required'
     else if (f.dateOfActivity > today) errors.dateOfActivity = 'Cannot be in the future'
@@ -60,5 +77,9 @@ export function validateInvoiceForm(f, today) {
     if (f.advanceAmount === '' || isNaN(adv) || adv < 0) errors.advanceAmount = 'Must be ≥ 0'
     else if (!isNaN(aa) && adv > aa) errors.advanceAmount = 'Must be ≤ approved amount'
     if (!f.maintenancePaymentStatus) errors.maintenancePaymentStatus = 'Required'
+    if (gst) {
+        const problem = gstBreakdownProblem(f.gstRows, f.invoiceValue)
+        if (problem) errors.gstBreakdown = problem
+    }
     return errors
 }

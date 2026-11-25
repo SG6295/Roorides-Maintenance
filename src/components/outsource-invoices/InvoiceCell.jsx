@@ -76,6 +76,10 @@ export default function InvoiceCell({ columnKey, invoice: inv, canEdit, canOpen 
         case 'submitted':     return fmtDate(inv.submitted_on)
         case 'paid_by':       return inv.paid_by || '—'
         case 'invoice_value': return fmtMoney(inv.invoice_value)
+        // The bill's GST (MAIN-166): a purchase's from its lines, otherwise its breakdown.
+        case 'gst':           return inv.gst == null
+            ? <span className="text-gray-400">Not recorded</span>
+            : fmtMoney(inv.gst)
         case 'discount':      return fmtPaise(inv.discount)
         case 'approved':      return fmtMoney(inv.approved_amount)
         case 'advance':       return fmtMoney(inv.advance_amount)

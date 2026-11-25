@@ -2202,7 +2202,10 @@ CREATE FUNCTION public.company_ledger_lines(p_company text) RETURNS TABLE(entry_
          case when oi.job_card_id is not null then 'job_card' else 'multi_vehicle' end,
          oi.date_of_activity,
          oi.approved_amount, 0::numeric,
-         null::numeric,
+         -- MAIN-166: the bill's GST, scaled to the Approved Amount; NULL ("Not recorded")
+         -- for an invoice without a breakdown.
+         round(public.gst_breakdown_total(oi.gst_breakdown) * oi.approved_amount
+               / nullif(oi.invoice_value, 0), 2),
          case oi.finance_payment_status
               when 'GST reconciled & closed'     then 'claimed'
               when 'GST not applicable & closed' then 'no_gst'
@@ -2298,6 +2301,11 @@ BEGIN
 
     IF nullif(btrim(v_after->>'invoice_file'), '') IS NULL THEN
         RAISE EXCEPTION 'Upload the invoice file to resubmit.';
+    END IF;
+
+    -- MAIN-166: a job card or multi-vehicle invoice goes back to finance with its GST.
+    IF v_inv.purchase_invoice_id IS NULL AND v_inv.gst_breakdown IS NULL THEN
+        RAISE EXCEPTION 'Add the GST breakdown to resubmit.';
     END IF;
 
     -- Compared in numeric, as the save functions do.
@@ -2794,10 +2802,11 @@ BEGIN
            OR v_invoice.date_of_activity           IS NULL
            OR v_invoice.maintenance_payment_status IS NULL
            OR v_invoice.paid_by                    IS NULL
+           OR v_invoice.gst_breakdown              IS NULL
         THEN
             RAISE EXCEPTION '%', json_build_object(
                 'error_code',    'INVOICE_DETAILS_INCOMPLETE',
-                'error_message', 'Invoice details are incomplete. Please fill in all required fields before finalizing.',
+                'error_message', 'Invoice details are incomplete. Please fill in all required fields, including the GST breakdown, before finalizing.',
                 'details',       null
             )::text;
         END IF;
@@ -3285,6 +3294,11 @@ CREATE FUNCTION public.get_outsource_invoice_rows(p_filters jsonb DEFAULT '{}'::
     'total', (select count(*) from visible),
     'rows',  coalesce(jsonb_agg(
       (to_jsonb(p) - 'jc_id') || jsonb_build_object(
+        -- MAIN-166: the bill's GST — a purchase's from its lines, otherwise its breakdown.
+        'gst', case when p.purchase_invoice_id is not null
+                    then (select sum(i.line_total - round(i.quantity * i.unit_price - i.discount_amount, 2))
+                          from public.purchase_invoice_items i where i.invoice_id = p.purchase_invoice_id)
+                    else public.gst_breakdown_total(p.gst_breakdown) end,
         'job_card', (
           select jsonb_build_object(
                    'id', jc.id, 'job_card_number', jc.job_card_number,
@@ -3477,6 +3491,182 @@ $$;
 
 
 ALTER FUNCTION public.get_supplier_statement(p_supplier_id uuid) OWNER TO postgres;
+
+--
+-- Name: gst_breakdown_problem(jsonb, numeric); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+    v_row    jsonb;
+    v_rate   numeric;
+    v_before numeric;
+    v_gst    numeric;
+    v_incl   numeric;
+    v_sum    numeric := 0;
+    v_rates  numeric[] := '{}';
+    v_money  constant text := '^[0-9]{1,10}(\.[0-9]{1,2})?$';
+BEGIN
+    IF p_rows IS NULL OR jsonb_typeof(p_rows) <> 'array' OR jsonb_array_length(p_rows) = 0 THEN
+        RETURN 'Add the GST breakdown.';
+    END IF;
+
+    FOR v_row IN SELECT * FROM jsonb_array_elements(p_rows) LOOP
+        IF jsonb_typeof(v_row) <> 'object'
+           OR coalesce(v_row->>'rate', '')       !~ v_money
+           OR coalesce(v_row->>'before_gst', '') !~ v_money
+           OR coalesce(v_row->>'gst', '')        !~ v_money
+           OR coalesce(v_row->>'incl_gst', '')   !~ v_money THEN
+            RETURN 'Every GST row needs a rate and its amounts.';
+        END IF;
+
+        v_rate   := (v_row->>'rate')::numeric;
+        v_before := (v_row->>'before_gst')::numeric;
+        v_gst    := (v_row->>'gst')::numeric;
+        v_incl   := (v_row->>'incl_gst')::numeric;
+
+        IF NOT v_rate = ANY (public.gst_rates()) THEN
+            RETURN format('%s%% is not a GST rate.', trim_scale(v_rate));
+        END IF;
+
+        IF v_rate = ANY (v_rates) THEN
+            RETURN 'Use one row per GST rate.';
+        END IF;
+        v_rates := v_rates || v_rate;
+
+        IF v_incl <= 0 THEN
+            RETURN 'Every GST row needs an amount.';
+        END IF;
+
+        IF v_before + v_gst <> v_incl THEN
+            RETURN 'On each GST row, the amount before GST and the GST must add up to the amount incl. GST.';
+        END IF;
+
+        -- Within a paisa: the amount not typed is rounded to the paisa.
+        IF abs(v_gst - v_before * v_rate / 100) > 0.01 THEN
+            RETURN format('The GST on the %s%% row does not match its rate.', trim_scale(v_rate));
+        END IF;
+
+        v_sum := v_sum + v_incl;
+    END LOOP;
+
+    IF p_invoice_value IS NULL OR v_sum <> p_invoice_value THEN
+        RETURN format('The GST rows add up to ₹%s but the Invoice Value is ₹%s.',
+                      to_char(v_sum, 'FM999999999990.00'),
+                      coalesce(to_char(p_invoice_value, 'FM999999999990.00'), '—'));
+    END IF;
+
+    RETURN NULL;
+END;
+$_$;
+
+
+ALTER FUNCTION public.gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric) OWNER TO postgres;
+
+--
+-- Name: FUNCTION gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric) IS 'MAIN-166: why a GST breakdown is invalid for an Invoice Value, or NULL. Mirrored by gstBreakdownProblem in src/utils/gstBreakdown.js.';
+
+
+--
+-- Name: gst_breakdown_total(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.gst_breakdown_total(p_rows jsonb) RETURNS numeric
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE WHEN p_rows IS NULL OR jsonb_typeof(p_rows) <> 'array' THEN NULL
+                ELSE (SELECT coalesce(sum((r->>'gst')::numeric), 0) FROM jsonb_array_elements(p_rows) r) END
+$$;
+
+
+ALTER FUNCTION public.gst_breakdown_total(p_rows jsonb) OWNER TO postgres;
+
+--
+-- Name: FUNCTION gst_breakdown_total(p_rows jsonb); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.gst_breakdown_total(p_rows jsonb) IS 'MAIN-166: the total GST of an invoice''s GST breakdown; NULL when it has none.';
+
+
+--
+-- Name: gst_rates(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.gst_rates() RETURNS numeric[]
+    LANGUAGE sql IMMUTABLE
+    AS $$ SELECT ARRAY[0, 5, 12, 18, 28, 40]::numeric[] $$;
+
+
+ALTER FUNCTION public.gst_rates() OWNER TO postgres;
+
+--
+-- Name: FUNCTION gst_rates(); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.gst_rates() IS 'MAIN-166: the GST rates offered on invoices and purchase lines. Mirrored by GST_RATES in src/constants/gstRates.js.';
+
+
+--
+-- Name: guard_invoice_gst_breakdown(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.guard_invoice_gst_breakdown() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    v_problem text;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW.purchase_invoice_id IS NOT NULL THEN
+        IF NEW.gst_breakdown IS NOT NULL THEN
+            RAISE EXCEPTION 'A purchase''s GST is recorded on its lines, not as a GST breakdown.'
+                USING HINT = 'GST_BREAKDOWN';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF NEW.gst_breakdown IS NOT NULL THEN
+        v_problem := public.gst_breakdown_problem(NEW.gst_breakdown, NEW.invoice_value);
+        IF v_problem IS NOT NULL THEN
+            RAISE EXCEPTION '%', v_problem USING HINT = 'GST_BREAKDOWN';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'INSERT'
+       OR OLD.gst_breakdown IS NOT NULL
+       OR (NEW.invoice_no, NEW.date_of_activity, NEW.paid_by, NEW.invoice_value,
+           NEW.approved_amount, NEW.advance_amount, NEW.maintenance_payment_status)
+          IS DISTINCT FROM
+          (OLD.invoice_no, OLD.date_of_activity, OLD.paid_by, OLD.invoice_value,
+           OLD.approved_amount, OLD.advance_amount, OLD.maintenance_payment_status) THEN
+        RAISE EXCEPTION 'Add the GST breakdown. Its rows must add up to the Invoice Value.'
+            USING HINT = 'GST_BREAKDOWN';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.guard_invoice_gst_breakdown() OWNER TO postgres;
+
+--
+-- Name: FUNCTION guard_invoice_gst_breakdown(); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.guard_invoice_gst_breakdown() IS 'MAIN-166: a job card or multi-vehicle invoice is saved only with a valid GST breakdown; a purchase never carries one. An invoice from before MAIN-166 passes until its details change. Service-role writes pass.';
+
 
 --
 -- Name: guard_issue_category(); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4110,8 +4300,10 @@ CREATE TABLE public.outsource_invoices (
     accepted_at timestamp with time zone,
     purchase_invoice_id uuid,
     company text DEFAULT 'nvs_travels'::text NOT NULL,
+    gst_breakdown jsonb,
     CONSTRAINT outsource_invoices_company_check CHECK ((company = ANY (ARRAY['nvs_travels'::text, 'nvs_travel_solutions'::text]))),
     CONSTRAINT outsource_invoices_finance_payment_status_check CHECK ((finance_payment_status = ANY (ARRAY['New'::text, 'New (invoice pending)'::text, 'Resubmitted'::text, 'Hold'::text, 'Reject'::text, 'Accepted'::text, 'GST reconciled & closed'::text, 'GST not applicable & closed'::text]))),
+    CONSTRAINT outsource_invoices_gst_breakdown_array_check CHECK (((gst_breakdown IS NULL) OR (jsonb_typeof(gst_breakdown) = 'array'::text))),
     CONSTRAINT outsource_invoices_maintenance_payment_status_check CHECK ((maintenance_payment_status = ANY (ARRAY['Approved'::text, 'Hold'::text, 'Reject'::text]))),
     CONSTRAINT outsource_invoices_one_owner_check CHECK ((num_nonnulls(job_card_id, batch_service_id, purchase_invoice_id) = 1)),
     CONSTRAINT outsource_invoices_paid_by_check CHECK ((paid_by = ANY (ARRAY['Accounts'::text, 'NVS Maintenance account'::text, 'NVS 659 Manjunath'::text, 'NVS 2954 Gokilavanan'::text, 'PCN'::text]))),
@@ -4126,6 +4318,13 @@ ALTER TABLE public.outsource_invoices OWNER TO postgres;
 --
 
 COMMENT ON COLUMN public.outsource_invoices.company IS 'The company this invoice belongs to (MAIN-161), set by outsource_invoices_set_company: a purchase''s or multi-vehicle invoice''s Billed to, or the company a job card''s vehicle had when the card was opened. Never set by hand. Invoices from before then are NVS Travels.';
+
+
+--
+-- Name: COLUMN outsource_invoices.gst_breakdown; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.outsource_invoices.gst_breakdown IS 'MAIN-166: a job card or multi-vehicle invoice''s GST, one row per rate: {rate, before_gst, gst, incl_gst}, adding up to the Invoice Value. Required on every save by guard_invoice_gst_breakdown; NULL on purchases (their GST is on their lines) and on job card invoices saved before MAIN-166.';
 
 
 --
@@ -4446,7 +4645,7 @@ CREATE FUNCTION public.log_outsource_invoice_change() RETURNS trigger
 DECLARE
     v_fields  text[] := array[
         'maintenance_payment_status', 'finance_payment_status', 'finance_remark', 'paid_by',
-        'invoice_value', 'approved_amount', 'advance_amount', 'payby_date', 'submitted_on'
+        'invoice_value', 'approved_amount', 'advance_amount', 'payby_date', 'submitted_on', 'gst_breakdown'
     ];
     v_new     jsonb := to_jsonb(NEW);
     v_old     jsonb;
@@ -4530,6 +4729,7 @@ CREATE FUNCTION public.outsource_invoice_snapshot(p_invoice_id uuid) RETURNS jso
         'invoice_value',              oi.invoice_value,
         'approved_amount',            oi.approved_amount,
         'advance_amount',             oi.advance_amount,
+        'gst_breakdown',              oi.gst_breakdown,
         'maintenance_payment_status', oi.maintenance_payment_status,
         'payby_date',                 oi.payby_date,
         'supplier_id',                coalesce(jc.supplier_id, bs.supplier_id, pi.supplier_id),
@@ -5946,7 +6146,11 @@ BEGIN
            invoice_value              = v_inv_value,
            approved_amount            = v_approved,
            advance_amount             = v_advance,
-           maintenance_payment_status = v_maint
+           maintenance_payment_status = v_maint,
+           -- MAIN-166: a purchase's GST stays on its lines.
+           gst_breakdown              = CASE WHEN v_inv.purchase_invoice_id IS NULL
+                                             THEN nullif(p_resubmission->'gst_breakdown', 'null'::jsonb)
+                                             ELSE gst_breakdown END
     WHERE  id = p_invoice_id;
 
     PERFORM public.complete_invoice_resubmission(p_invoice_id, v_before, p_resubmission->>'note');
@@ -6062,10 +6266,11 @@ BEGIN
        OR nullif(p_invoice->>'approved_amount', '') IS NULL
        OR nullif(p_invoice->>'advance_amount', '') IS NULL
        OR nullif(p_invoice->>'maintenance_payment_status', '') IS NULL
+       OR nullif(p_invoice->'gst_breakdown', 'null'::jsonb) IS NULL
     THEN
         RAISE EXCEPTION '%', json_build_object(
             'error_code',    'INVOICE_DETAILS_INCOMPLETE',
-            'error_message', 'Fill in the vendor, every invoice field and the invoice file.'
+            'error_message', 'Fill in the vendor, every invoice field, the GST breakdown and the invoice file.'
         )::text;
     END IF;
 
@@ -6199,7 +6404,7 @@ BEGIN
 
         INSERT INTO public.outsource_invoices
             (batch_service_id, date_of_activity, invoice_no, paid_by, invoice_value,
-             approved_amount, advance_amount, maintenance_payment_status, created_by)
+             approved_amount, advance_amount, maintenance_payment_status, gst_breakdown, created_by)
         VALUES (
             v_batch_id,
             (p_invoice->>'date_of_activity')::date,
@@ -6209,6 +6414,7 @@ BEGIN
             v_approved,
             (p_invoice->>'advance_amount')::numeric,
             p_invoice->>'maintenance_payment_status',
+            nullif(p_invoice->'gst_breakdown', 'null'::jsonb),
             auth.uid()
         );
     ELSE
@@ -6284,7 +6490,8 @@ BEGIN
                invoice_value              = (p_invoice->>'invoice_value')::numeric,
                approved_amount            = v_approved,
                advance_amount             = (p_invoice->>'advance_amount')::numeric,
-               maintenance_payment_status = p_invoice->>'maintenance_payment_status'
+               maintenance_payment_status = p_invoice->>'maintenance_payment_status',
+               gst_breakdown              = nullif(p_invoice->'gst_breakdown', 'null'::jsonb)
         WHERE  id = v_invoice_id;
 
         DELETE FROM public.batch_service_vehicles
@@ -16473,6 +16680,13 @@ CREATE TRIGGER outsource_invoices_audit AFTER INSERT OR UPDATE ON public.outsour
 
 
 --
+-- Name: outsource_invoices outsource_invoices_gst_breakdown; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER outsource_invoices_gst_breakdown BEFORE INSERT OR UPDATE ON public.outsource_invoices FOR EACH ROW EXECUTE FUNCTION public.guard_invoice_gst_breakdown();
+
+
+--
 -- Name: outsource_invoices outsource_invoices_guard_status_owners; Type: TRIGGER; Schema: public; Owner: postgres
 --
 
@@ -20351,6 +20565,42 @@ GRANT ALL ON FUNCTION public.get_supplier_open_items(p_supplier_id uuid) TO serv
 GRANT ALL ON FUNCTION public.get_supplier_statement(p_supplier_id uuid) TO anon;
 GRANT ALL ON FUNCTION public.get_supplier_statement(p_supplier_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.get_supplier_statement(p_supplier_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric) TO anon;
+GRANT ALL ON FUNCTION public.gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric) TO authenticated;
+GRANT ALL ON FUNCTION public.gst_breakdown_problem(p_rows jsonb, p_invoice_value numeric) TO service_role;
+
+
+--
+-- Name: FUNCTION gst_breakdown_total(p_rows jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.gst_breakdown_total(p_rows jsonb) TO anon;
+GRANT ALL ON FUNCTION public.gst_breakdown_total(p_rows jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.gst_breakdown_total(p_rows jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION gst_rates(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.gst_rates() TO anon;
+GRANT ALL ON FUNCTION public.gst_rates() TO authenticated;
+GRANT ALL ON FUNCTION public.gst_rates() TO service_role;
+
+
+--
+-- Name: FUNCTION guard_invoice_gst_breakdown(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.guard_invoice_gst_breakdown() TO anon;
+GRANT ALL ON FUNCTION public.guard_invoice_gst_breakdown() TO authenticated;
+GRANT ALL ON FUNCTION public.guard_invoice_gst_breakdown() TO service_role;
 
 
 --

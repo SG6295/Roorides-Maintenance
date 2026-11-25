@@ -51,7 +51,10 @@ export default function ResubmitInvoiceModal({ invoice, onClose }) {
         ?? (id === currentSupplier?.id ? currentSupplier.name : '')
 
     const current = { supplierId, fileUrl, form }
-    const errors = validateInvoiceForm(form, todayStr)
+    // A purchase's GST is on its lines; a job card or multi-vehicle invoice carries its
+    // GST breakdown (MAIN-166).
+    const gst = !purchase
+    const errors = validateInvoiceForm(form, todayStr, { gst })
     const changes = resubmissionChanges(start, current, supplierName)
     const problem = resubmissionProblem(invoice, start, current, {
         invalid: Object.keys(errors).length > 0,
@@ -63,7 +66,7 @@ export default function ResubmitInvoiceModal({ invoice, onClose }) {
         setShowErrors(true)
         if (problem) return
         resubmit.mutate(
-            { id: invoice.id, resubmission: resubmissionPayload(current, note) },
+            { id: invoice.id, resubmission: resubmissionPayload(current, note, { gst }) },
             { onSuccess: onClose },
         )
     }
@@ -118,6 +121,7 @@ export default function ResubmitInvoiceModal({ invoice, onClose }) {
                             showErrors={showErrors}
                             todayStr={todayStr}
                             dateLabel={purchase ? 'Invoice Date' : 'Date of Activity'}
+                            gst={gst}
                         />
 
                         {/* ── Note ── */}

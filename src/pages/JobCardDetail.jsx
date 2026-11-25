@@ -17,6 +17,7 @@ import SearchableSelect from '../components/shared/SearchableSelect'
 import CustomSelect from '../components/shared/CustomSelect'
 import InvoiceDetailsFields, { InvoiceDetailsReadOnly } from '../components/outsource-invoices/InvoiceDetailsFields'
 import ResubmitInvoiceModal from '../components/outsource-invoices/ResubmitInvoiceModal'
+import AddGstBreakdown from '../components/outsource-invoices/AddGstBreakdown'
 import { isLockedByFinance, isRejectedInvoice } from '../constants/outsourceInvoices'
 import { useVehicleCompany } from '../hooks/useVehicleCompany'
 import { isUnassignedVehicle } from '../constants/vehicleCompanies'
@@ -232,7 +233,7 @@ export default function JobCardDetail() {
     // invoice is never saved. Returns false when the form is incomplete or the save failed.
     const saveInvoiceIfEntered = async () => {
         if (isInvoiceFormEmpty(invoiceForm)) return true
-        if (Object.keys(validateInvoiceForm(invoiceForm, todayStr)).length > 0) {
+        if (Object.keys(validateInvoiceForm(invoiceForm, todayStr, { gst: true })).length > 0) {
             setShowInvoiceErrors(true)
             return false
         }
@@ -240,7 +241,7 @@ export default function JobCardDetail() {
             await upsertInvoice.mutateAsync({
                 jobCardId: jobCard.id,
                 userId: userProfile?.id,
-                data: invoiceFormToRow(invoiceForm),
+                data: invoiceFormToRow(invoiceForm, { gst: true }),
             })
             return true
         } catch (e) {
@@ -310,7 +311,7 @@ export default function JobCardDetail() {
     const isOutsource = jobCard.type === 'Outsource'
     const labourRows = (jobCard.issues || []).flatMap(i => i.issue_labour || [])
     const cardLabourHours = isOutsource ? 0 : totalLabourHours(jobCard.issues)
-    const invoiceErrs = isOutsource ? validateInvoiceForm(invoiceForm, todayStr) : {}
+    const invoiceErrs = isOutsource ? validateInvoiceForm(invoiceForm, todayStr, { gst: true }) : {}
     const invoiceValid = Object.keys(invoiceErrs).length === 0
     const invoicePartial = isOutsource && !invoiceValid && !isInvoiceFormEmpty(invoiceForm)
     const hasOwnInvoice = !!jobCard.invoice_url && invoiceValid
@@ -346,6 +347,11 @@ export default function JobCardDetail() {
     // Only an exec can save the invoice details or upload the file (finance can view
     // the card but not write to it), so everyone else sees both read-only.
     const invoiceReadOnly = jobCard.status === 'Completed' || !canAct
+    // A job card invoice saved before MAIN-166 has no GST breakdown; once its card is
+    // Completed the exec can still add one, until finance accepts or rejects it.
+    const canAddGst = isOutsource && canAct && jobCard.status === 'Completed'
+        && !!existingInvoice && !existingInvoice.gst_breakdown
+        && !lockedByFinance && !rejectedByFinance
 
     const jobLocationLabel = jobCard.type === 'InHouse' ? 'In-house' : 'Outsource'
 
@@ -745,7 +751,9 @@ export default function JobCardDetail() {
                         )}
                         {invoiceReadOnly ? (
                             /* Read-only display after full closure, or for non-execs */
-                            <InvoiceDetailsReadOnly invoice={existingInvoice} />
+                            <InvoiceDetailsReadOnly invoice={existingInvoice} gst={!!existingInvoice}>
+                                {canAddGst && <AddGstBreakdown invoice={existingInvoice} />}
+                            </InvoiceDetailsReadOnly>
                         ) : (
                             /* Editable form — shown while Open or Completed - Invoice Pending */
                             <InvoiceDetailsFields
@@ -755,6 +763,7 @@ export default function JobCardDetail() {
                                 showErrors={showInvoiceErrors}
                                 todayStr={todayStr}
                                 optional
+                                gst
                             >
                                 {showInvoiceErrors && !jobCard.supplier_id && (
                                     <p className="text-xs text-red-600">

@@ -20,6 +20,8 @@ export const COLUMNS = [
     { key: 'submitted',          label: 'Invoice Submitted',  default: true },
     { key: 'paid_by',            label: 'Paid By',            default: true },
     { key: 'invoice_value',      label: 'Invoice Value',      default: false, align: 'right' },
+    // The bill's GST (MAIN-166); the company ledger scales it to the Approved Amount.
+    { key: 'gst',                label: 'GST',                default: true,  align: 'right' },
     { key: 'discount',           label: 'Discount',           default: false, align: 'right' },
     { key: 'approved',           label: 'Approved',           default: true,  align: 'right' },
     { key: 'advance',            label: 'Advance',            default: false, align: 'right' },

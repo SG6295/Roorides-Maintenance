@@ -19,16 +19,10 @@ import {
     refurbishmentLinesError,
     toRefurbishmentLine,
 } from '../../utils/refurbishment'
+import { gstRateOptions } from '../../constants/gstRates'
 
 const NOT_FOUND_SENTINEL = '__NOT_FOUND__'
 const NEW_PART_SENTINEL = '__NEW__'
-const GST_OPTIONS = [
-    { label: 'None', value: '0' },
-    { label: '5%', value: '5' },
-    { label: '12%', value: '12' },
-    { label: '18%', value: '18' },
-    { label: '28%', value: '28' },
-]
 const LINE_GRID = 'grid gap-2 grid-cols-[minmax(0,5fr)_minmax(0,1.5fr)_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_1.25rem]'
 
 const fmt = n => {
@@ -363,7 +357,7 @@ export default function RecordRefurbishmentModal({ onClose }) {
                                                         compact
                                                         value={line.gst_rate}
                                                         onChange={v => updateLine(line.key, { gst_rate: v })}
-                                                        options={GST_OPTIONS}
+                                                        options={gstRateOptions(line.gst_rate)}
                                                     />
                                                 </div>
                                                 <div className="text-sm text-gray-700 text-right pr-1 pt-3">

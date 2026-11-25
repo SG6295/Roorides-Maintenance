@@ -1,6 +1,7 @@
 import { invoiceFormFromRow, invoiceFormToRow } from './invoiceForm'
 import { fmtMoney, fmtDate, fmtPaise } from './format'
 import { toPaise } from '../../utils/settlement'
+import { breakdownLines, gstRowsToBreakdown, sameBreakdown } from '../../utils/gstBreakdown'
 
 /**
  * The Resubmit popup's rules (MAIN-120), for a row of the Invoices list. The
@@ -58,6 +59,15 @@ export function resubmissionChanges(start, current, supplierName = id => id) {
             out.push(`${label}: ${show(field, start.form[field])} → ${show(field, current.form[field])}`)
         }
     }
+    // The GST breakdown (MAIN-166), compared as saved; a half-typed row is not a change.
+    const gstOf = form => {
+        try { return gstRowsToBreakdown(form.gstRows ?? []) } catch { return null }
+    }
+    const [before, after] = [gstOf(start.form), gstOf(current.form)]
+    if (after && !sameBreakdown(before, after)) {
+        const describe = b => (b && b.length ? breakdownLines(b).join('; ') : '—')
+        out.push(`GST breakdown: ${describe(before)} → ${describe(after)}`)
+    }
     return out
 }
 
@@ -93,10 +103,13 @@ export function resubmissionProblem(invoice, start, current, { invalid, changes 
     return null
 }
 
-/** What resubmit_outsource_invoice takes. Call only once resubmissionProblem is null. */
-export function resubmissionPayload(current, note) {
+/**
+ * What resubmit_outsource_invoice takes. Call only once resubmissionProblem is null.
+ * `gst` sends the GST breakdown — a job card or multi-vehicle invoice's (MAIN-166).
+ */
+export function resubmissionPayload(current, note, { gst = false } = {}) {
     return {
-        ...invoiceFormToRow(current.form),
+        ...invoiceFormToRow(current.form, { gst }),
         supplier_id: current.supplierId || null,
         invoice_file_url: current.fileUrl,
         note: note.trim() || null,

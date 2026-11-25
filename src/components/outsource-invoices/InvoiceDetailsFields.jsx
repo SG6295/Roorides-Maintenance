@@ -1,6 +1,7 @@
 import { formatDate } from '../../utils/datetime'
 import CustomSelect from '../shared/CustomSelect'
 import { PAID_BY_OPTIONS, MAINTENANCE_PAYMENT_STATUSES } from '../../constants/outsourceInvoices'
+import GstBreakdownFields, { GstBreakdownReadOnly } from './GstBreakdownFields'
 
 /**
  * The outsource invoice's details, editable and read-only — shared by the job card and
@@ -10,10 +11,15 @@ import { PAID_BY_OPTIONS, MAINTENANCE_PAYMENT_STATUSES } from '../../constants/o
 
 const rupees = v => `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-/** The saved invoice, read-only — after closure, or for anyone who may not edit it. */
-export function InvoiceDetailsReadOnly({ invoice }) {
+/**
+ * The saved invoice, read-only — after closure, or for anyone who may not edit it. `gst`
+ * shows its GST breakdown (job card and multi-vehicle invoices, MAIN-166); `children`
+ * render below it.
+ */
+export function InvoiceDetailsReadOnly({ invoice, gst = false, children }) {
     return (
-        <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <div className="space-y-3 text-sm">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
             {[
                 ['Date of Activity', invoice?.date_of_activity
                     ? formatDate(invoice.date_of_activity)
@@ -41,6 +47,9 @@ export function InvoiceDetailsReadOnly({ invoice }) {
                 </div>
             ))}
         </div>
+            {gst && <GstBreakdownReadOnly breakdown={invoice?.gst_breakdown} />}
+            {children}
+        </div>
     )
 }
 
@@ -49,8 +58,9 @@ export function InvoiceDetailsReadOnly({ invoice }) {
  * only once `showErrors` is set; `children` render below the fields. `optional` drops the
  * required marks — on a job card the invoice may come later, but once started it is
  * checked in full. `dateLabel` renames the date — a purchase invoice calls it Invoice Date.
+ * `gst` adds the GST breakdown, for a job card or multi-vehicle invoice (MAIN-166).
  */
-export default function InvoiceDetailsFields({ form, setForm, errors, showErrors, todayStr, optional = false, dateLabel = 'Date of Activity', children }) {
+export default function InvoiceDetailsFields({ form, setForm, errors, showErrors, todayStr, optional = false, dateLabel = 'Date of Activity', gst = false, children }) {
     const req = optional ? null : <span className="text-red-500">*</span>
     const payableAmount = (() => {
         const aa = parseFloat(form.approvedAmount)
@@ -194,6 +204,17 @@ export default function InvoiceDetailsFields({ form, setForm, errors, showErrors
                     </div>
                 </div>
             </div>
+
+            {gst && (
+                <GstBreakdownFields
+                    rows={form.gstRows ?? []}
+                    onChange={gstRows => setForm(f => ({ ...f, gstRows }))}
+                    invoiceValue={form.invoiceValue}
+                    error={errors.gstBreakdown}
+                    showErrors={showErrors}
+                    required={!optional}
+                />
+            )}
 
             {children}
         </div>
