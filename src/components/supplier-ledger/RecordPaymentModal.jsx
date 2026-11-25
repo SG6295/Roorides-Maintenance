@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import CustomSelect from '../shared/CustomSelect'
-import LedgerModal, { PrimaryButton, SecondaryButton } from './LedgerModal'
+import LedgerModal, { CompanyLine, PrimaryButton, SecondaryButton } from './LedgerModal'
 import { PAYMENT_METHODS, BANK_OPTIONS } from '../../constants/outsourceInvoices'
 import { toPaise, paiseToInput } from '../../utils/settlement'
 import { todayLocal } from '../../utils/datetime'
@@ -12,9 +12,10 @@ import { fmtMoney } from '../outsource-invoices/format'
  * before and after. The database function behind `onSubmit` makes the binding checks.
  *
  * onSubmit({ amount, tds, paid_on, payment_method, bank, utr }) — amounts as two-decimal
- * strings; `mutation` is the hook's result, for its pending state and error.
+ * strings; `mutation` is the hook's result, for its pending state and error. `company` is
+ * the tab's (MAIN-162), shown fixed; the caller sends it with the payment.
  */
-export default function RecordPaymentModal({ title, subtitle, balance, withTds = false, mutation, onSubmit, onClose }) {
+export default function RecordPaymentModal({ title, subtitle, company, balance, withTds = false, mutation, onSubmit, onClose }) {
     const today = todayLocal()
     const [form, setForm] = useState({ amount: '', tds: '', paidOn: today, method: 'NEFT', bank: '', utr: '' })
     const [showErrors, setShowErrors] = useState(false)
@@ -71,6 +72,7 @@ export default function RecordPaymentModal({ title, subtitle, balance, withTds =
                 </PrimaryButton>
             </>}
         >
+            <CompanyLine company={company} what={withTds ? 'payment' : 'repayment'} />
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     {label(withTds ? 'Paid value (₹)' : 'Amount (₹)', 'pm-amount')}
