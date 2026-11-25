@@ -29,6 +29,7 @@ import SupplierRegistration from './pages/SupplierRegistration'
 import SupplierLedger from './pages/SupplierLedger'
 import SupplierStatement from './pages/SupplierStatement'
 import AdvanceStatement from './pages/AdvanceStatement'
+import CompanyLedger from './pages/CompanyLedger'
 import Users from './pages/Users'
 import Profile from './pages/Profile'
 import ForgotPassword from './pages/auth/ForgotPassword'
@@ -306,6 +307,16 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <SupplierStatement />
+                </ProtectedRoute>
+              }
+            />
+            {/* Company ledgers (MAIN-156) — read-only for exec, super_admin and finance. */}
+            <Route path="/company-ledger" element={<Navigate to="/company-ledger/nvs-travels" replace />} />
+            <Route
+              path="/company-ledger/:company"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <CompanyLedger />
                 </ProtectedRoute>
               }
             />

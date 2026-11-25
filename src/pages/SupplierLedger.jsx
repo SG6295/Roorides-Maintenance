@@ -61,7 +61,8 @@ export default function SupplierLedger() {
                         <h1 className="text-2xl font-bold text-gray-900">Supplier ledger</h1>
                         <p className="text-sm text-gray-500 mt-1">
                             What each supplier is owed for accepted invoices, less advances and payments.
-                            Payments go out every Wednesday.
+                            Payments go out every Wednesday. Each company's own spending is in
+                            the <Link to="/company-ledger" className="text-blue-600 hover:underline">Company ledger</Link>.
                         </p>
                     </div>
                     <button

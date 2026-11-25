@@ -2907,6 +2907,21 @@ export type Database = {
         }
         Returns: Json
       }
+      company_ledger_lines: {
+        Args: { p_company: string }
+        Returns: {
+          detail: Json
+          doc_date: string
+          entry_at: string
+          gst: number
+          gst_status: string
+          kind: string
+          line_id: string
+          owed: number
+          seq: number
+          spend: number
+        }[]
+      }
       complete_invoice_resubmission: {
         Args: { p_before: Json; p_invoice_id: string; p_note: string }
         Returns: undefined
@@ -2972,6 +2987,22 @@ export type Database = {
       get_blocking_scrap_for_issue_part: {
         Args: { p_issue_part_id: string }
         Returns: Json
+      }
+      get_company_ledger: {
+        Args: { p_company: string }
+        Returns: {
+          detail: Json
+          doc_date: string
+          entry_at: string
+          gst: number
+          gst_status: string
+          kind: string
+          line_id: string
+          owed: number
+          owed_balance: number
+          spend: number
+          spent_to_date: number
+        }[]
       }
       get_labour_report: {
         Args: { p_from: string; p_to: string }
