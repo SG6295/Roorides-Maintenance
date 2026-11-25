@@ -57,13 +57,18 @@ export function useAddIssuePart(jobCardId) {
     const queryClient = useQueryClient()
 
     return useMutation({
-        mutationFn: async ({ issue_id, part_id, quantity_used, added_by }) => {
-            const { data, error } = await supabase
-                .from('issue_parts')
-                .insert([{ issue_id, part_id, quantity_used, added_by }])
-                .select()
-                .single()
-
+        // Through add_spare (MAIN-159): a spare that needs the other company's stock is
+        // refused with NEEDS_TRANSFER and a quote, and added once `confirmTransfer`
+        // ({ amount }) repeats the quoted amount. The spare is added by the caller's login.
+        mutationFn: async ({ issue_id, part_id, quantity_used, confirmTransfer }) => {
+            const { data, error } = await supabase.rpc('add_spare', {
+                p_spare: {
+                    issue_id,
+                    part_id,
+                    quantity_used,
+                    ...(confirmTransfer ? { confirm_transfer: { amount: Number(confirmTransfer.amount) } } : {}),
+                },
+            })
             if (error) throw error
             return data
         },
@@ -72,6 +77,7 @@ export function useAddIssuePart(jobCardId) {
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
             queryClient.invalidateQueries({ queryKey: ['parts'] })
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
+            queryClient.invalidateQueries({ queryKey: ['company_ledger'] })
         },
     })
 }
@@ -120,6 +126,7 @@ export function useDeleteIssuePart(jobCardId) {
             queryClient.invalidateQueries({ queryKey: ['part_stock'] })
             queryClient.invalidateQueries({ queryKey: ['scrap_inventory'] })
             queryClient.invalidateQueries({ queryKey: ['job_cards'] })
+            queryClient.invalidateQueries({ queryKey: ['company_ledger'] })
         },
     })
 }

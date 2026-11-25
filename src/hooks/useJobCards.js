@@ -64,7 +64,7 @@ export function useJobCard(jobCardNumber) {
           value:job_card_value,
           supplier:supplier_id(id, entity_name, owner_contact, nature_of_work),
           location:workshop_locations!location_id(id, name, address),
-          issues(*, ticket:ticket_id(ticket_number), issue_parts(*, cost:spare_cost, part:part_id(id, name, unit, default_exclude_from_scrap, default_exclusion_reason)), issue_labour(id, hours, technician:technician_id(id, name, role)))
+          issues(*, ticket:ticket_id(ticket_number), issue_parts(*, cost:spare_cost, transfer:spare_transfer, part:part_id(id, name, unit, default_exclude_from_scrap, default_exclusion_reason)), issue_labour(id, hours, technician:technician_id(id, name, role)))
         `)
                 .eq('job_card_number', jobCardNumber)
                 .single()

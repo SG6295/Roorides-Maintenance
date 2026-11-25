@@ -30,6 +30,8 @@ const TABLES = [
   'stock_audits', 'stock_audit_items', 'stock_audit_item_reasons',
   // First-in-first-out costing (MAIN-158): opening prices and which lot each spare took
   'opening_stock_lots', 'stock_cost_draws',
+  // Spares transferred between the companies (MAIN-159)
+  'spare_transfers',
 ]
 
 // Batches are ordered by primary key, so each table not keyed on `id` must be listed here.

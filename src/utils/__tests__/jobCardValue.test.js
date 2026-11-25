@@ -6,6 +6,7 @@ import {
     jobCardValueBasis,
     needsPriceError,
     priceFormError,
+    transferQuoteError,
 } from '../jobCardValue'
 
 describe('canSeeCosts', () => {
@@ -69,5 +70,34 @@ describe('priceFormError', () => {
         expect(priceFormError({ unitPrice: '10', gstRate: '' })).toMatch(/GST/)
         expect(priceFormError({ unitPrice: '0', gstRate: '0' })).toBeNull()
         expect(priceFormError({ unitPrice: '2205', gstRate: '18' })).toBeNull()
+    })
+})
+
+describe('transferQuoteError', () => {
+    const details = JSON.stringify({
+        part_name: '1171 belt', unit: 'pcs', from_company: 'nvs_travels', to_company: 'nvs_travel_solutions',
+        quantity: '1.00', own_quantity: '1.00', amount: '505.00', gst: '77.03',
+        gst_breakdown: [{ rate: '18.00', before_gst: '427.97', gst: '77.03', incl_gst: '505.00' }],
+        job_card_number: 572, vehicle: 'KA51AL3444',
+    })
+
+    it('reads the quote of a spare that needs a transfer', () => {
+        const q = transferQuoteError({ hint: 'NEEDS_TRANSFER', message: 'needs', details })
+        expect(q).toMatchObject({
+            changed: false, partName: '1171 belt', fromCompany: 'nvs_travels', toCompany: 'nvs_travel_solutions',
+            quantity: 1, ownQuantity: 1, amount: 505, gst: 77.03, jobCardNumber: 572,
+        })
+        expect(q.gstBreakdown).toEqual([{ rate: 18, beforeGst: 427.97, gst: 77.03, inclGst: 505 }])
+    })
+
+    it('marks a quote that changed since it was confirmed', () => {
+        expect(transferQuoteError({ hint: 'TRANSFER_CHANGED', message: 'changed', details }).changed).toBe(true)
+    })
+
+    it('is null for other errors or a quote it cannot read', () => {
+        expect(transferQuoteError({ hint: 'PART_NEEDS_PRICE', details })).toBeNull()
+        expect(transferQuoteError({ hint: 'NEEDS_TRANSFER', details: 'not json' })).toBeNull()
+        expect(transferQuoteError({ hint: 'NEEDS_TRANSFER', details: '{}' })).toBeNull()
+        expect(transferQuoteError(null)).toBeNull()
     })
 })

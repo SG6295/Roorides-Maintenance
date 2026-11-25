@@ -201,3 +201,56 @@ describe('reconciliation adjustments', () => {
         expect(figureInWords(0, 'nvs_travels')).toBe('₹0.00 (nothing owed)')
     })
 })
+
+// MAIN-159 — spare transfers move both Spent and Owed, signed; a reversal is its own line.
+describe('spare transfers', () => {
+    const detail = {
+        job_card_number: 572, vehicle: 'KA51AL3444', part: '1171 belt', unit: 'pcs', quantity: 1, amount: 505,
+        gst_breakdown: [{ rate: 18, before_gst: 427.97, gst: 77.03, incl_gst: 505 }],
+        other_company: 'nvs_travels', posted_at: '2026-11-25T06:00:00+00:00', posted_by: 'Exec', reversed_by: 'Exec',
+    }
+    const transferIn = {
+        kind: 'spare_transfer_in', entry_at: '2026-11-25T06:00:00+00:00',
+        spend: 505, owed: -505, gst: 77.03, gst_status: 'inter_company', detail,
+    }
+    const reversedIn = {
+        ...transferIn, kind: 'spare_transfer_in_reversed', entry_at: '2026-11-26T06:00:00+00:00',
+        spend: -505, owed: 505, gst: -77.03,
+    }
+
+    it('reads the part, the other company and the job card', () => {
+        const e = describeEntry(transferIn, 'nvs_travel_solutions')
+        expect(e.title).toBe('1171 belt × 1 pcs from NVS Travels')
+        expect(e.sub).toBe('KA51AL3444 · GST 18% included · Transferred by Exec')
+        expect(e.link).toEqual({ to: '/job-cards/572', label: 'Job card 572' })
+
+        const out = describeEntry({ ...transferIn, kind: 'spare_transfer_out', detail: { ...detail, other_company: 'nvs_travel_solutions' } }, 'nvs_travels')
+        expect(out.title).toBe('1171 belt × 1 pcs to NVS Travel Solutions Pvt Ltd')
+
+        const rev = describeEntry(reversedIn, 'nvs_travel_solutions')
+        expect(rev.title).toBe('1171 belt × 1 pcs from NVS Travels — reversed')
+        expect(rev.sub).toContain('Spare removed by Exec (transferred 25 Nov 2026)')
+    })
+
+    it('shows its effect on spending, signed', () => {
+        expect(lineAmount(transferIn)).toBe(505)
+        expect(lineAmount({ ...transferIn, spend: -505 })).toBe(-505)
+        expect(isAdjustment(transferIn)).toBe(false)
+    })
+
+    it('moves spending, owed and GST, and a reversal undoes it', () => {
+        const t = ledgerTotals([transferIn])
+        expect(t.spent).toBe(505)
+        expect(t.owed).toBe(-505)
+        expect(t.spendGst).toBe(77.03)
+        const both = ledgerTotals([transferIn, reversedIn])
+        expect([both.spent, both.owed, both.spendGst]).toEqual([0, 0, 0])
+    })
+
+    it('still leaves the GST on a vehicle sale out of spending', () => {
+        const sale = { kind: 'vehicle_sold', spend: 0, owed: 1000, gst: 152.54, gst_status: 'inter_company' }
+        const t = ledgerTotals([transferIn, sale])
+        expect(t.spendGst).toBe(77.03)
+        expect(t.gstByStatus.inter_company).toBe(229.57)
+    })
+})

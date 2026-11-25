@@ -15,9 +15,11 @@ import SearchableSelect from '../shared/SearchableSelect'
 import DuplicatePartNotice from '../inventory/DuplicatePartNotice'
 import CustomSelect from '../shared/CustomSelect'
 import SLAStatusBadge from '../shared/SLAStatusBadge'
-import { useToast } from '../../hooks/useFeedback'
-import { canSeeCosts, needsPriceError, rupees } from '../../utils/jobCardValue'
+import { useToast, useConfirm } from '../../hooks/useFeedback'
+import { canSeeCosts, needsPriceError, transferQuoteError, rupees } from '../../utils/jobCardValue'
+import { companyLabel, companyShortLabel } from '../../constants/vehicleCompanies'
 import PartPriceModal from './PartPriceModal'
+import TransferSpareModal from './TransferSpareModal'
 
 /**
  * IssueWorkCard - displays a single issue within a Job Card with labour, parts, and status controls
@@ -50,6 +52,7 @@ const parseHours = (value) => {
 
 export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMechanic, parts, technicians = [], userProfile, jobCardType, blocked = false }) {
     const toast = useToast()
+    const confirm = useConfirm()
     const updateIssue = useUpdateIssue()
     const addIssuePart = useAddIssuePart(jobCardId)
     const deleteIssuePart = useDeleteIssuePart(jobCardId)
@@ -57,6 +60,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
     const addOpeningPrice = useAddOpeningStockPrice()
     // MAIN-158: a spare refused because its stock has no price — the exec is asked for one.
     const [priceNeeded, setPriceNeeded] = useState(null)
+    const [transferNeeded, setTransferNeeded] = useState(null)
     const showCosts = canSeeCosts(userProfile?.role)
     const { data: partUnits = [] } = usePartUnits()
 
@@ -82,7 +86,16 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
 
     const isPending = updateIssue.isPending || addIssuePart.isPending || deleteIssuePart.isPending
 
-    const handleDeletePart = async (issuePartId) => {
+    const handleDeletePart = async (issuePart) => {
+        const issuePartId = issuePart.id
+        const t = issuePart.transfer
+        if (t && !(await confirm({
+            title: 'Remove transferred spare?',
+            message: `${issuePart.part?.name ?? 'This spare'} came partly or wholly from the stock of ${companyLabel(t.from_company)}. `
+                + `Removing it returns the stock to the company it came from and reverses the transfer`
+                + `${t.amount != null ? ` of ${rupees(t.amount)}` : ''} in both company ledgers.`,
+            confirmLabel: 'Remove and reverse',
+        }))) return
         setDeleteError(null)
         try {
             const result = await deleteIssuePart.mutateAsync(issuePartId)
@@ -117,12 +130,17 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             issue_id: issue.id,
             part_id: form.selectedPartId,
             quantity_used: qty,
-            added_by: userProfile?.id,
         }
         try {
             await addIssuePart.mutateAsync(spare)
             setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
         } catch (e) {
+            // Part of it is only in the other company's stock: ask to confirm a transfer.
+            const quote = transferQuoteError(e)
+            if (quote) {
+                setTransferNeeded({ quote, spare })
+                return
+            }
             const missing = needsPriceError(e)
             if (missing) {
                 if (['maintenance_exec', 'super_admin'].includes(userProfile?.role)) {
@@ -152,7 +170,33 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
             setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
             toast.success('Price saved and spare added.')
         } catch (e) {
+            const quote = transferQuoteError(e)
+            if (quote) {
+                setTransferNeeded({ quote, spare })
+                return
+            }
             toast.error(`Price saved, but the spare was not added: ${e.message}`)
+        }
+    }
+
+    const handleTransferConfirm = async () => {
+        const { quote, spare } = transferNeeded
+        try {
+            const result = await addIssuePart.mutateAsync({ ...spare, confirmTransfer: { amount: quote.amount } })
+            setTransferNeeded(null)
+            setForm(prev => ({ ...prev, showAddPart: false, selectedPartId: '', partQty: '' }))
+            toast.success(result?.transfer
+                ? `Spare added. ${rupees(result.transfer.amount)} transferred from ${companyLabel(result.transfer.from_company)}.`
+                : "Spare added from the vehicle's own company's stock — no transfer was needed after all.")
+        } catch (e) {
+            // The cost moved since it was shown: show the new figures to confirm again.
+            const fresh = transferQuoteError(e)
+            if (fresh) {
+                setTransferNeeded({ quote: fresh, spare })
+                return
+            }
+            setTransferNeeded(null)
+            toast.error(e.message)
         }
     }
 
@@ -337,6 +381,14 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                 {issue.issue_parts.map(ip => (
                                     <span key={ip.id} className="inline-flex items-center gap-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1">
                                         {ip.part?.name} &times; {ip.quantity_used} {ip.part?.unit}
+                                        {ip.transfer && (
+                                            <span
+                                                className="text-[11px] font-medium text-amber-800 bg-amber-100 rounded-full px-1.5 py-0.5"
+                                                title={`${ip.transfer.quantity} ${ip.part?.unit ?? ''} transferred from ${companyLabel(ip.transfer.from_company)}`}
+                                            >
+                                                Transferred from {companyShortLabel(ip.transfer.from_company)}
+                                            </span>
+                                        )}
                                         {showCosts && !isOutsource && (
                                             <span className="text-xs text-gray-500" title="First-in-first-out cost, incl. GST">
                                                 · {ip.cost !== null && ip.cost !== undefined ? rupees(ip.cost) : 'no price'}
@@ -344,7 +396,7 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                                         )}
                                         {canEdit && (
                                             <button
-                                                onClick={() => handleDeletePart(ip.id)}
+                                                onClick={() => handleDeletePart(ip)}
                                                 disabled={isPending}
                                                 className="text-gray-500 hover:text-red-500 transition-colors disabled:opacity-50 leading-none"
                                                 title="Remove part"
@@ -493,6 +545,15 @@ export default function IssueWorkCard({ issue, jobCardId, jobCardStatus, isMecha
                         </button>
                     )}
                 </div>
+            )}
+
+            {transferNeeded && (
+                <TransferSpareModal
+                    quote={transferNeeded.quote}
+                    onConfirm={handleTransferConfirm}
+                    onCancel={() => setTransferNeeded(null)}
+                    isSaving={addIssuePart.isPending}
+                />
             )}
 
             {priceNeeded && (

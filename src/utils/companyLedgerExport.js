@@ -17,7 +17,7 @@ export function exportCompanyLedger(company, lines, today) {
             'Entry':                  [title, link?.label].filter(Boolean).join(' · '),
             'Detail':                 sub,
             'Amount (incl. GST)':     lineAmount(l),
-            'GST':                    adj ? '' : l.gst == null ? 'Not recorded' : Number(l.gst),
+            'GST':                    adj ? '' : l.gst == null ? 'Not recorded' : Number(l.gst),  // a spare transfer's is signed
             'GST status':             adj ? '' : GST_STATUSES[l.gst_status]?.label ?? l.gst_status,
             'Spent to date':          Number(l.spent_to_date),
             'Owed between companies': Number(l.owed_balance),
