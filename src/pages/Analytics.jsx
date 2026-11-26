@@ -8,6 +8,7 @@ import { formatSiteLabel } from '../utils/siteLabel'
 import { useWorkshopSiteGroups } from '../hooks/useSiteWorkshops'
 import MultiFilterSelect from '../components/shared/MultiFilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
+import { buildSlaReport, slaReportCsv, percentText } from '../utils/slaReport'
 import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 /**
@@ -26,20 +27,17 @@ export default function Analytics({ embedded = false }) {
         end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
     })
 
-    // Fetch Stats using RPC
-    const { data: stats = [] } = useQuery({
+    // One call for the whole selection: the counts come back pooled and every rate below
+    // is computed from pooled counts. Never fetch per site and average the percentages
+    // (MAIN-86). Which bucket a ticket or issue counts in is decided in the database
+    // (analytics_ticket_rows / analytics_issue_rows, MAIN-171) — this page only lays the
+    // counts out.
+    const { data: stats = null } = useQuery({
         queryKey: ['analytics', dateRange, selectedSites],
         queryFn: async () => {
-            // One call for the whole selection: the function filters with `= ANY`, so the
-            // counts come back pooled and every rate below is computed from pooled counts.
-            // Never fetch per site and average the percentages (MAIN-86).
-            const { data, error } = await supabase
-                .rpc('get_maintenance_stats', {
-                    start_date_input: dateRange.start,
-                    end_date_input: dateRange.end,
-                    site_filter: selectedSites.length ? selectedSites : null
-                })
-
+            const { data, error } = await supabase.rpc('get_maintenance_stats', {
+                p_filters: { from: dateRange.start, to: dateRange.end, sites: selectedSites }
+            })
             if (error) throw error
             return data
         }
@@ -63,188 +61,21 @@ export default function Analytics({ embedded = false }) {
         refetchInterval: 5 * 60 * 1000
     })
 
-    // Aggregates for KPI Cards & Tables
-    const aggregates = useMemo(() => {
-        if (!stats.length) return null
-
-        const sums = stats.reduce((acc, curr) => ({
-            total_tickets: acc.total_tickets + curr.total_tickets,
-            status_new: acc.status_new + curr.status_new,
-            status_accepted: acc.status_accepted + curr.status_accepted,
-            status_wip: acc.status_wip + curr.status_wip,
-            status_resolved: acc.status_resolved + curr.status_resolved,
-            status_closed: acc.status_closed + curr.status_closed,
-            status_rejected: acc.status_rejected + curr.status_rejected,
-            status_completed: acc.status_completed + curr.status_completed,
-
-            major_total: acc.major_total + curr.major_total,
-            major_electrical: acc.major_electrical + curr.major_electrical,
-            major_mechanical: acc.major_mechanical + curr.major_mechanical,
-            major_body: acc.major_body + curr.major_body,
-            major_tyre: acc.major_tyre + curr.major_tyre,
-
-            minor_total: acc.minor_total + curr.minor_total,
-            minor_electrical: acc.minor_electrical + curr.minor_electrical,
-            minor_mechanical: acc.minor_mechanical + curr.minor_mechanical,
-            minor_body: acc.minor_body + curr.minor_body,
-            minor_tyre: acc.minor_tyre + curr.minor_tyre,
-
-            type_in_house: acc.type_in_house + curr.type_in_house,
-            type_outsource: acc.type_outsource + curr.type_outsource,
-
-            accept_pending: acc.accept_pending + curr.accept_pending,
-            accept_adhered: acc.accept_adhered + curr.accept_adhered,
-            accept_violated: acc.accept_violated + curr.accept_violated,
-            accept_na: acc.accept_na + curr.accept_na,
-
-            comp_in_wip_within: acc.comp_in_wip_within + curr.comp_in_wip_within,
-            comp_in_adhered: acc.comp_in_adhered + curr.comp_in_adhered,
-            comp_in_violated: acc.comp_in_violated + curr.comp_in_violated,
-            comp_in_na: acc.comp_in_na + curr.comp_in_na,
-
-            comp_out_wip_within: acc.comp_out_wip_within + curr.comp_out_wip_within,
-            comp_out_adhered: acc.comp_out_adhered + curr.comp_out_adhered,
-            comp_out_violated: acc.comp_out_violated + curr.comp_out_violated,
-            comp_out_na: acc.comp_out_na + curr.comp_out_na,
-
-            rating_pending: acc.rating_pending + curr.rating_pending,
-            rating_collected: acc.rating_collected + curr.rating_collected,
-            rating_good: acc.rating_good + curr.rating_good,
-            rating_ok: acc.rating_ok + curr.rating_ok,
-            rating_bad: acc.rating_bad + curr.rating_bad,
-
-            csat_score_sum: acc.csat_score_sum + curr.csat_score_sum,
-            total_completed_tickets: acc.total_completed_tickets + curr.total_completed_tickets
-        }), {
-            total_tickets: 0, status_new: 0, status_accepted: 0, status_wip: 0,
-            status_resolved: 0, status_closed: 0, status_rejected: 0, status_completed: 0,
-            major_total: 0, major_electrical: 0, major_mechanical: 0, major_body: 0, major_tyre: 0,
-            minor_total: 0, minor_electrical: 0, minor_mechanical: 0, minor_body: 0, minor_tyre: 0,
-            type_in_house: 0, type_outsource: 0,
-            accept_pending: 0, accept_adhered: 0, accept_violated: 0, accept_na: 0,
-            comp_in_wip_within: 0, comp_in_adhered: 0, comp_in_violated: 0, comp_in_na: 0,
-            comp_out_wip_within: 0, comp_out_adhered: 0, comp_out_violated: 0, comp_out_na: 0,
-            rating_pending: 0, rating_collected: 0, rating_good: 0, rating_ok: 0, rating_bad: 0,
-            csat_score_sum: 0, total_completed_tickets: 0
-        })
-
-        // Helper for % calc
-        const calcPerc = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '-'
-
-        return {
-            ...sums,
-            accept_sla_perc: calcPerc(sums.accept_adhered, sums.accept_adhered + sums.accept_violated),
-            comp_in_sla_perc: calcPerc(sums.comp_in_adhered, sums.comp_in_adhered + sums.comp_in_violated),
-            comp_out_sla_perc: calcPerc(sums.comp_out_adhered, sums.comp_out_adhered + sums.comp_out_violated),
-            collection_perc: calcPerc(sums.rating_collected, sums.rating_pending + sums.rating_collected),
-            csat_perc: calcPerc(sums.csat_score_sum, sums.rating_collected * 2)
-        }
-    }, [stats])
-
-    const slaMetrics = useMemo(() => {
-        if (!aggregates) return null
-
-        const totalAdhered = aggregates.comp_in_adhered + aggregates.comp_out_adhered
-        const totalViolated = aggregates.comp_in_violated + aggregates.comp_out_violated
-        const totalResolved = totalAdhered + totalViolated
-        const adherenceRate = totalResolved > 0 ? Math.round((totalAdhered / totalResolved) * 100) : null
-
-        const acceptTotal = aggregates.accept_adhered + aggregates.accept_violated
-        const acceptRate = acceptTotal > 0 ? Math.round((aggregates.accept_adhered / acceptTotal) * 100) : null
-
-        // Not applicable: tickets raised before SLA tracking (MAIN-45), and for completion
-        // also tickets with no issues (MAIN-135). They are excluded from every rate above,
-        // and counted separately here so the figures still reconcile against the ticket
-        // total instead of silently swelling "awaiting issue".
-        const completionNA = aggregates.comp_in_na + aggregates.comp_out_na
-        const acceptNA = aggregates.accept_na
-        const acceptAwaiting = aggregates.total_tickets - acceptTotal - acceptNA
-
-        return {
-            adherenceRate, totalAdhered, totalResolved,
-            acceptRate, acceptTotal, acceptAdhered: aggregates.accept_adhered,
-            completionNA, acceptNA, acceptAwaiting
-        }
-    }, [aggregates])
+    // The screen and the Download are both drawn from this, so they cannot disagree.
+    const report = useMemo(() => buildSlaReport(stats), [stats])
 
     const downloadCSV = () => {
-        if (!stats.length) return
-
-        // Headers matching ticket_metrics.md sections
-        const headers = [
-            'Month',
-            // 1. By Status
-            'Total Tickets', 'Pending', 'Team Assigned', 'Completed', 'Rejected',
-            // 2. By Work Type (Major)
-            'Major (Total)', 'Major (Elec)', 'Major (Mech)', 'Major (Body)', 'Major (Tyre)',
-            // 3. By Work Type (Minor)
-            'Minor (Total)', 'Minor (Elec)', 'Minor (Mech)', 'Minor (Body)', 'Minor (Tyre)',
-            // 4. In House / Outsource
-            'In House', 'Outsource',
-            // 5. Acceptance SLA
-            'Accept (Pending)', 'Accept (Adhered)', 'Accept (Violated)', 'Accept (Not Applicable)', 'Acceptance SLA % (Sharan KPI)',
-            // 6. Completion SLA (In House)
-            'Comp In (WIP Within)', 'Comp In (Adhered)', 'Comp In (Violated)', 'Comp In (Not Applicable)', 'Comp In SLA % (Sharan KPI)',
-            // 7. Completion SLA (Outsourced)
-            'Comp Out (WIP Within)', 'Comp Out (Adhered)', 'Comp Out (Violated)', 'Comp Out (Not Applicable)', 'Comp Out SLA % (Manjunath KPI)',
-            // 8. Ratings
-            'Rating Pending', 'Ratings Collected', 'Collection % (Sharan KPI)',
-            'Good', 'Ok', 'Bad', 'CSAT % (Manjunath KPI)'
-        ]
-
-        const csvRows = [headers.join(',')]
-
-        stats.forEach(row => {
-            // Helper for % calc
-            const calcPerc = (num, den) => den > 0 ? ((num / den) * 100).toFixed(1) + '%' : '-'
-
-            // Acceptance SLA %
-            const acceptTotal = row.accept_adhered + row.accept_violated
-            const acceptSLA = calcPerc(row.accept_adhered, acceptTotal)
-
-            // Completion In-House SLA %
-            const compInTotal = row.comp_in_adhered + row.comp_in_violated
-            const compInSLA = calcPerc(row.comp_in_adhered, compInTotal)
-
-            // Completion Outsource SLA %
-            const compOutTotal = row.comp_out_adhered + row.comp_out_violated
-            const compOutSLA = calcPerc(row.comp_out_adhered, compOutTotal)
-
-            // Collection %
-            const collectionPerc = calcPerc(row.rating_collected, (row.rating_pending + row.rating_collected))
-
-            // CSAT % (Formula: Score Sum / (Ratings Collected * 2))
-            const csatDenom = row.rating_collected * 2
-            const csatPerc = calcPerc(row.csat_score_sum, csatDenom)
-
-            csvRows.push([
-                row.month_label,
-                // Status
-                row.total_tickets, row.status_pending, row.status_assigned, row.status_completed, row.status_rejected,
-                // Major
-                row.major_total, row.major_electrical, row.major_mechanical, row.major_body, row.major_tyre,
-                // Minor
-                row.minor_total, row.minor_electrical, row.minor_mechanical, row.minor_body, row.minor_tyre,
-                // Type
-                row.type_in_house, row.type_outsource,
-                // Assign SLA
-                row.accept_pending, row.accept_adhered, row.accept_violated, row.accept_na, acceptSLA,
-                // Comp In SLA
-                row.comp_in_wip_within, row.comp_in_adhered, row.comp_in_violated, row.comp_in_na, compInSLA,
-                // Comp Out SLA
-                row.comp_out_wip_within, row.comp_out_adhered, row.comp_out_violated, row.comp_out_na, compOutSLA,
-                // Ratings
-                row.rating_pending, row.rating_collected, collectionPerc,
-                row.rating_good, row.rating_ok, row.rating_bad, csatPerc
-            ].join(','))
-        })
-
-        const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' })
+        if (!report) return
+        const csv = slaReportCsv(report, { start: dateRange.start, end: dateRange.end, sites: selectedSites })
+        // The byte-order mark makes Excel read the file as UTF-8, so "–" and "₹"-style
+        // characters don't arrive garbled.
+        const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
         a.download = `detailed_maintenance_stats_${format(new Date(), 'yyyyMMdd')}.csv`
         a.click()
+        window.URL.revokeObjectURL(url)
     }
 
     return (
@@ -292,15 +123,15 @@ export default function Analytics({ embedded = false }) {
                         <SLAKPICard
                             title="Overall SLA Adherence"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
-                            rate={slaMetrics?.adherenceRate}
-                            detail={slaMetrics ? `${slaMetrics.totalAdhered} adhered · ${slaMetrics.totalResolved - slaMetrics.totalAdhered} violated${slaMetrics.completionNA ? ` · ${slaMetrics.completionNA} not applicable` : ''} (of ${aggregates?.total_tickets} total tickets)` : null}
+                            rate={report?.completion.percentAll}
+                            detail={report ? `${report.completion.all.Adhered || 0} adhered · ${report.completion.all.Violated || 0} violated${report.completion.all.NA ? ` · ${report.completion.all.NA} not applicable` : ''} (of ${report.completion.total} total tickets)` : null}
                             icon={<CheckCircleIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
                             title="Acceptance SLA Compliance"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
-                            rate={slaMetrics?.acceptRate}
-                            detail={slaMetrics ? `${slaMetrics.acceptAdhered} on time · ${slaMetrics.acceptTotal - slaMetrics.acceptAdhered} late${slaMetrics.acceptNA ? ` · ${slaMetrics.acceptNA} not applicable` : ''} · ${slaMetrics.acceptAwaiting} awaiting issue` : null}
+                            rate={report?.acceptance.percent}
+                            detail={report ? `${report.acceptance.adhered} on time · ${report.acceptance.violated} late${report.acceptance.na ? ` · ${report.acceptance.na} not applicable` : ''} · ${report.acceptance.pending} awaiting issue` : null}
                             icon={<ClockIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
@@ -312,68 +143,111 @@ export default function Analytics({ embedded = false }) {
                     </div>
                 </div>
 
-                {/* --- TRANSPOSED VERTICAL TABLES SECTION --- */}
-                {aggregates && (
+                {/* Every table's rows add up to its total (MAIN-171). */}
+                {report && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-                        {/* 1. Status */}
                         <VerticalTable title="Tickets by Status">
-                            <Row label="Total" value={aggregates.total_tickets} bold />
-                            <Row label="New" value={aggregates.status_new} color="text-yellow-600" />
-                            <Row label="Accepted" value={aggregates.status_accepted} color="text-blue-600" />
-                            <Row label="Work In Progress" value={aggregates.status_wip} color="text-purple-600" />
-                            <Row label="Resolved" value={aggregates.status_resolved} color="text-green-600" />
-                            <Row label="Closed" value={aggregates.status_closed} color="text-gray-600" />
-                            <Row label="Rejected" value={aggregates.status_rejected} color="text-red-600" />
+                            <Row label="Total" value={report.status.total} bold />
+                            {report.status.rows.map(r => (
+                                <Row key={r.key} label={r.label} value={r.value} color={STATUS_COLORS[r.key]} />
+                            ))}
                         </VerticalTable>
 
-                        {/* 4. In House / Outsource */}
-                        <VerticalTable title="Issues by Work Type">
-                            <Row label="In House" value={aggregates.type_in_house} />
-                            <Row label="Outsource" value={aggregates.type_outsource} />
+                        <VerticalTable title="Issues by Job Card Type">
+                            {report.jobCardType.rows.map(r => (
+                                <Row key={r.key} label={r.label} value={r.value} color={r.key === 'none' ? 'text-gray-500' : undefined} />
+                            ))}
+                            <Row label="Total" value={report.jobCardType.total} bold />
                         </VerticalTable>
 
-                        {/* 2. Major */}
-                        <VerticalTable title="Issues by Severity (Major)">
-                            <Row label="Major Total" value={aggregates.major_total} bold />
-                            <Row label="Electrical" value={aggregates.major_electrical} />
-                            <Row label="Mechanical" value={aggregates.major_mechanical} />
-                            <Row label="Body" value={aggregates.major_body} />
-                            <Row label="Tyre" value={aggregates.major_tyre} />
-                        </VerticalTable>
+                        {report.severities.map(s => (
+                            <VerticalTable key={s.severity} title={`Issues by Severity (${s.severity})`}>
+                                <Row label={`${s.severity} Total`} value={s.total} bold />
+                                {s.rows.map(r => <Row key={r.key} label={r.label} value={r.value} />)}
+                            </VerticalTable>
+                        ))}
 
-                        {/* 3. Minor */}
-                        <VerticalTable title="Issues by Severity (Minor)">
-                            <Row label="Minor Total" value={aggregates.minor_total} bold />
-                            <Row label="Electrical" value={aggregates.minor_electrical} />
-                            <Row label="Mechanical" value={aggregates.minor_mechanical} />
-                            <Row label="Body" value={aggregates.minor_body} />
-                            <Row label="Tyre" value={aggregates.minor_tyre} />
-                        </VerticalTable>
+                        <div className="lg:col-span-2">
+                            <CompletionTable completion={report.completion} />
+                        </div>
 
-                        {/* 5. Completion SLA */}
-                        <VerticalTable title="Completion SLA">
-                            <Row label="Adhered" value={aggregates.comp_in_adhered} color="text-green-600" />
-                            <Row label="Violated" value={aggregates.comp_in_violated} color="text-red-600" />
-                            {aggregates.comp_in_na > 0 && (
-                                <Row label="Not applicable" value={aggregates.comp_in_na} color="text-gray-500" />
-                            )}
-                            <Row label="SLA %" value={aggregates.comp_in_sla_perc} bold />
-                        </VerticalTable>
-
-                        {/* 7. Ratings */}
                         <VerticalTable title="Ratings & Feedback">
-                            <Row label="Rating Pending" value={aggregates.rating_pending} color="text-gray-500" />
-                            <Row label="Ratings Collected" value={aggregates.rating_collected} />
-                            <Row label="Collection % (Sharan KPI)" value={aggregates.collection_perc} bold />
-                            <Row label="Good" value={aggregates.rating_good} color="text-green-600" />
-                            <Row label="Ok" value={aggregates.rating_ok} color="text-yellow-600" />
-                            <Row label="Bad" value={aggregates.rating_bad} color="text-red-600" />
-                            <Row label="CSAT % (Manjunath KPI)" value={aggregates.csat_perc} bold />
+                            <Row label="Rating Pending" value={report.ratings.pending} color="text-gray-500" />
+                            <Row label="Ratings Collected" value={report.ratings.collected} />
+                            <Row label="Collection % (Sharan KPI)" value={percentText(report.ratings.collectionPercent)} bold />
+                            <Row label="Good" value={report.ratings.good} color="text-green-600" />
+                            <Row label="Ok" value={report.ratings.ok} color="text-yellow-600" />
+                            <Row label="Bad" value={report.ratings.bad} color="text-red-600" />
+                            <Row label="CSAT % (Manjunath KPI)" value={percentText(report.ratings.csatPercent)} bold />
                         </VerticalTable>
 
                     </div>
                 )}
+            </div>
+        </div>
+    )
+}
+
+const STATUS_COLORS = {
+    New: 'text-yellow-600',
+    Accepted: 'text-blue-600',
+    'Work In Progress': 'text-purple-600',
+    Resolved: 'text-green-600',
+    Closed: 'text-gray-600',
+    Rejected: 'text-red-600',
+}
+
+const RESULT_COLORS = { Adhered: 'text-green-600', Violated: 'text-red-600', NA: 'text-gray-500' }
+
+/**
+ * Completion SLA, one column per job card type of the ticket: Outsource if any of its
+ * issues is on an Outsource job card, else In-house if any is on an In-house one, else
+ * No job card yet; tickets with no issues on their own. All = every ticket.
+ */
+function CompletionTable({ completion }) {
+    const cols = completion.columns
+    const th = 'px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap'
+    const td = 'px-4 py-3 text-right text-sm whitespace-nowrap'
+    return (
+        <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-300">
+                <h3 className="text-base font-semibold text-gray-900">Completion SLA</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                    By the ticket's job card type. In-house SLA % is Sharan's KPI; Outsource SLA % is Manjunath's KPI.
+                </p>
+            </div>
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Job card type</th>
+                            {cols.map(c => <th key={c.key} className={th}>{c.label}</th>)}
+                            <th className={th}>All</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                        {completion.rows.map(r => (
+                            <tr key={r.key} className="hover:bg-gray-50">
+                                <td className="px-4 py-3 text-sm text-gray-600 font-medium">{r.label}</td>
+                                {cols.map(c => (
+                                    <td key={c.key} className={`${td} ${RESULT_COLORS[r.key] || 'text-gray-900'}`}>{r.values[c.key]}</td>
+                                ))}
+                                <td className={`${td} ${RESULT_COLORS[r.key] || 'text-gray-900'}`}>{r.all}</td>
+                            </tr>
+                        ))}
+                        <tr className="bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-900 font-bold">Total</td>
+                            {cols.map(c => <td key={c.key} className={`${td} font-bold text-gray-900`}>{completion.totals[c.key]}</td>)}
+                            <td className={`${td} font-bold text-gray-900`}>{completion.total}</td>
+                        </tr>
+                        <tr>
+                            <td className="px-4 py-3 text-sm text-gray-900 font-bold">SLA %</td>
+                            {cols.map(c => <td key={c.key} className={`${td} font-bold text-gray-900`}>{percentText(completion.percents[c.key])}</td>)}
+                            <td className={`${td} font-bold text-gray-900`}>{percentText(completion.percentAll)}</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     )

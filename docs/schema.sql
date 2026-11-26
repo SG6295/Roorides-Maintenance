@@ -1410,6 +1410,111 @@ $$;
 ALTER FUNCTION public.advance_people() OWNER TO postgres;
 
 --
+-- Name: analytics_issue_rows(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.analytics_issue_rows(p_filters jsonb) RETURNS TABLE(issue_id uuid, ticket_id uuid, ticket_number integer, site text, raised_on date, ticket_status text, severity text, category text, job_card_type text, rating text, rating_pending boolean)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT i.id,
+           t.ticket_id,
+           t.ticket_number,
+           t.site,
+           t.raised_on,
+           t.status,
+           i.severity::text,
+           i.category::text,
+           coalesce(jc.type::text, 'none'),
+           i.rating::text,
+           (i.rating IS NULL AND t.status IN ('Resolved', 'Closed'))
+    FROM   public.analytics_ticket_rows(p_filters) t
+    JOIN   public.issues i ON i.ticket_id = t.ticket_id
+    LEFT   JOIN public.job_cards jc ON jc.id = i.job_card_id
+$$;
+
+
+ALTER FUNCTION public.analytics_issue_rows(p_filters jsonb) OWNER TO postgres;
+
+--
+-- Name: FUNCTION analytics_issue_rows(p_filters jsonb); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.analytics_issue_rows(p_filters jsonb) IS 'MAIN-171: every issue on the tickets of analytics_ticket_rows, with the buckets it counts in. job_card_type is the job card''s type, or none when the issue has no job card.';
+
+
+--
+-- Name: analytics_ticket_rows(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.analytics_ticket_rows(p_filters jsonb) RETURNS TABLE(ticket_id uuid, ticket_number integer, site text, raised_on date, status text, acceptance text, completion text, job_card_type text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    WITH f AS (
+        SELECT nullif(p_filters ->> 'from', '')::date AS d_from,
+               nullif(p_filters ->> 'to',   '')::date AS d_to,
+               CASE WHEN jsonb_typeof(p_filters -> 'sites') = 'array'
+                         AND jsonb_array_length(p_filters -> 'sites') > 0
+                    THEN ARRAY(SELECT jsonb_array_elements_text(p_filters -> 'sites'))
+               END AS sites
+    ),
+    t AS (
+        SELECT tk.*,
+               ((tk.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date AS ist_day
+        FROM   public.tickets tk
+    )
+    SELECT t.id,
+           t.ticket_number,
+           t.site,
+           t.ist_day,
+           t.status::text,
+           -- A stored Pending past its deadline already counts as Violated: the hourly
+           -- refresh would make it so within the hour.
+           CASE
+               WHEN t.acceptance_sla_status IN ('NA', 'Adhered', 'Violated') THEN t.acceptance_sla_status::text
+               WHEN NOT EXISTS (SELECT 1 FROM public.issues i WHERE i.ticket_id = t.id)
+                    AND t.acceptance_sla_end_date IS NOT NULL
+                    AND now() > t.acceptance_sla_end_date THEN 'Violated'
+               ELSE 'Pending'
+           END,
+           CASE
+               WHEN t.overall_sla_status IN ('NA', 'Adhered', 'Violated') THEN t.overall_sla_status::text
+               WHEN t.final_sla_end_date IS NOT NULL AND now() > t.final_sla_end_date THEN 'Violated'
+               ELSE 'Pending'
+           END,
+           CASE
+               WHEN j.n_issues = 0     THEN 'no_issues'
+               WHEN j.n_outsource > 0  THEN 'Outsource'
+               WHEN j.n_inhouse > 0    THEN 'InHouse'
+               ELSE 'none'
+           END
+    FROM   t
+    CROSS  JOIN f
+    CROSS  JOIN LATERAL (
+        SELECT count(i.id)                                   AS n_issues,
+               count(*) FILTER (WHERE jc.type = 'Outsource') AS n_outsource,
+               count(*) FILTER (WHERE jc.type = 'InHouse')   AS n_inhouse
+        FROM   public.issues i
+        LEFT   JOIN public.job_cards jc ON jc.id = i.job_card_id
+        WHERE  i.ticket_id = t.id
+    ) j
+    WHERE (f.d_from IS NULL OR t.ist_day >= f.d_from)
+      AND (f.d_to   IS NULL OR t.ist_day <= f.d_to)
+      AND (f.sites  IS NULL OR t.site = ANY (f.sites))
+$$;
+
+
+ALTER FUNCTION public.analytics_ticket_rows(p_filters jsonb) OWNER TO postgres;
+
+--
+-- Name: FUNCTION analytics_ticket_rows(p_filters jsonb); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.analytics_ticket_rows(p_filters jsonb) IS 'MAIN-171: every ticket in the Analytics selection ({from, to, sites}) with the bucket it counts in. get_maintenance_stats counts these rows; a drill-down lists them (MAIN-152).';
+
+
+--
 -- Name: apply_part_stock_delta(uuid, uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -3444,117 +3549,54 @@ COMMENT ON FUNCTION public.get_maintenance_cost(p_filters jsonb) IS 'MAIN-164: t
 
 
 --
--- Name: get_maintenance_stats(date, date, text[]); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: get_maintenance_stats(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_maintenance_stats(start_date_input date DEFAULT NULL::date, end_date_input date DEFAULT NULL::date, site_filter text[] DEFAULT NULL::text[]) RETURNS TABLE(total_tickets bigint, status_new bigint, status_pending bigint, status_accepted bigint, status_wip bigint, status_resolved bigint, status_closed bigint, status_rejected bigint, status_completed bigint, major_total bigint, major_electrical bigint, major_mechanical bigint, major_body bigint, major_tyre bigint, minor_total bigint, minor_electrical bigint, minor_mechanical bigint, minor_body bigint, minor_tyre bigint, type_in_house bigint, type_outsource bigint, accept_pending bigint, accept_adhered bigint, accept_violated bigint, accept_na bigint, comp_in_wip_within bigint, comp_in_adhered bigint, comp_in_violated bigint, comp_in_na bigint, comp_out_wip_within bigint, comp_out_adhered bigint, comp_out_violated bigint, comp_out_na bigint, rating_pending bigint, rating_collected bigint, rating_good bigint, rating_ok bigint, rating_bad bigint, csat_score_sum bigint, total_completed_tickets bigint)
-    LANGUAGE plpgsql
+CREATE FUNCTION public.get_maintenance_stats(p_filters jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
     SET search_path TO 'public'
     AS $$
-BEGIN
-  RETURN QUERY
-  WITH ticket_data AS (
-    SELECT
-      t.id,
-      t.status,
-      t.created_at,
-      t.resolved_at,
-      t.closed_at,
-      t.final_sla_end_date,
-      t.overall_sla_status,
-      t.acceptance_sla_status,
-      CASE
-        WHEN t.overall_sla_status = 'NA' THEN 'NA'
-        WHEN t.overall_sla_status IN ('Adhered', 'Violated') THEN t.overall_sla_status
-        WHEN t.final_sla_end_date IS NOT NULL
-             AND now() > t.final_sla_end_date THEN 'Violated'
-        ELSE 'Pending'
-      END AS eff_overall,
-      CASE
-        WHEN t.acceptance_sla_status = 'NA' THEN 'NA'
-        WHEN t.acceptance_sla_status IN ('Adhered', 'Violated') THEN t.acceptance_sla_status
-        WHEN NOT EXISTS (SELECT 1 FROM issues i WHERE i.ticket_id = t.id)
-             AND t.acceptance_sla_end_date IS NOT NULL
-             AND now() > t.acceptance_sla_end_date THEN 'Violated'
-        ELSE 'Pending'
-      END AS eff_accept,
-      CASE
-        WHEN EXISTS (SELECT 1 FROM issues i WHERE i.ticket_id = t.id AND i.work_type = 'Outsource')
-         AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.ticket_id = t.id AND i.work_type = 'InHouse')
-        THEN 'Outsource'
-        ELSE 'InHouse'
-      END AS dominant_work_type
-    FROM tickets t
-    WHERE (start_date_input IS NULL OR t.created_at::date >= start_date_input)
-      AND (end_date_input   IS NULL OR t.created_at::date <= end_date_input)
-      AND (site_filter IS NULL OR cardinality(site_filter) = 0 OR t.site = ANY(site_filter))
-  ),
-  issue_data AS (
-    SELECT i.*
-    FROM issues i
-    JOIN tickets t ON i.ticket_id = t.id
-    WHERE (start_date_input IS NULL OR t.created_at::date >= start_date_input)
-      AND (end_date_input   IS NULL OR t.created_at::date <= end_date_input)
-      AND (site_filter IS NULL OR cardinality(site_filter) = 0 OR t.site = ANY(site_filter))
-  )
-  SELECT
-    COUNT(*)::BIGINT AS total_tickets,
-    COUNT(*) FILTER (WHERE td.status = 'New')::BIGINT AS status_new,
-    COUNT(*) FILTER (WHERE td.status = 'New')::BIGINT AS status_pending,
-    COUNT(*) FILTER (WHERE td.status = 'Accepted')::BIGINT AS status_accepted,
-    COUNT(*) FILTER (WHERE td.status = 'Work In Progress')::BIGINT AS status_wip,
-    COUNT(*) FILTER (WHERE td.status = 'Resolved')::BIGINT AS status_resolved,
-    COUNT(*) FILTER (WHERE td.status = 'Closed')::BIGINT AS status_closed,
-    COUNT(*) FILTER (WHERE td.status = 'Rejected')::BIGINT AS status_rejected,
-    COUNT(*) FILTER (WHERE td.status IN ('Resolved', 'Closed'))::BIGINT AS status_completed,
-
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Major')::BIGINT AS major_total,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Major' AND category = 'Electrical')::BIGINT AS major_electrical,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Major' AND category = 'Mechanical')::BIGINT AS major_mechanical,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Major' AND category = 'Body')::BIGINT AS major_body,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Major' AND category = 'Tyre')::BIGINT AS major_tyre,
-
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Minor')::BIGINT AS minor_total,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Minor' AND category = 'Electrical')::BIGINT AS minor_electrical,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Minor' AND category = 'Mechanical')::BIGINT AS minor_mechanical,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Minor' AND category = 'Body')::BIGINT AS minor_body,
-    (SELECT COUNT(*) FROM issue_data WHERE severity = 'Minor' AND category = 'Tyre')::BIGINT AS minor_tyre,
-
-    (SELECT COUNT(*) FROM issue_data WHERE work_type = 'InHouse')::BIGINT AS type_in_house,
-    (SELECT COUNT(*) FROM issue_data WHERE work_type = 'Outsource')::BIGINT AS type_outsource,
-
-    COUNT(*) FILTER (WHERE td.eff_accept = 'Pending')::BIGINT AS accept_pending,
-    COUNT(*) FILTER (WHERE td.eff_accept = 'Adhered')::BIGINT AS accept_adhered,
-    COUNT(*) FILTER (WHERE td.eff_accept = 'Violated')::BIGINT AS accept_violated,
-    COUNT(*) FILTER (WHERE td.eff_accept = 'NA')::BIGINT AS accept_na,
-
-    COUNT(*) FILTER (WHERE td.eff_overall = 'Pending'  AND td.dominant_work_type = 'InHouse')::BIGINT AS comp_in_wip_within,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'Adhered'  AND td.dominant_work_type = 'InHouse')::BIGINT AS comp_in_adhered,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'Violated' AND td.dominant_work_type = 'InHouse')::BIGINT AS comp_in_violated,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'NA'       AND td.dominant_work_type = 'InHouse')::BIGINT AS comp_in_na,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'Pending'  AND td.dominant_work_type = 'Outsource')::BIGINT AS comp_out_wip_within,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'Adhered'  AND td.dominant_work_type = 'Outsource')::BIGINT AS comp_out_adhered,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'Violated' AND td.dominant_work_type = 'Outsource')::BIGINT AS comp_out_violated,
-    COUNT(*) FILTER (WHERE td.eff_overall = 'NA'       AND td.dominant_work_type = 'Outsource')::BIGINT AS comp_out_na,
-
-    (SELECT COUNT(*) FROM issue_data
-      JOIN ticket_data td2 ON td2.id = issue_data.ticket_id
-      WHERE issue_data.rating IS NULL AND td2.status IN ('Resolved', 'Closed'))::BIGINT AS rating_pending,
-    (SELECT COUNT(*) FROM issue_data WHERE rating IS NOT NULL)::BIGINT AS rating_collected,
-    (SELECT COUNT(*) FROM issue_data WHERE rating = 'Good')::BIGINT AS rating_good,
-    (SELECT COUNT(*) FROM issue_data WHERE rating = 'Ok')::BIGINT AS rating_ok,
-    (SELECT COUNT(*) FROM issue_data WHERE rating = 'Bad')::BIGINT AS rating_bad,
-    (SELECT COALESCE(SUM(CASE WHEN rating = 'Good' THEN 2 WHEN rating = 'Ok' THEN 1 ELSE 0 END), 0)
-       FROM issue_data WHERE rating IS NOT NULL)::BIGINT AS csat_score_sum,
-    COUNT(*) FILTER (WHERE td.status IN ('Resolved', 'Closed'))::BIGINT AS total_completed_tickets
-
-  FROM ticket_data td;
-
-END;
+    WITH tk AS (SELECT * FROM public.analytics_ticket_rows(p_filters)),
+         iss AS (SELECT * FROM public.analytics_issue_rows(p_filters))
+    SELECT jsonb_build_object(
+        'tickets', jsonb_build_object(
+            'total',     (SELECT count(*) FROM tk),
+            'by_status', coalesce((SELECT jsonb_object_agg(status, n)
+                                   FROM (SELECT status, count(*) n FROM tk GROUP BY 1) s), '{}'::jsonb)
+        ),
+        'acceptance', coalesce((SELECT jsonb_object_agg(acceptance, n)
+                                FROM (SELECT acceptance, count(*) n FROM tk GROUP BY 1) s), '{}'::jsonb),
+        'completion', coalesce((SELECT jsonb_object_agg(job_card_type, by_result)
+                                FROM (SELECT job_card_type, jsonb_object_agg(completion, n) by_result
+                                      FROM (SELECT job_card_type, completion, count(*) n FROM tk GROUP BY 1, 2) c
+                                      GROUP BY 1) s), '{}'::jsonb),
+        'issues', jsonb_build_object(
+            'total',            (SELECT count(*) FROM iss),
+            'by_job_card_type', coalesce((SELECT jsonb_object_agg(job_card_type, n)
+                                          FROM (SELECT job_card_type, count(*) n FROM iss GROUP BY 1) s), '{}'::jsonb),
+            'by_severity',      coalesce((SELECT jsonb_object_agg(severity, jsonb_build_object('total', total, 'by_category', by_category))
+                                          FROM (SELECT severity, sum(n) total, jsonb_object_agg(category, n) by_category
+                                                FROM (SELECT severity, category, count(*) n FROM iss GROUP BY 1, 2) c
+                                                GROUP BY 1) s), '{}'::jsonb)
+        ),
+        'ratings', jsonb_build_object(
+            'pending',   (SELECT count(*) FROM iss WHERE rating_pending),
+            'collected', (SELECT count(*) FROM iss WHERE rating IS NOT NULL),
+            'by_rating', coalesce((SELECT jsonb_object_agg(rating, n)
+                                   FROM (SELECT rating, count(*) n FROM iss WHERE rating IS NOT NULL GROUP BY 1) s), '{}'::jsonb)
+        )
+    )
 $$;
 
 
-ALTER FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) OWNER TO postgres;
+ALTER FUNCTION public.get_maintenance_stats(p_filters jsonb) OWNER TO postgres;
+
+--
+-- Name: FUNCTION get_maintenance_stats(p_filters jsonb); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.get_maintenance_stats(p_filters jsonb) IS 'MAIN-171: Analytics › SLA & tickets. p_filters = {from, to, sites}; counts analytics_ticket_rows / analytics_issue_rows. jsonb argument — do not add a parameter.';
+
 
 --
 -- Name: get_outsource_invoice_history(uuid); Type: FUNCTION; Schema: public; Owner: postgres
@@ -4879,13 +4921,16 @@ CREATE FUNCTION public.job_card_invoice_company(p_job_card_id uuid) RETURNS text
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
+    -- job_cards.created_at is timestamp WITHOUT time zone holding UTC: say so before
+    -- comparing it with vehicle_company_changes.created_at (timestamptz), instead of
+    -- relying on the session time zone being UTC (MAIN-171).
     SELECT coalesce((
         SELECT c.new_company
         FROM   public.job_cards jc
         JOIN   public.vehicles v                 ON v.registration_number = jc.vehicle_number
         JOIN   public.vehicle_company_changes c  ON c.vehicle_id = v.id
         WHERE  jc.id = p_job_card_id
-          AND  c.created_at <= jc.created_at
+          AND  c.created_at <= (jc.created_at AT TIME ZONE 'UTC')
         ORDER  BY c.created_at DESC
         LIMIT  1
     ), 'nvs_travels')
@@ -5507,6 +5552,9 @@ CREATE FUNCTION public.part_cost_lots(p_part_id uuid, p_company text) RETURNS TA
 DECLARE
     v_found_cost numeric;
 BEGIN
+    -- Times here are timestamp WITHOUT time zone holding UTC, like purchase_invoices and
+    -- stock_audits. opening_stock_lots.created_at is timestamptz, so it is turned into
+    -- UTC explicitly rather than by the session time zone (MAIN-171).
     -- Stock found in an audit takes the part's latest cost: its latest purchase, else
     -- its latest opening price, else nothing.
     SELECT x.cost INTO v_found_cost FROM (
@@ -5516,7 +5564,7 @@ BEGIN
         JOIN   public.purchase_invoices pi ON pi.id = pii.invoice_id
         WHERE  pii.part_id = p_part_id AND NOT public.is_workshop_move_invoice(pi.purchase_number)
         UNION ALL
-        SELECT o.unit_cost, 0, o.created_at::timestamp, o.created_at::timestamp
+        SELECT o.unit_cost, 0, o.created_at AT TIME ZONE 'UTC', o.created_at AT TIME ZONE 'UTC'
         FROM   public.opening_stock_lots o
         WHERE  o.part_id = p_part_id
     ) x
@@ -5524,7 +5572,8 @@ BEGIN
     LIMIT 1;
 
     RETURN QUERY
-    SELECT 'opening'::text, o.id, o.quantity::numeric, o.unit_cost::numeric, 0, o.created_at::timestamp, o.created_at::timestamp
+    SELECT 'opening'::text, o.id, o.quantity::numeric, o.unit_cost::numeric, 0,
+           o.created_at AT TIME ZONE 'UTC', o.created_at AT TIME ZONE 'UTC'
     FROM   public.opening_stock_lots o
     WHERE  o.part_id = p_part_id AND o.company = p_company
     UNION ALL
@@ -14298,7 +14347,6 @@ CREATE TABLE public.issues (
     description text NOT NULL,
     category public.issue_category NOT NULL,
     severity public.issue_severity DEFAULT 'Minor'::public.issue_severity,
-    work_type public.work_type_enum,
     status public.issue_status DEFAULT 'Open'::public.issue_status,
     sla_days integer,
     sla_end_date timestamp with time zone,
@@ -22153,6 +22201,24 @@ GRANT ALL ON FUNCTION public.advance_people() TO service_role;
 
 
 --
+-- Name: FUNCTION analytics_issue_rows(p_filters jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.analytics_issue_rows(p_filters jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.analytics_issue_rows(p_filters jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.analytics_issue_rows(p_filters jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION analytics_ticket_rows(p_filters jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.analytics_ticket_rows(p_filters jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.analytics_ticket_rows(p_filters jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.analytics_ticket_rows(p_filters jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION apply_part_stock_delta(p_part_id uuid, p_location_id uuid, p_company text, p_delta numeric); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -22456,12 +22522,12 @@ GRANT ALL ON FUNCTION public.get_maintenance_cost(p_filters jsonb) TO service_ro
 
 
 --
--- Name: FUNCTION get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]); Type: ACL; Schema: public; Owner: postgres
+-- Name: FUNCTION get_maintenance_stats(p_filters jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO anon;
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO authenticated;
-GRANT ALL ON FUNCTION public.get_maintenance_stats(start_date_input date, end_date_input date, site_filter text[]) TO service_role;
+REVOKE ALL ON FUNCTION public.get_maintenance_stats(p_filters jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.get_maintenance_stats(p_filters jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.get_maintenance_stats(p_filters jsonb) TO service_role;
 
 
 --
