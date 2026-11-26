@@ -79,7 +79,8 @@ export default function Dashboard() {
             </Link>
 
             {/* Analysis */}
-            {['maintenance_exec', 'super_admin'].includes(userProfile?.role) ? (
+            {/* Finance opens Analytics for Maintenance cost only (MAIN-164). */}
+            {['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role) ? (
               <Link
                 to="/analytics"
                 className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"

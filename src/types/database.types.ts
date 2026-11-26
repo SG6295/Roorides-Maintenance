@@ -3336,6 +3336,7 @@ export type Database = {
           vehicle_number: string
         }[]
       }
+      get_maintenance_cost: { Args: { p_filters?: Json }; Returns: Json }
       get_maintenance_stats: {
         Args: {
           end_date_input?: string
@@ -3510,6 +3511,35 @@ export type Database = {
       job_card_value: {
         Args: { jc: Database["public"]["Tables"]["job_cards"]["Row"] }
         Returns: number
+      }
+      maintenance_cost_lines: {
+        Args: { p_filters?: Json }
+        Returns: {
+          amount: number
+          awaiting_finance: boolean
+          batch_number: number
+          category: string
+          company: string
+          cost_date: string
+          hours: number
+          hub: string
+          job_card_id: string
+          job_card_number: number
+          job_card_odometer: number
+          job_card_status: string
+          job_card_type: string
+          kind: string
+          line_id: string
+          part_name: string
+          price_missing: boolean
+          quantity: number
+          site: string
+          split_count: number
+          unit: string
+          vehicle_number: string
+          work_type: string
+          work_type_other: string
+        }[]
       }
       outsource_invoice_snapshot: {
         Args: { p_invoice_id: string }

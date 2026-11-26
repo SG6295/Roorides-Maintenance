@@ -327,7 +327,10 @@ export default function JobCardDetail() {
     const lockedByFinance = isOutsource && jobCard.status === 'Completed' && isLockedByFinance(existingInvoice)
     // A rejected invoice is locked too, until it is resubmitted (MAIN-120).
     const rejectedByFinance = isOutsource && jobCard.status === 'Completed' && isRejectedInvoice(existingInvoice)
-    const canComplete = isAllDone && hasSupplier && !invoicePartial
+    // MAIN-164: a card can't be closed without its odometer reading (the database refuses
+    // it too — guard_job_card_odometer).
+    const hasOdometer = jobCard.odometer != null
+    const canComplete = isAllDone && hasSupplier && hasOdometer && !invoicePartial
     const isInvoicePending = jobCard.status === 'Completed - Invoice Pending'
     const canFinalize = isInvoicePending && !invoicePartial && (hasOwnInvoice || isBatchLinked)
     // Shown as text under the disabled button — a hover tooltip appears too slowly to help.
@@ -335,6 +338,8 @@ export default function JobCardDetail() {
         ? 'Mark all issues as Done first'
         : !hasSupplier
         ? 'Assign a supplier before completing'
+        : !hasOdometer
+        ? 'Enter the odometer reading above before closing'
         : invoicePartial
         ? 'Finish the invoice details, or clear them to close as Invoice Pending'
         : ''
@@ -680,7 +685,11 @@ export default function JobCardDetail() {
                         ) : (
                             <span className="flex items-center gap-1.5">
                                 <span className="text-gray-900">
-                                    {jobCard.odometer != null ? `${jobCard.odometer.toLocaleString('en-IN')} km` : <span className="text-gray-400 italic">Not recorded</span>}
+                                    {jobCard.odometer != null
+                                        ? `${jobCard.odometer.toLocaleString('en-IN')} km`
+                                        : jobCard.status === 'Open'
+                                            ? <span className="text-amber-800">Not recorded — required before closing</span>
+                                            : <span className="text-gray-400 italic">Not recorded</span>}
                                 </span>
                                 {isMechanic && !vehicleBlocked && jobCard.status === 'Open' && (
                                     <button
