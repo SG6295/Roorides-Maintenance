@@ -12,8 +12,9 @@ import JobCardDetail from './pages/JobCardDetail'
 import Issues from './pages/Issues'
 import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
-import AnalyticsLayout from './pages/analytics/AnalyticsLayout'
+import AnalyticsLayout, { AnalyticsIndex } from './pages/analytics/AnalyticsLayout'
 import LabourUtilisation from './pages/analytics/LabourUtilisation'
+import MaintenanceCost from './pages/analytics/MaintenanceCost'
 import FeedbackReport from './pages/FeedbackReport'
 import Inventory from './pages/Inventory'
 import Scrap from './pages/Scrap'
@@ -191,14 +192,16 @@ function App() {
             <Route
               path="/analytics"
               element={
-                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin']}>
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
                   <AnalyticsLayout />
                 </ProtectedRoute>
               }
             >
-              <Route path="sla" element={<Analytics embedded={true} />} />
-              <Route path="labour" element={<LabourUtilisation />} />
-              <Route index element={<Navigate to="sla" replace />} />
+              {/* Finance sees Maintenance cost only (MAIN-164); the other reports stay exec-only. */}
+              <Route path="sla" element={<ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin']}><Analytics embedded={true} /></ProtectedRoute>} />
+              <Route path="labour" element={<ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin']}><LabourUtilisation /></ProtectedRoute>} />
+              <Route path="cost" element={<MaintenanceCost />} />
+              <Route index element={<AnalyticsIndex />} />
             </Route>
             <Route
               path="/feedback"
