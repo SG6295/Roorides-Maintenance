@@ -313,7 +313,7 @@ Switching a card In-house → Outsource deletes its labour in the same statement
 
 ### Analytics & Export
 `/analytics` is a set of reports under `AnalyticsLayout` (`src/pages/analytics/`), a sidebar in the Settings pattern; add a report to its `reports` list and as a child route in `App.jsx`. `/analytics` opens the first report the person may see (`AnalyticsIndex`: `/analytics/sla` for exec and super_admin, `/analytics/cost` for finance), so the Dashboard's "Analysis" tile needs no change. Exec and super_admin, plus finance for Maintenance cost only.
-- **SLA & tickets** (`/analytics/sla`) — `src/pages/Analytics.jsx` with `embedded`, backed by `get_maintenance_stats`.
+- **SLA & tickets** (`/analytics/sla`) — `src/pages/Analytics.jsx` with `embedded`, backed by `get_maintenance_stats(p_filters jsonb)` (`{from, to, sites}`, returns jsonb — **do not add a parameter**). **One rule per number (MAIN-171):** `analytics_ticket_rows(p_filters)` / `analytics_issue_rows(p_filters)` return every ticket and issue in the selection labelled with the bucket it counts in, and `get_maintenance_stats` only counts them — MAIN-152's drill-down lists the same rows, so a list always matches its number. Every issue category is a row (unknown ones too, after the known), and every table adds up to its total. **Job card type** is the job card's (`job_cards.type`); an issue with no job card is "No job card yet". A ticket is Outsource if any of its issues is on an Outsource job card, else In-house if any is on an In-house one, else No job card yet; tickets with no issues are their own Completion SLA column. Days are IST (see **Dates and time zones**). The screen and the Download are both drawn from `buildSlaReport` (`src/utils/slaReport.js`, tested). `issues.work_type` was dropped by MAIN-171 — it was always InHouse; don't re-add a per-issue work type.
 - **Labour utilisation** (`/analytics/labour`, MAIN-117) — `LabourUtilisation.jsx` over `get_labour_report(p_from, p_to)`, which returns one row per piece of in-house labour: per-technician `issue_labour` rows (`attributed`) and pre-MAIN-116 `issues.labour_hours` with nobody attached (unattributed), placed by `issues.completed_on`. Attributed labour on items not yet Done comes back with a NULL date for the "not yet done" note. All the arithmetic is in `src/utils/labourReport.js` (tested); site/trade/technician filters run client-side. The rows have no `id`, so `useLabourReport` pages itself — `fetchAllRows` would de-duplicate them down to one.
   - The technician × day grid is attributed hours only and capped at 92 days; site-wise and totals include unattributed hours.
   - **Weekends are not greyed.** The SLA Weekly Offs are Sat and Sun in prod, but that is an SLA-counting rule: in-house work is completed every day, and Sunday is one of the busiest (Oct 2026, 90-day sample).
@@ -345,6 +345,25 @@ Switching a card In-house → Outsource deletes its labour in the same statement
   - A component test that renders something using these hooks must wrap it in `<FeedbackProvider>`.
 - **No native `<select>` (MAIN-145).** `CustomSelect` in forms, modals and tables; `FilterSelect` in filter bars. `CustomSelect` matches the selected option with `opt.value || …`, so it cannot show a value of `0` as selected — give it string values and convert on change, as the purchase and refurbishment GST dropdowns do.
 - **Password boxes use `PasswordInput` (MAIN-146)** — the eye button, hidden by default. Add User / Edit User have their own toggle (shown by default, with Generate and Copy).
+
+### Dates and time zones
+The business runs on Indian time (IST, UTC+5:30); the database runs with `TimeZone = UTC`. The schema mixes two kinds of timestamp, and confusing them has cost real mistakes (MAIN-83, MAIN-163, MAIN-171 — and a figure of 1,208 that was really 1):
+- **`timestamp without time zone`, holding UTC:** `tickets.created_at`, `issues.created_at` / `rated_at`, `job_cards.created_at` / `completed_at`, `issue_parts.added_at`, `purchase_invoices.created_at`, `stock_audits.*_at`, `stock_transfers.transferred_at`, `parts`, `users`, `vehicles`, `sites` and most other `created_at`s on older tables.
+- **`timestamptz`:** the newer ones — `tickets.resolved_at` / `closed_at` / `rejected_at` / SLA deadlines, `issues.completed_at`, `outsource_invoices.*_at`, `vehicle_company_changes.created_at`, `opening_stock_lots.created_at`, every ledger table.
+- **Check `information_schema.columns.data_type` before any time-zone arithmetic.** `AT TIME ZONE` does opposite things on the two types.
+
+In SQL:
+- IST date of a zone-less (UTC) column: `((col AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date`. Never `col::date` — that is the UK date, and anything raised 00:00–05:30 IST lands on the previous day.
+- IST date of a `timestamptz`: `(col AT TIME ZONE 'Asia/Kolkata')::date`.
+- **Never compare, `coalesce`, `least` or cast between the two kinds without saying which zone the zone-less one is in** (`col AT TIME ZONE 'UTC'`). An implicit comparison or `::timestamp` cast uses the session time zone and is right only while that is UTC (MAIN-171 fixed `job_card_invoice_company` and `part_cost_lots`).
+- Filtering a zone-less column from the browser: send UTC instants (`localDayRangeToUtc`) — Postgres silently drops a `+05:30` offset compared with `timestamp without time zone` (MAIN-83).
+
+In the browser:
+- Show any timestamp through `toDate` / `formatDate` / `formatDateTime` (`src/utils/datetime.js`): a zone-less value arrives without a `Z`, and plain `new Date()` would read it as local time, 5½ hours early.
+- A figure that must equal a database IST-day figure buckets by IST explicitly (`istDayOf` / `istToday` in `maintenanceCost.js`, `entryIstDay` in `companyLedger.js`), never by the browser's day (`dateKey`, `entryDay`).
+- Tests run with `TZ=UTC`, as CI does; a day-bucketing test should pass under both `TZ=UTC` and `TZ=Asia/Kolkata`.
+
+**Before reporting any date-based figure, sanity-check it against how the workshop runs (tickets are raised about 06:00–23:00 IST) and get it two independent ways** (e.g. `AT TIME ZONE` and a plain `col::time >= '18:30'` count).
 
 ### Debug Utilities
 `window.testResend(email)` is exposed in App.jsx for testing email via the `send-email` edge function from the browser console.

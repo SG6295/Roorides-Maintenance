@@ -536,8 +536,7 @@ function IssuesTab({ ticket, issues, canEdit, blocked = false, userProfile }) {
   const [newIssue, setNewIssue] = useState({
     description: '',
     category: null,
-    severity: null,
-    work_type: 'InHouse'
+    severity: null
   })
 
   // Edit Mode State
@@ -575,7 +574,7 @@ function IssuesTab({ ticket, issues, canEdit, blocked = false, userProfile }) {
         },
         userId: userProfile?.id
       })
-      setNewIssue({ description: '', category: null, severity: null, work_type: 'InHouse' })
+      setNewIssue({ description: '', category: null, severity: null })
     } catch (e) {
       toast.error(e.message)
     }

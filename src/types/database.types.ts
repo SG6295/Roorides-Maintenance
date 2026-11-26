@@ -576,7 +576,6 @@ export type Database = {
           sla_version_id: string | null
           status: Database["public"]["Enums"]["issue_status"] | null
           ticket_id: string
-          work_type: Database["public"]["Enums"]["work_type_enum"] | null
         }
         Insert: {
           category: Database["public"]["Enums"]["issue_category"]
@@ -598,7 +597,6 @@ export type Database = {
           sla_version_id?: string | null
           status?: Database["public"]["Enums"]["issue_status"] | null
           ticket_id: string
-          work_type?: Database["public"]["Enums"]["work_type_enum"] | null
         }
         Update: {
           category?: Database["public"]["Enums"]["issue_category"]
@@ -620,7 +618,6 @@ export type Database = {
           sla_version_id?: string | null
           status?: Database["public"]["Enums"]["issue_status"] | null
           ticket_id?: string
-          work_type?: Database["public"]["Enums"]["work_type_enum"] | null
         }
         Relationships: [
           {
@@ -3174,6 +3171,35 @@ export type Database = {
         }[]
       }
       advance_people: { Args: never; Returns: string[] }
+      analytics_issue_rows: {
+        Args: { p_filters: Json }
+        Returns: {
+          category: string
+          issue_id: string
+          job_card_type: string
+          raised_on: string
+          rating: string
+          rating_pending: boolean
+          severity: string
+          site: string
+          ticket_id: string
+          ticket_number: number
+          ticket_status: string
+        }[]
+      }
+      analytics_ticket_rows: {
+        Args: { p_filters: Json }
+        Returns: {
+          acceptance: string
+          completion: string
+          job_card_type: string
+          raised_on: string
+          site: string
+          status: string
+          ticket_id: string
+          ticket_number: number
+        }[]
+      }
       apply_part_stock_delta: {
         Args: {
           p_company: string
@@ -3337,55 +3363,7 @@ export type Database = {
         }[]
       }
       get_maintenance_cost: { Args: { p_filters?: Json }; Returns: Json }
-      get_maintenance_stats: {
-        Args: {
-          end_date_input?: string
-          site_filter?: string[]
-          start_date_input?: string
-        }
-        Returns: {
-          accept_adhered: number
-          accept_na: number
-          accept_pending: number
-          accept_violated: number
-          comp_in_adhered: number
-          comp_in_na: number
-          comp_in_violated: number
-          comp_in_wip_within: number
-          comp_out_adhered: number
-          comp_out_na: number
-          comp_out_violated: number
-          comp_out_wip_within: number
-          csat_score_sum: number
-          major_body: number
-          major_electrical: number
-          major_mechanical: number
-          major_total: number
-          major_tyre: number
-          minor_body: number
-          minor_electrical: number
-          minor_mechanical: number
-          minor_total: number
-          minor_tyre: number
-          rating_bad: number
-          rating_collected: number
-          rating_good: number
-          rating_ok: number
-          rating_pending: number
-          status_accepted: number
-          status_closed: number
-          status_completed: number
-          status_new: number
-          status_pending: number
-          status_rejected: number
-          status_resolved: number
-          status_wip: number
-          total_completed_tickets: number
-          total_tickets: number
-          type_in_house: number
-          type_outsource: number
-        }[]
-      }
+      get_maintenance_stats: { Args: { p_filters: Json }; Returns: Json }
       get_outsource_invoice_history: {
         Args: { p_invoice_id: string }
         Returns: {
