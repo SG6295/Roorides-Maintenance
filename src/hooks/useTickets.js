@@ -1,49 +1,10 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './useAuth'
 import { fetchAllRows } from '../utils/fetchAllRows'
-import { localDayRangeToUtc } from '../utils/datetime'
 
-/**
- * Hook to fetch tickets based on user role
- *
- * `filters.dateRange` ({ start, end } as local "yyyy-MM-dd") is applied in the database.
- * It used to be applied in the browser, after the API had already cut the list to the
- * newest 1,000 tickets, so no date range could reach further back than that (MAIN-83).
- */
-export function useTickets(filters = {}) {
-  const { userProfile } = useAuth()
-
-  return useQuery({
-    queryKey: ['tickets', filters, userProfile?.id],
-    // Keep the current list on screen while a new date range loads.
-    placeholderData: keepPreviousData,
-    queryFn: () => fetchAllRows(() => {
-      let query = supabase
-        .from('tickets')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .order('id')
-
-      if (filters.dateRange) {
-        const { from, to } = localDayRangeToUtc(filters.dateRange.start, filters.dateRange.end)
-        query = query.gte('created_at', from).lt('created_at', to)
-      }
-      if (filters.site) {
-        query = query.eq('site', filters.site)
-      }
-      if (filters.status) {
-        query = query.eq('status', filters.status)
-      }
-      if (filters.vehicle_number) {
-        query = query.ilike('vehicle_number', `%${filters.vehicle_number}%`)
-      }
-
-      return query
-    }),
-    enabled: !!userProfile,
-  })
-}
+// The Tickets list is sorted, filtered and paged by the database since MAIN-151:
+// see get_ticket_list and useServerList.
 
 /**
  * A ticket's id from the ticket number in its address, /tickets/1234 (MAIN-143). The page

@@ -3343,6 +3343,8 @@ export type Database = {
           spent_to_date: number
         }[]
       }
+      get_issue_list: { Args: { p_query?: Json }; Returns: Json }
+      get_job_card_list: { Args: { p_query?: Json }; Returns: Json }
       get_labour_report: {
         Args: { p_from: string; p_to: string }
         Returns: {
@@ -3446,6 +3448,7 @@ export type Database = {
           line_id: string
         }[]
       }
+      get_ticket_list: { Args: { p_query?: Json }; Returns: Json }
       gst_breakdown_problem: {
         Args: { p_invoice_value: number; p_rows: Json }
         Returns: string
@@ -3474,9 +3477,17 @@ export type Database = {
         Args: { p_purchase_number: number }
         Returns: boolean
       }
+      issue_list_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json[]
+      }
       job_card_invoice_company: {
         Args: { p_job_card_id: string }
         Returns: string
+      }
+      job_card_list_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json[]
       }
       job_card_site_accessible_to_user: {
         Args: { p_job_card_id: string }
@@ -3489,6 +3500,17 @@ export type Database = {
       job_card_value: {
         Args: { jc: Database["public"]["Tables"]["job_cards"]["Row"] }
         Returns: number
+      }
+      list_base_rows: {
+        Args: { p_from: string; p_list: string; p_to: string }
+        Returns: Json[]
+      }
+      list_ist_day_start_utc: { Args: { p_day: string }; Returns: string }
+      list_like_pattern: { Args: { p_text: string }; Returns: string }
+      list_query: { Args: { p_list: string; p_query: Json }; Returns: Json }
+      list_row_passes: {
+        Args: { p_filters: Json; p_row: Json; p_skip?: string }
+        Returns: boolean
       }
       maintenance_cost_lines: {
         Args: { p_filters?: Json }
@@ -3822,6 +3844,10 @@ export type Database = {
           run_date: string
           supplier_id: string
         }[]
+      }
+      ticket_list_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json[]
       }
       transfer_stock: {
         Args: { p_from: string; p_items: Json; p_notes?: string; p_to: string }
