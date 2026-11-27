@@ -1410,10 +1410,39 @@ $$;
 ALTER FUNCTION public.advance_people() OWNER TO postgres;
 
 --
+-- Name: analytics_drill_ids(text, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.analytics_drill_ids(p_list text, p_selection jsonb) RETURNS SETOF uuid
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT a.ticket_id
+    FROM   public.analytics_ticket_rows(p_selection) a
+    WHERE  p_list = 'tickets' AND p_selection IS NOT NULL
+      AND  public.analytics_row_matches(to_jsonb(a), p_selection -> 'where')
+    UNION ALL
+    SELECT a.issue_id
+    FROM   public.analytics_issue_rows(p_selection) a
+    WHERE  p_list = 'issues' AND p_selection IS NOT NULL
+      AND  public.analytics_row_matches(to_jsonb(a), p_selection -> 'where');
+$$;
+
+
+ALTER FUNCTION public.analytics_drill_ids(p_list text, p_selection jsonb) OWNER TO postgres;
+
+--
+-- Name: FUNCTION analytics_drill_ids(p_list text, p_selection jsonb); Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON FUNCTION public.analytics_drill_ids(p_list text, p_selection jsonb) IS 'MAIN-152: the ticket or issue ids behind one Analytics number — analytics_ticket_rows / analytics_issue_rows for the selection whose bucket columns match p_selection.where. Read by list_query''s analytics key.';
+
+
+--
 -- Name: analytics_issue_rows(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.analytics_issue_rows(p_filters jsonb) RETURNS TABLE(issue_id uuid, ticket_id uuid, ticket_number integer, site text, raised_on date, ticket_status text, severity text, category text, job_card_type text, rating text, rating_pending boolean)
+CREATE FUNCTION public.analytics_issue_rows(p_filters jsonb) RETURNS TABLE(issue_id uuid, ticket_id uuid, ticket_number integer, site text, raised_on date, ticket_status text, severity text, category text, job_card_type text, rating text, rating_pending boolean, rated boolean)
     LANGUAGE sql STABLE
     SET search_path TO 'public'
     AS $$
@@ -1427,7 +1456,8 @@ CREATE FUNCTION public.analytics_issue_rows(p_filters jsonb) RETURNS TABLE(issue
            i.category::text,
            coalesce(jc.type::text, 'none'),
            i.rating::text,
-           (i.rating IS NULL AND t.status IN ('Resolved', 'Closed'))
+           (i.rating IS NULL AND t.status IN ('Resolved', 'Closed')),
+           (i.rating IS NOT NULL)
     FROM   public.analytics_ticket_rows(p_filters) t
     JOIN   public.issues i ON i.ticket_id = t.ticket_id
     LEFT   JOIN public.job_cards jc ON jc.id = i.job_card_id
@@ -1440,14 +1470,37 @@ ALTER FUNCTION public.analytics_issue_rows(p_filters jsonb) OWNER TO postgres;
 -- Name: FUNCTION analytics_issue_rows(p_filters jsonb); Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON FUNCTION public.analytics_issue_rows(p_filters jsonb) IS 'MAIN-171: every issue on the tickets of analytics_ticket_rows, with the buckets it counts in. job_card_type is the job card''s type, or none when the issue has no job card.';
+COMMENT ON FUNCTION public.analytics_issue_rows(p_filters jsonb) IS 'MAIN-171/152: every issue on the tickets of analytics_ticket_rows (so dated by its ticket''s IST raise day, not its own), with the buckets it counts in. job_card_type is the job card''s type, or none when the issue has no job card.';
 
+
+--
+-- Name: analytics_row_matches(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.analytics_row_matches(p_row jsonb, p_where jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
+    AS $$
+    SELECT NOT EXISTS (
+        SELECT 1
+        FROM   jsonb_each(CASE WHEN jsonb_typeof(p_where) = 'object' THEN p_where ELSE '{}'::jsonb END) AS w(k, v)
+        WHERE  NOT EXISTS (
+                   SELECT 1
+                   FROM   jsonb_array_elements(CASE WHEN jsonb_typeof(w.v) = 'array' THEN w.v
+                                                    ELSE jsonb_build_array(w.v) END) e
+                   WHERE  p_row ? w.k
+                     AND  (e #>> '{}') IS NOT DISTINCT FROM (p_row ->> w.k))
+    );
+$$;
+
+
+ALTER FUNCTION public.analytics_row_matches(p_row jsonb, p_where jsonb) OWNER TO postgres;
 
 --
 -- Name: analytics_ticket_rows(jsonb); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.analytics_ticket_rows(p_filters jsonb) RETURNS TABLE(ticket_id uuid, ticket_number integer, site text, raised_on date, status text, acceptance text, completion text, job_card_type text)
+CREATE FUNCTION public.analytics_ticket_rows(p_filters jsonb) RETURNS TABLE(ticket_id uuid, ticket_number integer, site text, raised_on date, status text, acceptance text, completion text, job_card_type text, overdue boolean)
     LANGUAGE sql STABLE
     SET search_path TO 'public'
     AS $$
@@ -1488,7 +1541,11 @@ CREATE FUNCTION public.analytics_ticket_rows(p_filters jsonb) RETURNS TABLE(tick
                WHEN j.n_outsource > 0  THEN 'Outsource'
                WHEN j.n_inhouse > 0    THEN 'InHouse'
                ELSE 'none'
-           END
+           END,
+           -- "Currently Overdue": still open and past its completion deadline, right now.
+           (t.status::text NOT IN ('Resolved', 'Closed', 'Rejected')
+            AND t.final_sla_end_date IS NOT NULL
+            AND t.final_sla_end_date < now())
     FROM   t
     CROSS  JOIN f
     CROSS  JOIN LATERAL (
@@ -1511,7 +1568,7 @@ ALTER FUNCTION public.analytics_ticket_rows(p_filters jsonb) OWNER TO postgres;
 -- Name: FUNCTION analytics_ticket_rows(p_filters jsonb); Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON FUNCTION public.analytics_ticket_rows(p_filters jsonb) IS 'MAIN-171: every ticket in the Analytics selection ({from, to, sites}) with the bucket it counts in. get_maintenance_stats counts these rows; a drill-down lists them (MAIN-152).';
+COMMENT ON FUNCTION public.analytics_ticket_rows(p_filters jsonb) IS 'MAIN-171/152: every ticket in the Analytics selection ({from, to, sites}; a missing bound = no bound) with the bucket it counts in. get_maintenance_stats counts these rows; the drill-down lists them (analytics_drill_ids).';
 
 
 --
@@ -3619,10 +3676,14 @@ CREATE FUNCTION public.get_maintenance_stats(p_filters jsonb) RETURNS jsonb
         ),
         'ratings', jsonb_build_object(
             'pending',   (SELECT count(*) FROM iss WHERE rating_pending),
-            'collected', (SELECT count(*) FROM iss WHERE rating IS NOT NULL),
+            'collected', (SELECT count(*) FROM iss WHERE rated),
             'by_rating', coalesce((SELECT jsonb_object_agg(rating, n)
-                                   FROM (SELECT rating, count(*) n FROM iss WHERE rating IS NOT NULL GROUP BY 1) s), '{}'::jsonb)
-        )
+                                   FROM (SELECT rating, count(*) n FROM iss WHERE rated GROUP BY 1) s), '{}'::jsonb)
+        ),
+        -- Live, whatever the period: every open ticket past its deadline at the chosen sites.
+        'overdue', (SELECT count(*)
+                    FROM   public.analytics_ticket_rows(jsonb_build_object('sites', p_filters -> 'sites')) o
+                    WHERE  o.overdue)
     )
 $$;
 
@@ -3633,7 +3694,7 @@ ALTER FUNCTION public.get_maintenance_stats(p_filters jsonb) OWNER TO postgres;
 -- Name: FUNCTION get_maintenance_stats(p_filters jsonb); Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON FUNCTION public.get_maintenance_stats(p_filters jsonb) IS 'MAIN-171: Analytics › SLA & tickets. p_filters = {from, to, sites}; counts analytics_ticket_rows / analytics_issue_rows. jsonb argument — do not add a parameter.';
+COMMENT ON FUNCTION public.get_maintenance_stats(p_filters jsonb) IS 'MAIN-171/152: Analytics › SLA & tickets. p_filters = {from, to, sites}; counts analytics_ticket_rows / analytics_issue_rows (overdue ignores the period). jsonb argument — do not add a parameter.';
 
 
 --
@@ -5264,10 +5325,23 @@ DECLARE
     v_size    int   := least(greatest(coalesce(nullif(v_q ->> 'page_size', '')::int, 50), 1), 5000);
     v_page    int   := greatest(coalesce(nullif(v_q ->> 'page', '')::int, 1), 1);
     v_facet   text  := nullif(v_q ->> 'facet', '');
+    -- MAIN-152: the Analytics selection behind a clicked number.
+    v_an      jsonb := CASE WHEN jsonb_typeof(v_q -> 'analytics') = 'object' THEN v_q -> 'analytics' END;
+    v_ids     uuid[];
     v_result  jsonb;
 BEGIN
     IF p_list NOT IN ('tickets', 'issues', 'job_cards') THEN
         RAISE EXCEPTION 'Unknown list %', p_list;
+    END IF;
+
+    IF v_an IS NOT NULL THEN
+        IF p_list NOT IN ('tickets', 'issues') THEN
+            RAISE EXCEPTION 'The % list has no Analytics drill-down', p_list;
+        END IF;
+        -- The Analytics period replaces the list's own date window.
+        v_from := NULL;
+        v_to   := NULL;
+        v_ids  := ARRAY(SELECT public.analytics_drill_ids(p_list, v_an));
     END IF;
 
     IF v_facet IS NOT NULL THEN
@@ -5277,7 +5351,8 @@ BEGIN
         FROM (
             SELECT r ->> v_facet AS val, count(*) AS n
             FROM   public.list_base_rows(p_list, v_from, v_to) r
-            WHERE  public.list_row_passes(r, v_filters, v_facet)
+            WHERE  (v_ids IS NULL OR (r ->> 'id')::uuid = ANY (v_ids))
+              AND  public.list_row_passes(r, v_filters, v_facet)
               AND  (v_search IS NULL OR r ->> '_q' LIKE public.list_like_pattern(v_search))
             GROUP  BY 1
             ORDER  BY 2 DESC, 1 NULLS LAST
@@ -5289,7 +5364,8 @@ BEGIN
     WITH hit AS (
         SELECT r
         FROM   public.list_base_rows(p_list, v_from, v_to) r
-        WHERE  public.list_row_passes(r, v_filters)
+        WHERE  (v_ids IS NULL OR (r ->> 'id')::uuid = ANY (v_ids))
+          AND  public.list_row_passes(r, v_filters)
           AND  (v_search IS NULL OR r ->> '_q' LIKE public.list_like_pattern(v_search))
     ),
     page AS (
@@ -5319,7 +5395,7 @@ ALTER FUNCTION public.list_query(p_list text, p_query jsonb) OWNER TO postgres;
 -- Name: FUNCTION list_query(p_list text, p_query jsonb); Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON FUNCTION public.list_query(p_list text, p_query jsonb) IS 'MAIN-151: the shared list engine — filters, search, sort, page and column facets over *_list_rows. SECURITY INVOKER, so row-level security decides the rows. p_query is jsonb: add keys, never parameters.';
+COMMENT ON FUNCTION public.list_query(p_list text, p_query jsonb) IS 'MAIN-151/152: the shared list engine — filters, search, sort, page and column facets over *_list_rows. p_query.analytics ({from, to, sites, where}) limits Tickets/Issues to the records behind an Analytics number (analytics_drill_ids) and replaces the date window. SECURITY INVOKER, so row-level security decides the rows. p_query is jsonb: add keys, never parameters.';
 
 
 --
@@ -10132,9 +10208,14 @@ CREATE FUNCTION public.ticket_list_rows(p_from date, p_to date) RETURNS SETOF js
             WHEN t.status IN ('Resolved', 'Closed', 'Rejected') THEN NULL
             ELSE t.final_sla_end_date
         END,
+        -- The verdicts Analytics counts (MAIN-152).
+        'acceptance_sla',           a.acceptance,
+        'completion_sla',           a.completion,
+        'job_card_type',            a.job_card_type,
         '_q', lower(concat_ws(' ', t.ticket_number, t.vehicle_number, t.site, t.initial_remarks, t.supervisor_name))
     ))
     FROM public.tickets t
+    LEFT JOIN public.analytics_ticket_rows(jsonb_build_object('from', p_from, 'to', p_to)) a ON a.ticket_id = t.id
     WHERE (p_from IS NULL OR t.created_at >= public.list_ist_day_start_utc(p_from))
       AND (p_to   IS NULL OR t.created_at <  public.list_ist_day_start_utc(p_to + 1));
 $$;
@@ -22555,12 +22636,30 @@ GRANT ALL ON FUNCTION public.advance_people() TO service_role;
 
 
 --
+-- Name: FUNCTION analytics_drill_ids(p_list text, p_selection jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.analytics_drill_ids(p_list text, p_selection jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.analytics_drill_ids(p_list text, p_selection jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.analytics_drill_ids(p_list text, p_selection jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION analytics_issue_rows(p_filters jsonb); Type: ACL; Schema: public; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION public.analytics_issue_rows(p_filters jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.analytics_issue_rows(p_filters jsonb) TO authenticated;
 GRANT ALL ON FUNCTION public.analytics_issue_rows(p_filters jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION analytics_row_matches(p_row jsonb, p_where jsonb); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION public.analytics_row_matches(p_row jsonb, p_where jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.analytics_row_matches(p_row jsonb, p_where jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.analytics_row_matches(p_row jsonb, p_where jsonb) TO service_role;
 
 
 --

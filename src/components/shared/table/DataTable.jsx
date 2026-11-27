@@ -1,6 +1,7 @@
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react'
 import { AdjustmentsHorizontalIcon, ChevronLeftIcon, ChevronRightIcon, XMarkIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import ColumnMenu from './ColumnMenu'
+import { describeDrill } from '../../../utils/analyticsDrill'
 import { describeFilter, isActiveFilter, DEFAULT_PAGE_SIZE, columnFilterKey, sortLabels } from '../../../utils/listQuery'
 
 /**
@@ -188,5 +189,34 @@ export function ColumnsButton({ columns, visibleKeys, onChange, defaultKeys }) {
                 </div>
             </PopoverPanel>
         </Popover>
+    )
+}
+
+/**
+ * "From Analytics: Acceptance SLA: Late · tickets raised 1 Jan – 30 Nov 2026 · all sites"
+ * on a list opened from an Analytics number (MAIN-152). It stands in for the date range box
+ * while it is there; ✕ goes back to the plain list.
+ *
+ * @param {'tickets'|'issues'} listName
+ */
+export function AnalyticsOrigin({ list, listName }) {
+    const drill = list.state.analytics
+    if (!drill) return null
+    const parts = describeDrill(listName, drill)
+    return (
+        <div className="inline-flex items-center gap-2 min-h-[44px] pl-3 pr-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-sm text-indigo-900 max-w-full">
+            <span className="min-w-0">
+                <span className="font-semibold">From Analytics:</span> {parts.join(' · ')}
+            </span>
+            <button
+                type="button"
+                onClick={list.clearAnalytics}
+                className="shrink-0 p-1.5 rounded-md hover:bg-indigo-100"
+                aria-label="Show the plain list instead"
+                title="Show the plain list instead"
+            >
+                <XMarkIcon className="w-4 h-4" aria-hidden="true" />
+            </button>
+        </div>
     )
 }
