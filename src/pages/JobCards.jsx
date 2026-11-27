@@ -1,20 +1,21 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { format, startOfMonth, endOfMonth } from 'date-fns'
 import { formatAs } from '../utils/datetime'
-import { useJobCards } from '../hooks/useJobCards'
-import { labourTechnicianNames } from '../utils/labour'
 import { canSeeCosts, jobCardValueLabel, jobCardValueBasis } from '../utils/jobCardValue'
 import { useAuth } from '../hooks/useAuth'
-import { useWorkshopLocations } from '../hooks/useWorkshopLocations'
+import { useAllSites } from '../hooks/useSites'
+import { useListState, useServerList } from '../hooks/useServerList'
+import { formatSiteLabel } from '../utils/siteLabel'
 import Navigation from '../components/shared/Navigation'
-import FilterSelect from '../components/shared/FilterSelect'
-import { TicketListSkeleton } from '../components/shared/LoadingSkeleton'
+import DateRangeFilter from '../components/tickets/DateRangeFilter'
+import DataTable, { ActiveFilters, ColumnsButton, ListSearch } from '../components/shared/table/DataTable'
 
-// Icons
-import {
-    FunnelIcon,
-    MagnifyingGlassIcon,
-} from '@heroicons/react/24/outline'
+const RPC = 'get_job_card_list'
+const KEY = 'job_cards'
+
+const TYPE_LABELS = { InHouse: 'In House', Outsource: 'Outsource' }
+const STATUS_LABELS = { 'Completed - Invoice Pending': 'Invoice Pending' }
 
 export default function JobCards() {
     const navigate = useNavigate()
@@ -22,200 +23,135 @@ export default function JobCards() {
     const canCreateBatch = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
     // MAIN-158: the job card's value, for the people who see the money.
     const showValue = canSeeCosts(userProfile?.role)
-    const [filters, setFilters] = useState({
-        status: '',
-        site: '',
-        location_id: '',
-        search: ''
-    })
+    const { data: sites = [] } = useAllSites()
+    const siteByName = useMemo(() => Object.fromEntries(sites.map(s => [s.name, s])), [sites])
 
-    // Hook handles basic filtering, client side search could be added
-    const { data: jobCards, isLoading } = useJobCards(filters)
-    const { data: locations = [] } = useWorkshopLocations()
+    const defaults = useMemo(() => ({
+        sort: 'created_at',
+        dir: 'desc',
+        from: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+        to: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
+    }), [])
+    const list = { ...useListState(defaults), rpc: RPC, keyBase: KEY }
+    const { data, isLoading, isPlaceholderData } = useServerList(RPC, KEY, list.state)
+    const rows = data?.rows || []
+    const total = data?.total ?? 0
 
-    // Client-side search for vehicle number or technician name if backend filter not implemented
-    const filteredJobCards = jobCards?.filter(jc => {
-        if (!filters.search) return true
-        const term = filters.search.toLowerCase()
-        return (
-            jc.job_card_number?.toString().includes(term) ||
-            jc.vehicle_number?.toLowerCase().includes(term) ||
-            jc.vendor_name?.toLowerCase().includes(term) ||
-            labourTechnicianNames(jc.issues).some(n => n.toLowerCase().includes(term))
-        )
-    })
+    const columns = useMemo(() => [
+        {
+            key: 'job_card_number', label: 'Job Card', sortKey: 'job_card_number', filter: 'number',
+            render: r => <span className="text-blue-600 font-medium hover:underline">#{r.job_card_number}</span>,
+        },
+        {
+            key: 'created', label: 'Created', sortKey: 'created_at', filter: 'date', filterKey: 'raised_on',
+            formatValue: v => formatAs(v, 'd MMM yyyy'),
+            render: r => <span className="text-gray-600">{formatAs(r.created_at, 'd MMM yyyy')}</span>,
+        },
+        {
+            key: 'vehicle_number', label: 'Vehicle', sortKey: 'vehicle_number', filter: 'values',
+            render: r => <span className="text-gray-900 font-medium">{r.vehicle_number}</span>,
+        },
+        {
+            key: 'site', label: 'Site', sortKey: 'site', filter: 'values',
+            formatValue: v => (siteByName[v] ? formatSiteLabel(siteByName[v]) : v),
+            render: r => <span className="bg-gray-100 px-2 py-0.5 rounded text-xs text-gray-700">{r.site}</span>,
+        },
+        {
+            key: 'type', label: 'Type', sortKey: 'type', filter: 'values',
+            formatValue: v => TYPE_LABELS[v] || v,
+            render: r => r.type === 'InHouse'
+                ? <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-xs font-medium">In House</span>
+                : <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-xs font-medium">Outsource</span>,
+        },
+        {
+            key: 'assignee', label: 'Assignee', sortKey: 'assignee', filter: 'values',
+            cellClassName: 'max-w-[220px] truncate text-gray-600',
+            render: r => <span title={r.assignee}>{r.assignee || (r.type === 'InHouse' ? 'No labour yet' : '—')}</span>,
+        },
+        {
+            key: 'workshop', label: 'Workshop', sortKey: 'workshop', filter: 'values',
+            render: r => <span className="text-gray-700">{r.workshop || '—'}</span>,
+        },
+        {
+            key: 'status', label: 'Status', sortKey: 'status', filter: 'values',
+            formatValue: v => STATUS_LABELS[v] || v,
+            render: r => (
+                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                    r.status === 'Completed' ? 'bg-green-100 text-green-800'
+                        : r.status === 'Completed - Invoice Pending' ? 'bg-amber-100 text-amber-800'
+                            : 'bg-blue-100 text-blue-800'}`}
+                >
+                    {STATUS_LABELS[r.status] || r.status}
+                </span>
+            ),
+        },
+        {
+            key: 'open_issues', label: 'Open Issues', sortKey: 'open_issues', filter: 'number',
+            render: r => r.open_issues > 0
+                ? <span className="text-red-600 font-medium">{r.open_issues} Open</span>
+                : <span className="text-green-600">All Done</span>,
+        },
+        ...(showValue ? [{
+            key: 'value', label: 'Value', sortKey: 'value', filter: 'number', align: 'right',
+            formatValue: v => `₹${Number(v).toLocaleString('en-IN')}`,
+            render: r => {
+                const v = jobCardValueLabel(r)
+                return (
+                    <span className={v.muted ? 'text-gray-500 italic' : 'text-gray-900 tabular-nums'} title={jobCardValueBasis(r)}>
+                        {v.text}
+                    </span>
+                )
+            },
+        }] : []),
+    ], [siteByName, showValue])
 
-    // The skeleton replaces the list alone, never the page. Anything that unmounts the
-    // filter bar takes the search box — and the cursor inside it — with it.
+    const defaultKeys = useMemo(() => columns.map(c => c.key), [columns])
+    const [visibleKeys, setVisibleKeys] = useState(null)
+    const shown = columns.filter(c => (visibleKeys ?? defaultKeys).includes(c.key))
+
     return (
         <div className="min-h-screen bg-gray-50">
             <Navigation breadcrumbs={[{ label: 'Job Cards' }]} />
 
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                    <h1 className="text-2xl font-bold text-gray-900">Job Cards</h1>
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900">Job Cards</h1>
+                        <p className="text-sm text-gray-600 mt-1">
+                            {isLoading ? 'Loading…' : `${total.toLocaleString('en-IN')} job card${total !== 1 ? 's' : ''} found`}
+                        </p>
+                    </div>
                     {/* One invoice for work on many vehicles, without a job card each (MAIN-99). */}
                     {canCreateBatch && (
                         <Link
                             to="/multi-vehicle-invoices/new"
-                            className="text-sm px-3 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 whitespace-nowrap"
+                            className="text-sm px-3 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 whitespace-nowrap self-start sm:self-auto"
                         >
                             + Multi-vehicle invoice
                         </Link>
                     )}
                 </div>
 
-                {/* Filters */}
-                <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div className="relative">
-                            <input
-                                type="text"
-                                placeholder="Search vehicle or assignee..."
-                                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                                value={filters.search}
-                                onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                            />
-                            <MagnifyingGlassIcon className="w-5 h-5 text-gray-500 absolute left-3 top-2.5" />
-                        </div>
-
-                        <FilterSelect
-                            value={filters.status}
-                            onChange={v => setFilters(prev => ({ ...prev, status: v }))}
-                            placeholder="All Statuses"
-                            options={[
-                                { value: 'Open', label: 'Open' },
-                                { value: 'Completed - Invoice Pending', label: 'Invoice Pending' },
-                                { value: 'Completed', label: 'Completed' },
-                            ]}
-                        />
-
-                        {locations.length > 1 && (
-                            <FilterSelect
-                                value={filters.location_id}
-                                onChange={v => setFilters(prev => ({ ...prev, location_id: v }))}
-                                placeholder="All Workshops"
-                                options={locations.map(l => ({ value: l.id, label: l.name }))}
-                            />
-                        )}
+                <div className="flex flex-wrap gap-2 items-center">
+                    <DateRangeFilter dateRange={{ start: list.state.from, end: list.state.to }} onDateRangeChange={list.setDateRange} />
+                    <ListSearch list={list} placeholder="Search job card, vehicle, site, assignee…" />
+                    <div className="sm:ml-auto">
+                        <ColumnsButton columns={columns} visibleKeys={visibleKeys ?? defaultKeys} onChange={setVisibleKeys} defaultKeys={defaultKeys} />
                     </div>
                 </div>
 
-                {/* List */}
-                {isLoading && <TicketListSkeleton />}
+                <ActiveFilters list={list} columns={columns} defaults={defaults} />
 
-                {!isLoading && (
-                <div className="bg-white rounded-lg shadow overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Job Card
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Vehicle
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Type / Assignee
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Workshop
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Created
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Status
-                                </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                    Open Issues
-                                </th>
-                                {showValue && (
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-600 uppercase tracking-wider">
-                                        Value
-                                    </th>
-                                )}
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {filteredJobCards?.map((jc) => {
-                                const openIssues = jc.issues?.filter(i => i.status === 'Open').length || 0
-                                return (
-                                    <tr
-                                        key={jc.id}
-                                        className="hover:bg-gray-50 cursor-pointer transition-colors"
-                                        onClick={() => navigate(`/job-cards/${jc.job_card_number}`)}
-                                    >
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="text-blue-600 font-medium hover:underline">
-                                                #{jc.job_card_number}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="text-gray-900 font-medium">{jc.vehicle_number}</span>
-                                            <span className="block text-xs text-gray-600">{jc.site}</span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div>
-                                                {jc.type === 'InHouse' ? (
-                                                    <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-xs font-medium">In House</span>
-                                                ) : (
-                                                    <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-xs font-medium">Outsource</span>
-                                                )}
-                                                <span className="block text-sm text-gray-600 mt-0.5">
-                                                    {jc.type === 'InHouse' ? labourTechnicianNames(jc.issues).join(', ') || 'No labour yet' : jc.vendor_name}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                                            {jc.location?.name || '—'}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                            {formatAs(jc.created_at, 'MMM d, yyyy')}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                                jc.status === 'Completed'
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : jc.status === 'Completed - Invoice Pending'
-                                                    ? 'bg-amber-100 text-amber-800'
-                                                    : 'bg-blue-100 text-blue-800'
-                                            }`}>
-                                                {jc.status === 'Completed - Invoice Pending' ? 'Invoice Pending' : jc.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                            {openIssues > 0 ? (
-                                                <span className="text-red-600 font-medium">{openIssues} Open</span>
-                                            ) : (
-                                                <span className="text-green-600">All Done</span>
-                                            )}
-                                        </td>
-                                        {showValue && (() => {
-                                            const v = jobCardValueLabel(jc)
-                                            return (
-                                                <td
-                                                    className={`px-6 py-4 whitespace-nowrap text-sm text-right ${v.muted ? 'text-gray-500 italic' : 'text-gray-900 tabular-nums'}`}
-                                                    title={jobCardValueBasis(jc)}
-                                                >
-                                                    {v.text}
-                                                </td>
-                                            )
-                                        })()}
-                                    </tr>
-                                )
-                            })}
-                            {filteredJobCards?.length === 0 && (
-                                <tr>
-                                    <td colSpan={showValue ? 8 : 7} className="px-6 py-12 text-center text-gray-600">
-                                        No job cards found.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-                )}
+                <DataTable
+                    list={list}
+                    columns={shown}
+                    rows={rows}
+                    total={total}
+                    loading={isLoading}
+                    stale={isPlaceholderData}
+                    onRowClick={r => navigate(`/job-cards/${r.job_card_number}`)}
+                    emptyText="No job cards match these filters."
+                />
             </div>
         </div>
     )

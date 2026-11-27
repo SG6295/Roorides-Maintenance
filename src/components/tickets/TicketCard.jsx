@@ -59,7 +59,7 @@ export default function TicketCard({ ticket, currentDate }) {
     )
 }
 
-function StatusBadge({ status }) {
+export function StatusBadge({ status }) {
     const colors = {
         'New': 'bg-yellow-100 text-yellow-800',
         'Accepted': 'bg-blue-100 text-blue-800',
@@ -76,7 +76,8 @@ function StatusBadge({ status }) {
     )
 }
 
-function SLABadge({ ticket, currentDate, acceptanceDeadline }) {
+// Also the SLA column of the Tickets table (MAIN-151), so card and table can't disagree.
+export function SLABadge({ ticket, currentDate, acceptanceDeadline }) {
     if (ticket.status === 'New' && acceptanceDeadline) {
         return <SLATimer targetDate={acceptanceDeadline} currentDate={currentDate} />
     }

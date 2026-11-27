@@ -1,217 +1,227 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
-import { useAuth } from '../hooks/useAuth'
-import { useTickets } from '../hooks/useTickets'
-import { useAllSites } from '../hooks/useSites'
-import { formatSiteLabel } from '../utils/siteLabel'
-import Navigation from '../components/shared/Navigation'
-import StatusAccordion from '../components/tickets/StatusAccordion'
-import DateRangeFilter from '../components/tickets/DateRangeFilter'
-import FilterSelect from '../components/shared/FilterSelect'
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
+import { useAuth } from '../hooks/useAuth'
+import { useAllSites } from '../hooks/useSites'
+import { useListState, useServerList, fetchAllListRows } from '../hooks/useServerList'
+import { formatSiteLabel } from '../utils/siteLabel'
+import { formatAs, toDate } from '../utils/datetime'
 import { exportTicketsToExcel } from '../utils/ticketExport'
 import { useToast } from '../hooks/useFeedback'
+import Navigation from '../components/shared/Navigation'
+import DateRangeFilter from '../components/tickets/DateRangeFilter'
+import TicketCard, { SLABadge, StatusBadge } from '../components/tickets/TicketCard'
+import StatusShortcuts from '../components/tickets/StatusShortcuts'
+import DataTable, { ActiveFilters, ColumnsButton, ListSearch, Pagination } from '../components/shared/table/DataTable'
+import ColumnMenu from '../components/shared/table/ColumnMenu'
 
-export default function Tickets() {
-  const toast = useToast()
-  const { userProfile } = useAuth()
-  const canExport = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
-  const [exporting, setExporting] = useState(false)
-  // All sites, not just active — a departed school's past tickets must stay filterable.
-  const { data: sites = [] } = useAllSites()
+const RPC = 'get_ticket_list'
+const KEY = 'tickets'
 
-  // Timer state. The acceptance SLA threshold used to be fetched here so TicketCard could
-  // compute a deadline in JavaScript; the database stamps it now (MAIN-45), so the setting
-  // is no longer needed on this page.
-  const [now, setNow] = useState(new Date())
-
-  // Initialize with current month as default
-  const [dateRange, setDateRange] = useState({
-    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
-    end: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
-  })
-
-  // Only keep active filters: status (from accordion logic likely, though not here), site, vehicle
-  const [filters, setFilters] = useState({
-    status: '',
-    site: '',
-    vehicle_number: '',
-  })
-
-
-  // The date range is filtered in the database (MAIN-83); site and vehicle stay client-side.
-  // isPlaceholderData: the list on screen is still the previous date range's while the new
-  // one loads, so Export is disabled until it arrives — otherwise the file would be named
-  // for the new range but hold the old range's tickets.
-  const { data: allTickets, isLoading, isPlaceholderData } = useTickets({ dateRange })
-
-  // Sync timer to next full minute for cleaner updates
-  useEffect(() => {
-    const delay = 60000 - (new Date().getTime() % 60000)
-    let interval
-    const timeout = setTimeout(() => {
-      setNow(new Date())
-      interval = setInterval(() => {
-        setNow(new Date())
-      }, 60000)
-    }, delay)
-
-    return () => {
-      clearTimeout(timeout)
-      if (interval) clearInterval(interval)
-    }
-  }, [])
-
-  // Filter tickets by the non-date filters
-  const filteredTickets = useMemo(() => {
-    if (!allTickets) return []
-
-    return allTickets.filter((ticket) => {
-      // Status filter
-      if (filters.status && ticket.status !== filters.status) return false
-
-      // Site filter
-      if (filters.site && ticket.site !== filters.site) return false
-
-      // Vehicle search
-      if (filters.vehicle_number && !ticket.vehicle_number.toLowerCase().includes(filters.vehicle_number.toLowerCase())) {
-        return false
-      }
-
-      return true
-    })
-  }, [allTickets, filters])
-
-  // Status counts are deliberately not computed here. They used to be, from allTickets
-  // with only the date range applied, while the rows came from filteredTickets — so a
-  // site or vehicle filter narrowed the list but never its badge (MAIN-82). StatusAccordion
-  // counts the tickets it is handed, which makes the badge and the list one computation.
-
-  const clearFilters = () => {
-    setFilters({
-      status: '',
-      site: '',
-      vehicle_number: '',
-    })
-  }
-
-  const hasActiveFilters = filters.site || filters.vehicle_number
-
-  // Exports exactly what is on screen (MAIN-84).
-  const handleExport = async () => {
-    setExporting(true)
-    try {
-      await exportTicketsToExcel(filteredTickets, dateRange)
-    } catch (err) {
-      toast.error('Export failed: ' + err.message)
-    } finally {
-      setExporting(false)
-    }
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Navigation breadcrumbs={[{ label: 'Tickets' }]} />
-
-      {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <div className="flex justify-between items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <h1 className="text-2xl font-bold text-gray-900">Tickets</h1>
-              <p className="text-sm text-gray-600 mt-1">
-                {filteredTickets.length} ticket{filteredTickets.length !== 1 ? 's' : ''} found
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {canExport && (
-                <button
-                  onClick={handleExport}
-                  disabled={exporting || isLoading || isPlaceholderData || filteredTickets.length === 0}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-700 font-medium hover:bg-gray-50 disabled:opacity-40 transition-colors min-h-[48px] whitespace-nowrap shadow-sm"
-                >
-                  <ArrowDownTrayIcon className="w-5 h-5" />
-                  {exporting ? 'Exporting…' : 'Export'}
-                </button>
-              )}
-              <Link
-                to="/tickets/new"
-                className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 transition-colors min-h-[48px] flex items-center whitespace-nowrap shadow-sm"
-              >
-                + New
-              </Link>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters Bar - Mobile Optimized */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <div className="flex flex-wrap gap-2">
-            {/* Date Range Filter */}
-            <DateRangeFilter dateRange={dateRange} onDateRangeChange={setDateRange} />
-
-            {/* Site Filter */}
-            <FilterSelect
-              value={filters.site}
-              onChange={(site) => setFilters({ ...filters, site })}
-              placeholder="All Sites"
-              options={sites.map(s => ({ value: s.name, label: formatSiteLabel(s) }))}
-            />
-
-            {/* Vehicle Search */}
-            <input
-              type="text"
-              placeholder="Search vehicle..."
-              value={filters.vehicle_number}
-              onChange={(e) => setFilters({ ...filters, vehicle_number: e.target.value })}
-              className="px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-w-[160px] sm:min-w-[200px] min-h-[48px] flex-1 sm:flex-none"
-            />
-
-
-            {/* Clear All Button */}
-            {hasActiveFilters && (
-              <button
-                onClick={clearFilters}
-                className="px-4 py-2.5 text-sm text-blue-600 hover:text-blue-700 font-medium min-h-[48px] whitespace-nowrap"
-              >
-                Clear All
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content - Status Accordions with Tickets Inside */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-gray-600">Loading tickets...</div>
-          </div>
-        ) : filteredTickets.length === 0 ? (
-          <div className="bg-white rounded-lg shadow p-12 text-center">
-            <div className="max-w-sm mx-auto">
-              <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <p className="text-gray-600 mb-2 text-lg font-medium">No tickets found</p>
-              <p className="text-sm text-gray-600 mb-4">Try adjusting your filters or create a new ticket</p>
-              <Link to="/tickets/new" className="inline-block bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
-                + Create Ticket
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <StatusAccordion
-            tickets={filteredTickets}
-            currentDate={now}
-          />
-        )}
-      </div>
-
-    </div>
-  )
+// The ticket's own SLA badge — the same component the cards use (MAIN-45, MAIN-134).
+function TicketSla({ row, now }) {
+    const acceptanceDeadline = row.status === 'New' ? toDate(row.acceptance_sla_end_date) : null
+    return <SLABadge ticket={row} currentDate={now} acceptanceDeadline={acceptanceDeadline} />
 }
 
+/** A minute clock, aligned to the minute, for the SLA countdowns. */
+function useMinuteClock() {
+    const [now, setNow] = useState(new Date())
+    useEffect(() => {
+        let interval
+        const timeout = setTimeout(() => {
+            setNow(new Date())
+            interval = setInterval(() => setNow(new Date()), 60000)
+        }, 60000 - (Date.now() % 60000))
+        return () => { clearTimeout(timeout); if (interval) clearInterval(interval) }
+    }, [])
+    return now
+}
+
+export default function Tickets() {
+    const toast = useToast()
+    const { userProfile } = useAuth()
+    const canExport = ['maintenance_exec', 'super_admin'].includes(userProfile?.role)
+    const [exporting, setExporting] = useState(false)
+    const now = useMinuteClock()
+
+    // All sites, not just active — a departed school's past tickets must stay filterable.
+    const { data: sites = [] } = useAllSites()
+    const siteByName = useMemo(() => Object.fromEntries(sites.map(s => [s.name, s])), [sites])
+
+    // The current month, unless the address says otherwise (MAIN-151).
+    const defaults = useMemo(() => ({
+        sort: 'created_at',
+        dir: 'desc',
+        from: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+        to: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
+    }), [])
+    const list = { ...useListState(defaults), rpc: RPC, keyBase: KEY }
+    const { data, isLoading, isPlaceholderData } = useServerList(RPC, KEY, list.state)
+    const rows = data?.rows || []
+    const total = data?.total ?? 0
+
+    const columns = useMemo(() => [
+        {
+            key: 'ticket_number', label: 'Ticket', sortKey: 'ticket_number', filter: 'number',
+            render: r => <Link to={`/tickets/${r.ticket_number}`} className="text-blue-600 font-semibold hover:underline">#{r.ticket_number}</Link>,
+        },
+        {
+            key: 'raised', label: 'Raised', sortKey: 'created_at', filter: 'date', filterKey: 'raised_on',
+            formatValue: v => formatAs(v, 'd MMM yyyy'),
+            render: r => <span className="text-gray-600">{formatAs(r.created_at, 'd MMM, h:mm a')}</span>,
+        },
+        {
+            key: 'vehicle_number', label: 'Vehicle', sortKey: 'vehicle_number', filter: 'values',
+            render: r => <span className="font-semibold text-gray-900">{r.vehicle_number}</span>,
+        },
+        {
+            key: 'site', label: 'Site', sortKey: 'site', filter: 'values',
+            formatValue: v => (siteByName[v] ? formatSiteLabel(siteByName[v]) : v),
+            render: r => <span className="bg-gray-100 px-2 py-0.5 rounded text-xs text-gray-700">{r.site}</span>,
+        },
+        {
+            key: 'status', label: 'Status', sortKey: 'status', filter: 'values',
+            render: r => <StatusBadge status={r.status} />,
+        },
+        {
+            key: 'remarks', label: 'Remarks', sortKey: 'remarks',
+            cellClassName: 'max-w-xs truncate text-gray-600',
+            render: r => <span title={r.remarks}>{r.remarks || '—'}</span>,
+        },
+        {
+            key: 'supervisor_name', label: 'Supervisor', sortKey: 'supervisor_name', filter: 'values',
+            render: r => <span className="text-gray-700">{r.supervisor_name}</span>,
+        },
+        {
+            key: 'sla', label: 'SLA', sortKey: 'sla_due', filter: 'values', filterKey: 'sla_state',
+            render: r => <TicketSla row={r} now={now} />,
+        },
+    ], [siteByName, now])
+
+    const defaultKeys = useMemo(() => columns.map(c => c.key), [columns])
+    const [visibleKeys, setVisibleKeys] = useState(null)
+    const shown = columns.filter(c => (visibleKeys ?? defaultKeys).includes(c.key))
+
+    // Exports every ticket the filters match, not only the page on screen (MAIN-84).
+    const handleExport = async () => {
+        setExporting(true)
+        try {
+            const all = await fetchAllListRows(RPC, list.state)
+            await exportTicketsToExcel(all, { start: list.state.from || 'all', end: list.state.to || 'all' })
+        } catch (err) {
+            toast.error('Export failed: ' + err.message)
+        } finally {
+            setExporting(false)
+        }
+    }
+
+    const dateRange = { start: list.state.from, end: list.state.to }
+
+    return (
+        <div className="min-h-screen bg-gray-50">
+            <Navigation breadcrumbs={[{ label: 'Tickets' }]} />
+
+            <div className="bg-white border-b">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
+                    <div className="min-w-0">
+                        <h1 className="text-2xl font-bold text-gray-900">Tickets</h1>
+                        <p className="text-sm text-gray-600 mt-1">
+                            {isLoading ? 'Loading…' : `${total.toLocaleString('en-IN')} ticket${total !== 1 ? 's' : ''} found`}
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {canExport && (
+                            <button
+                                onClick={handleExport}
+                                disabled={exporting || isLoading || isPlaceholderData || total === 0}
+                                className="hidden sm:flex items-center gap-2 px-4 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-700 font-medium hover:bg-gray-50 disabled:opacity-40 min-h-[48px] whitespace-nowrap shadow-sm"
+                            >
+                                <ArrowDownTrayIcon className="w-5 h-5" />
+                                {exporting ? 'Exporting…' : 'Export'}
+                            </button>
+                        )}
+                        <Link
+                            to="/tickets/new"
+                            className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 min-h-[48px] flex items-center whitespace-nowrap shadow-sm"
+                        >
+                            + New
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 space-y-4">
+                <div className="flex flex-wrap gap-2 items-center">
+                    <DateRangeFilter dateRange={dateRange} onDateRangeChange={list.setDateRange} />
+                    <ListSearch list={list} placeholder="Search ticket no., vehicle, remarks, supervisor…" />
+                    <div className="hidden md:block md:ml-auto">
+                        <ColumnsButton columns={columns} visibleKeys={visibleKeys ?? defaultKeys} onChange={setVisibleKeys} defaultKeys={defaultKeys} />
+                    </div>
+                    <div className="md:hidden w-full">
+                        <MobileSortFilter columns={columns} list={list} />
+                    </div>
+                </div>
+
+                <StatusShortcuts list={list} />
+
+                <ActiveFilters list={list} columns={columns} defaults={defaults} />
+
+                {/* Desktop: the table. */}
+                <div className="hidden md:block">
+                    <DataTable
+                        list={list}
+                        columns={shown}
+                        rows={rows}
+                        total={total}
+                        loading={isLoading}
+                        stale={isPlaceholderData}
+                        emptyText="No tickets match these filters."
+                    />
+                </div>
+
+                {/* Phone: the same rows as cards, with the same filters (MAIN-151 design). */}
+                <div className="md:hidden space-y-3">
+                    {isLoading && <div className="py-12 text-center text-gray-600">Loading tickets…</div>}
+                    {!isLoading && rows.length === 0 && (
+                        <div className="bg-white rounded-lg shadow p-10 text-center text-gray-600">No tickets match these filters.</div>
+                    )}
+                    <div className={`space-y-3 ${isPlaceholderData ? 'opacity-60' : ''}`}>
+                        {rows.map(r => (
+                            <TicketCard key={r.id} ticket={{ ...r, initial_remarks: r.remarks }} currentDate={now} />
+                        ))}
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200">
+                        <Pagination page={list.state.page} pageSize={50} total={total} onPage={list.setPage} />
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+/** Phone: one "Sort & filter" button, listing every column's menu. */
+function MobileSortFilter({ columns, list }) {
+    const [open, setOpen] = useState(false)
+    const active = Object.keys(list.state.filters).length
+    return (
+        <div>
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                aria-expanded={open}
+                className={`w-full flex items-center justify-center gap-2 min-h-[44px] rounded-lg border text-sm font-semibold ${active ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-gray-300 bg-white text-gray-700'}`}
+            >
+                Sort &amp; filter{active ? ` · ${active}` : ''}
+            </button>
+            {open && (
+                <div className="mt-2 p-2 bg-white rounded-lg border border-gray-200 space-y-2">
+                    {columns.filter(c => c.sortKey || c.filter).map(c => (
+                        <ColumnMenu key={c.key} column={c} list={list} onSort={list.setSort} onFilter={list.setFilter} trigger="row" />
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
