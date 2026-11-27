@@ -13,8 +13,15 @@ import Navigation from '../components/shared/Navigation'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
 import TicketCard, { SLABadge, StatusBadge } from '../components/tickets/TicketCard'
 import StatusShortcuts from '../components/tickets/StatusShortcuts'
-import DataTable, { ActiveFilters, ColumnsButton, ListSearch, Pagination } from '../components/shared/table/DataTable'
+import DataTable, { ActiveFilters, AnalyticsOrigin, ColumnsButton, ListSearch, Pagination } from '../components/shared/table/DataTable'
+import { ACCEPTANCE_LABELS, COMPLETION_LABELS, TICKET_JOB_CARD_TYPE_LABELS } from '../utils/analyticsDrill'
 import ColumnMenu from '../components/shared/table/ColumnMenu'
+
+// The verdicts Analytics › SLA & tickets counts (MAIN-152): hidden on the plain list, shown
+// when the list was opened from an Analytics number.
+const ANALYTICS_COLUMNS = ['acceptance_sla', 'completion_sla', 'job_card_type']
+
+const VERDICT_STYLES = { Adhered: 'text-green-700', Violated: 'text-red-700', Pending: 'text-blue-700', NA: 'text-gray-500' }
 
 const RPC = 'get_ticket_list'
 const KEY = 'tickets'
@@ -98,9 +105,28 @@ export default function Tickets() {
             key: 'sla', label: 'SLA', sortKey: 'sla_due', filter: 'values', filterKey: 'sla_state',
             render: r => <TicketSla row={r} now={now} />,
         },
+        {
+            key: 'acceptance_sla', label: 'Acceptance SLA', sortKey: 'acceptance_sla', filter: 'values',
+            formatValue: v => ACCEPTANCE_LABELS[v] || v,
+            render: r => <span className={VERDICT_STYLES[r.acceptance_sla]}>{ACCEPTANCE_LABELS[r.acceptance_sla] || '—'}</span>,
+        },
+        {
+            key: 'completion_sla', label: 'Completion SLA', sortKey: 'completion_sla', filter: 'values',
+            formatValue: v => COMPLETION_LABELS[v] || v,
+            render: r => <span className={VERDICT_STYLES[r.completion_sla]}>{COMPLETION_LABELS[r.completion_sla] || '—'}</span>,
+        },
+        {
+            key: 'job_card_type', label: 'Job card type', sortKey: 'job_card_type', filter: 'values',
+            formatValue: v => TICKET_JOB_CARD_TYPE_LABELS[v] || v,
+            render: r => <span className="text-gray-700">{TICKET_JOB_CARD_TYPE_LABELS[r.job_card_type] || '—'}</span>,
+        },
     ], [siteByName, now])
 
-    const defaultKeys = useMemo(() => columns.map(c => c.key), [columns])
+    const fromAnalytics = !!list.state.analytics
+    const defaultKeys = useMemo(
+        () => columns.map(c => c.key).filter(k => fromAnalytics || !ANALYTICS_COLUMNS.includes(k)),
+        [columns, fromAnalytics],
+    )
     const [visibleKeys, setVisibleKeys] = useState(null)
     const shown = columns.filter(c => (visibleKeys ?? defaultKeys).includes(c.key))
 
@@ -109,7 +135,8 @@ export default function Tickets() {
         setExporting(true)
         try {
             const all = await fetchAllListRows(RPC, list.state)
-            await exportTicketsToExcel(all, { start: list.state.from || 'all', end: list.state.to || 'all' })
+            const range = list.state.analytics || list.state
+            await exportTicketsToExcel(all, { start: range.from || 'all', end: range.to || 'all' })
         } catch (err) {
             toast.error('Export failed: ' + err.message)
         } finally {
@@ -154,7 +181,9 @@ export default function Tickets() {
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 space-y-4">
                 <div className="flex flex-wrap gap-2 items-center">
-                    <DateRangeFilter dateRange={dateRange} onDateRangeChange={list.setDateRange} />
+                    {fromAnalytics
+                        ? <AnalyticsOrigin list={list} listName="tickets" />
+                        : <DateRangeFilter dateRange={dateRange} onDateRangeChange={list.setDateRange} />}
                     <ListSearch list={list} placeholder="Search ticket no., vehicle, remarks, supervisor…" />
                     <div className="hidden md:block md:ml-auto">
                         <ColumnsButton columns={columns} visibleKeys={visibleKeys ?? defaultKeys} onChange={setVisibleKeys} defaultKeys={defaultKeys} />

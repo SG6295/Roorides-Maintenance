@@ -3171,6 +3171,10 @@ export type Database = {
         }[]
       }
       advance_people: { Args: never; Returns: string[] }
+      analytics_drill_ids: {
+        Args: { p_list: string; p_selection: Json }
+        Returns: string[]
+      }
       analytics_issue_rows: {
         Args: { p_filters: Json }
         Returns: {
@@ -3178,6 +3182,7 @@ export type Database = {
           issue_id: string
           job_card_type: string
           raised_on: string
+          rated: boolean
           rating: string
           rating_pending: boolean
           severity: string
@@ -3187,12 +3192,17 @@ export type Database = {
           ticket_status: string
         }[]
       }
+      analytics_row_matches: {
+        Args: { p_row: Json; p_where: Json }
+        Returns: boolean
+      }
       analytics_ticket_rows: {
         Args: { p_filters: Json }
         Returns: {
           acceptance: string
           completion: string
           job_card_type: string
+          overdue: boolean
           raised_on: string
           site: string
           status: string

@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { format, subMonths, endOfMonth } from 'date-fns'
@@ -8,24 +9,45 @@ import { formatSiteLabel } from '../utils/siteLabel'
 import { useWorkshopSiteGroups } from '../hooks/useSiteWorkshops'
 import MultiFilterSelect from '../components/shared/MultiFilterSelect'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
-import { buildSlaReport, slaReportCsv, percentText } from '../utils/slaReport'
+import { buildSlaReport, slaReportCsv, percentText, percent } from '../utils/slaReport'
+import { analyticsHref } from '../utils/analyticsDrill'
 import { ArrowDownTrayIcon, CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 /**
  * Analytics › SLA & tickets. `embedded` drops the page's own navigation when it sits inside
  * AnalyticsLayout, which supplies it (MAIN-117).
+ *
+ * The period and sites live in the address (`from`, `to`, `site`), so a reload or a shared
+ * link opens the same view. Every count opens, in a new tab, the Tickets or Issues list of
+ * exactly the records it counted (MAIN-152, src/utils/analyticsDrill.js).
  */
 export default function Analytics({ embedded = false }) {
     // All sites, not just active — reporting on a departed school must still be possible.
     const { data: sites = [] } = useAllSites()
     // Workshop rows in the site filter tick the sites mapped to them (MAIN-131).
     const workshopGroups = useWorkshopSiteGroups(sites)
+    const [params, setParams] = useSearchParams()
     // [] = all sites. Exact `sites.name` values — matching is case-sensitive.
-    const [selectedSites, setSelectedSites] = useState([])
-    const [dateRange, setDateRange] = useState({
-        start: format(subMonths(new Date(), 11), 'yyyy-MM-01'), // Default last 12 months
-        end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
-    })
+    const siteKey = params.getAll('site').join('\n')
+    const selectedSites = useMemo(() => (siteKey ? siteKey.split('\n') : []), [siteKey])
+    const dateRange = {
+        start: params.get('from') || format(subMonths(new Date(), 11), 'yyyy-MM-01'), // Default last 12 months
+        end: params.get('to') || format(endOfMonth(new Date()), 'yyyy-MM-dd'),
+    }
+    const setFilters = ({ range = dateRange, sites: picked = selectedSites }) => {
+        const next = new URLSearchParams()
+        next.set('from', range.start || '')
+        next.set('to', range.end || '')
+        for (const s of picked) next.append('site', s)
+        setParams(next, { replace: true })
+    }
+    const setDateRange = range => setFilters({ range })
+    const setSelectedSites = picked => setFilters({ sites: picked })
+
+    // The address a count opens: the same period and sites, and the bucket clicked.
+    const selection = { from: dateRange.start, to: dateRange.end, sites: selectedSites }
+    const ticketsHref = where => analyticsHref('tickets', selection, where)
+    const issuesHref = where => analyticsHref('issues', selection, where)
 
     // One call for the whole selection: the counts come back pooled and every rate below
     // is computed from pooled counts. Never fetch per site and average the percentages
@@ -33,33 +55,19 @@ export default function Analytics({ embedded = false }) {
     // (analytics_ticket_rows / analytics_issue_rows, MAIN-171) — this page only lays the
     // counts out.
     const { data: stats = null } = useQuery({
-        queryKey: ['analytics', dateRange, selectedSites],
+        queryKey: ['analytics', dateRange.start, dateRange.end, selectedSites],
         queryFn: async () => {
             const { data, error } = await supabase.rpc('get_maintenance_stats', {
                 p_filters: { from: dateRange.start, to: dateRange.end, sites: selectedSites }
             })
             if (error) throw error
             return data
-        }
-    })
-
-    // Live overdue count — ignores date range, always reflects right now, but follows
-    // the site filter.
-    const { data: overdueCount = 0 } = useQuery({
-        queryKey: ['overdue_tickets_live', selectedSites],
-        queryFn: async () => {
-            let query = supabase
-                .from('tickets')
-                .select('*', { count: 'exact', head: true })
-                .not('status', 'in', '("Resolved","Closed","Rejected")')
-                .lt('final_sla_end_date', new Date().toISOString())
-            if (selectedSites.length) query = query.in('site', selectedSites)
-            const { count, error } = await query
-            if (error) throw error
-            return count || 0
         },
+        // Currently Overdue is live (it ignores the period but follows the sites), counted
+        // by the database with the same rule its list uses (MAIN-152).
         refetchInterval: 5 * 60 * 1000
     })
+    const overdueCount = Number(stats?.overdue) || 0
 
     // The screen and the Download are both drawn from this, so they cannot disagree.
     const report = useMemo(() => buildSlaReport(stats), [stats])
@@ -124,20 +132,30 @@ export default function Analytics({ embedded = false }) {
                             title="Overall SLA Adherence"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
                             rate={report?.completion.percentAll}
-                            detail={report ? `${report.completion.all.Adhered || 0} adhered · ${report.completion.all.Violated || 0} violated${report.completion.all.NA ? ` · ${report.completion.all.NA} not applicable` : ''} (of ${report.completion.total} total tickets)` : null}
+                            parts={report ? judgedParts(report.completion.all, report.completion.total, {
+                                Adhered: 'Adhered', Violated: 'Violated', Pending: 'Pending', NA: 'Not applicable',
+                            }, key => ticketsHref({ completion: key })) : null}
+                            totalHref={ticketsHref({})}
                             icon={<CheckCircleIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
                             title="Acceptance SLA Compliance"
                             subtitle={`${dateRange.start} – ${dateRange.end}`}
                             rate={report?.acceptance.percent}
-                            detail={report ? `${report.acceptance.adhered} on time · ${report.acceptance.violated} late${report.acceptance.na ? ` · ${report.acceptance.na} not applicable` : ''} · ${report.acceptance.pending} awaiting issue` : null}
+                            parts={report ? judgedParts({
+                                Adhered: report.acceptance.adhered, Violated: report.acceptance.violated,
+                                NA: report.acceptance.na, Pending: report.acceptance.pending,
+                            }, report.acceptance.total, {
+                                Adhered: 'On time', Violated: 'Late', NA: 'Not applicable', Pending: 'Awaiting issue',
+                            }, key => ticketsHref({ acceptance: key })) : null}
+                            totalHref={ticketsHref({})}
                             icon={<ClockIcon className="w-5 h-5" />}
                         />
                         <SLAKPICard
                             title="Currently Overdue"
                             subtitle="Live — open tickets past deadline"
                             count={overdueCount}
+                            countHref={analyticsHref('tickets', { sites: selectedSites }, { overdue: 'true' })}
                             icon={<ExclamationTriangleIcon className="w-5 h-5" />}
                         />
                     </div>
@@ -148,37 +166,37 @@ export default function Analytics({ embedded = false }) {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
                         <VerticalTable title="Tickets by Status">
-                            <Row label="Total" value={report.status.total} bold />
+                            <Row label="Total" value={report.status.total} bold href={ticketsHref({})} />
                             {report.status.rows.map(r => (
-                                <Row key={r.key} label={r.label} value={r.value} color={STATUS_COLORS[r.key]} />
+                                <Row key={r.key} label={r.label} value={r.value} color={STATUS_COLORS[r.key]} href={ticketsHref({ status: r.key })} />
                             ))}
                         </VerticalTable>
 
                         <VerticalTable title="Issues by Job Card Type">
                             {report.jobCardType.rows.map(r => (
-                                <Row key={r.key} label={r.label} value={r.value} color={r.key === 'none' ? 'text-gray-500' : undefined} />
+                                <Row key={r.key} label={r.label} value={r.value} color={r.key === 'none' ? 'text-gray-500' : undefined} href={issuesHref({ job_card_type: r.key })} />
                             ))}
-                            <Row label="Total" value={report.jobCardType.total} bold />
+                            <Row label="Total" value={report.jobCardType.total} bold href={issuesHref({})} />
                         </VerticalTable>
 
                         {report.severities.map(s => (
                             <VerticalTable key={s.severity} title={`Issues by Severity (${s.severity})`}>
-                                <Row label={`${s.severity} Total`} value={s.total} bold />
-                                {s.rows.map(r => <Row key={r.key} label={r.label} value={r.value} />)}
+                                <Row label={`${s.severity} Total`} value={s.total} bold href={issuesHref({ severity: s.severity })} />
+                                {s.rows.map(r => <Row key={r.key} label={r.label} value={r.value} href={issuesHref({ severity: s.severity, category: r.key })} />)}
                             </VerticalTable>
                         ))}
 
                         <div className="lg:col-span-2">
-                            <CompletionTable completion={report.completion} />
+                            <CompletionTable completion={report.completion} href={ticketsHref} />
                         </div>
 
                         <VerticalTable title="Ratings & Feedback">
-                            <Row label="Rating Pending" value={report.ratings.pending} color="text-gray-500" />
-                            <Row label="Ratings Collected" value={report.ratings.collected} />
+                            <Row label="Rating Pending" value={report.ratings.pending} color="text-gray-500" href={issuesHref({ rating_pending: 'true' })} />
+                            <Row label="Ratings Collected" value={report.ratings.collected} href={issuesHref({ rated: 'true' })} />
                             <Row label="Collection % (Sharan KPI)" value={percentText(report.ratings.collectionPercent)} bold />
-                            <Row label="Good" value={report.ratings.good} color="text-green-600" />
-                            <Row label="Ok" value={report.ratings.ok} color="text-yellow-600" />
-                            <Row label="Bad" value={report.ratings.bad} color="text-red-600" />
+                            <Row label="Good" value={report.ratings.good} color="text-green-600" href={issuesHref({ rating: 'Good' })} />
+                            <Row label="Ok" value={report.ratings.ok} color="text-yellow-600" href={issuesHref({ rating: 'Ok' })} />
+                            <Row label="Bad" value={report.ratings.bad} color="text-red-600" href={issuesHref({ rating: 'Bad' })} />
                             <Row label="CSAT % (Manjunath KPI)" value={percentText(report.ratings.csatPercent)} bold />
                         </VerticalTable>
 
@@ -205,7 +223,7 @@ const RESULT_COLORS = { Adhered: 'text-green-600', Violated: 'text-red-600', NA:
  * issues is on an Outsource job card, else In-house if any is on an In-house one, else
  * No job card yet; tickets with no issues on their own. All = every ticket.
  */
-function CompletionTable({ completion }) {
+function CompletionTable({ completion, href }) {
     const cols = completion.columns
     const th = 'px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap'
     const td = 'px-4 py-3 text-right text-sm whitespace-nowrap'
@@ -231,15 +249,23 @@ function CompletionTable({ completion }) {
                             <tr key={r.key} className="hover:bg-gray-50">
                                 <td className="px-4 py-3 text-sm text-gray-600 font-medium">{r.label}</td>
                                 {cols.map(c => (
-                                    <td key={c.key} className={`${td} ${RESULT_COLORS[r.key] || 'text-gray-900'}`}>{r.values[c.key]}</td>
+                                    <td key={c.key} className={`${td} ${RESULT_COLORS[r.key] || 'text-gray-900'}`}>
+                                        <DrillLink value={r.values[c.key]} href={href({ completion: r.key, job_card_type: c.key })} />
+                                    </td>
                                 ))}
-                                <td className={`${td} ${RESULT_COLORS[r.key] || 'text-gray-900'}`}>{r.all}</td>
+                                <td className={`${td} ${RESULT_COLORS[r.key] || 'text-gray-900'}`}>
+                                    <DrillLink value={r.all} href={href({ completion: r.key })} />
+                                </td>
                             </tr>
                         ))}
                         <tr className="bg-gray-50">
                             <td className="px-4 py-3 text-sm text-gray-900 font-bold">Total</td>
-                            {cols.map(c => <td key={c.key} className={`${td} font-bold text-gray-900`}>{completion.totals[c.key]}</td>)}
-                            <td className={`${td} font-bold text-gray-900`}>{completion.total}</td>
+                            {cols.map(c => (
+                                <td key={c.key} className={`${td} font-bold text-gray-900`}>
+                                    <DrillLink value={completion.totals[c.key]} href={href({ job_card_type: c.key })} />
+                                </td>
+                            ))}
+                            <td className={`${td} font-bold text-gray-900`}><DrillLink value={completion.total} href={href({})} /></td>
                         </tr>
                         <tr>
                             <td className="px-4 py-3 text-sm text-gray-900 font-bold">SLA %</td>
@@ -266,16 +292,60 @@ function VerticalTable({ title, children }) {
     )
 }
 
-function Row({ label, value, color = "text-gray-900", bold = false }) {
+/**
+ * A count that opens its list in a new tab (MAIN-152). Zero, or no address (a percentage),
+ * stays plain text.
+ */
+function DrillLink({ value, href, className = '' }) {
+    if (!href || !(Number(value) > 0)) return <span className={className}>{value}</span>
+    return (
+        <Link
+            to={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open these records in a new tab"
+            aria-label={`${value} — open these records in a new tab`}
+            className={`underline decoration-dotted underline-offset-4 decoration-current/40 hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-sm ${className}`}
+        >
+            {value}
+        </Link>
+    )
+}
+
+function Row({ label, value, color = "text-gray-900", bold = false, href }) {
     return (
         <div className="flex justify-between items-center px-4 py-3 hover:bg-gray-50">
             <span className="text-sm text-gray-600 font-medium">{label}</span>
-            <span className={`text-sm ${color} ${bold ? 'font-bold' : ''}`}>{value}</span>
+            <DrillLink value={value} href={href} className={`text-sm ${color} ${bold ? 'font-bold' : ''}`} />
         </div>
     )
 }
 
-function SLAKPICard({ title, subtitle, rate, detail, count, icon }) {
+/**
+ * An SLA card's parts, each its own count: the judged ones (Adhered / Violated) with their
+ * share of the judged total — the card's percentage — and the rest as counts only.
+ */
+function judgedParts(counts, total, labels, hrefFor) {
+    const n = k => Number(counts?.[k]) || 0
+    const judged = n('Adhered') + n('Violated')
+    const keys = ['Adhered', 'Violated', 'Pending', 'NA']
+    // Any other verdict the database returns still shows, so the parts add up to the total.
+    const extra = Object.keys(counts || {}).filter(k => !keys.includes(k))
+    return {
+        total,
+        items: [...keys, ...extra]
+            .filter(k => k === 'Adhered' || k === 'Violated' || n(k) > 0)
+            .map(k => ({
+                key: k,
+                label: labels[k] || k,
+                value: n(k),
+                percent: k === 'Adhered' || k === 'Violated' ? percent(n(k), judged) : null,
+                href: hrefFor(k),
+            })),
+    }
+}
+
+function SLAKPICard({ title, subtitle, rate, parts, totalHref, count, countHref, icon }) {
     const isCountCard = count !== undefined
 
     const rateColor = rate === null || rate === undefined
@@ -296,7 +366,7 @@ function SLAKPICard({ title, subtitle, rate, detail, count, icon }) {
             </div>
 
             {isCountCard ? (
-                <div className={`text-4xl font-bold ${countColor}`}>{count}</div>
+                <DrillLink value={count} href={countHref} className={`text-4xl font-bold ${countColor}`} />
             ) : (
                 <>
                     <div className={`text-4xl font-bold ${rateColor}`}>
@@ -312,7 +382,19 @@ function SLAKPICard({ title, subtitle, rate, detail, count, icon }) {
             )}
 
             <div className="space-y-0.5">
-                {detail && <p className="text-xs text-gray-500">{detail}</p>}
+                {parts && (
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                        {parts.items.map((p, i) => (
+                            <span key={p.key}>
+                                {i > 0 && <span className="text-gray-400"> · </span>}
+                                {p.label} <DrillLink value={p.value} href={p.href} className="font-semibold text-gray-800" />
+                                {p.percent !== null && <span className="text-gray-500"> ({percentText(p.percent)})</span>}
+                            </span>
+                        ))}
+                        <span className="text-gray-400"> · </span>
+                        of <DrillLink value={parts.total} href={totalHref} className="font-semibold text-gray-800" /> tickets
+                    </p>
+                )}
                 <p className="text-xs text-gray-400">{subtitle}</p>
             </div>
         </div>

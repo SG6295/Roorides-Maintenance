@@ -16,12 +16,13 @@ export function useListState(defaults) {
     const state = useMemo(() => parseListState(params, defaults), [params, defaults])
 
     // A list opened with no date range in its address gets the default written in, so
-    // that copying the address always shares the same period.
+    // that copying the address always shares the same period. A list opened from Analytics
+    // (MAIN-152) uses the Analytics period instead.
     useEffect(() => {
-        if (!params.has('from')) {
+        if (!params.has('from') && !state.analytics) {
             setParams(prev => listStateToParams(parseListState(prev, defaults), defaults), { replace: true })
         }
-    }, [params, setParams, defaults])
+    }, [params, setParams, defaults, state.analytics])
 
     const update = useCallback((patchFn, { keepPage = false, replace = false } = {}) => {
         setParams(prev => {
@@ -42,7 +43,12 @@ export function useListState(defaults) {
             else delete filters[key]
             return { filters }
         }),
-        clearAll: () => update(() => ({ filters: {}, search: '', sort: defaults.sort, dir: defaults.dir })),
+        // Back to the plain list: the Analytics selection goes too, and the default period returns.
+        clearAll: () => update(() => ({
+            filters: {}, search: '', sort: defaults.sort, dir: defaults.dir,
+            analytics: undefined, from: defaults.from ?? '', to: defaults.to ?? '',
+        })),
+        clearAnalytics: () => update(() => ({ analytics: undefined, from: defaults.from ?? '', to: defaults.to ?? '' })),
         setPage: page => update(() => ({ page }), { keepPage: true }),
         setDateRange: ({ start, end }) => update(() => ({ from: start || '', to: end || '' })),
     }

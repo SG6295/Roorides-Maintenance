@@ -10,13 +10,13 @@ import { SLA_STATUS_LABELS } from '../utils/slaStatus'
 import Navigation from '../components/shared/Navigation'
 import SLAStatusBadge from '../components/shared/SLAStatusBadge'
 import DateRangeFilter from '../components/tickets/DateRangeFilter'
-import DataTable, { ActiveFilters, ColumnsButton, ListSearch } from '../components/shared/table/DataTable'
+import DataTable, { ActiveFilters, AnalyticsOrigin, ColumnsButton, ListSearch } from '../components/shared/table/DataTable'
+import { ISSUE_JOB_CARD_TYPE_LABELS as JOB_CARD_TYPE_LABELS } from '../utils/analyticsDrill'
 
 const RPC = 'get_issue_list'
 const KEY = 'issues'
 
-// The job card's own type (MAIN-171); 'None' = the issue has no job card yet.
-const JOB_CARD_TYPE_LABELS = { InHouse: 'In-house', Outsource: 'Outsource', None: 'No job card yet' }
+const RATING_STYLES = { Good: 'text-green-700', Ok: 'text-yellow-700', Bad: 'text-red-700' }
 
 export default function Issues() {
     const { userProfile } = useAuth()
@@ -35,6 +35,11 @@ export default function Issues() {
     const { data, isLoading, isPlaceholderData } = useServerList(RPC, KEY, list.state)
     const rows = data?.rows || []
     const total = data?.total ?? 0
+
+    // A list opened from an Analytics number shows the column it was picked by (MAIN-152).
+    const drillWhere = list.state.analytics?.where || {}
+    const ratingWanted = ['rating', 'rated', 'rating_pending'].some(k => k in drillWhere)
+    const jobCardTypeWanted = 'job_card_type' in drillWhere
 
     const columns = useMemo(() => [
         {
@@ -95,6 +100,12 @@ export default function Issues() {
             key: 'sla_end_date', label: 'SLA Due', sortKey: 'sla_end_date', hiddenByDefault: true,
             render: r => <span className="text-gray-600">{r.sla_end_date ? formatAs(r.sla_end_date, 'd MMM') : '—'}</span>,
         },
+        {
+            // The supervisor's rating (MAIN-152); blank = not rated.
+            key: 'rating', label: 'Rating', sortKey: 'rating', filter: 'values', hiddenByDefault: !ratingWanted,
+            formatValue: v => v,
+            render: r => <span className={RATING_STYLES[r.rating] || 'text-gray-400'}>{r.rating || 'Not rated'}</span>,
+        },
         ...(canSeeJobCards ? [
             {
                 key: 'job_card_number', label: 'Job Card', sortKey: 'job_card_number',
@@ -103,12 +114,12 @@ export default function Issues() {
                     : '—',
             },
             {
-                key: 'job_card_type', label: 'Job card type', sortKey: 'job_card_type', filter: 'values', hiddenByDefault: true,
+                key: 'job_card_type', label: 'Job card type', sortKey: 'job_card_type', filter: 'values', hiddenByDefault: !jobCardTypeWanted,
                 formatValue: v => JOB_CARD_TYPE_LABELS[v] || v,
                 render: r => <span className="text-gray-700">{JOB_CARD_TYPE_LABELS[r.job_card_type] || '—'}</span>,
             },
         ] : []),
-    ], [siteByName, canSeeJobCards])
+    ], [siteByName, canSeeJobCards, ratingWanted, jobCardTypeWanted])
 
     // SLA Due (also in the SLA badge's tooltip) and Job card type start hidden, so the table
     // fits a laptop screen; Columns brings them back.
@@ -129,7 +140,9 @@ export default function Issues() {
                 </div>
 
                 <div className="flex flex-wrap gap-2 items-center">
-                    <DateRangeFilter dateRange={{ start: list.state.from, end: list.state.to }} onDateRangeChange={list.setDateRange} />
+                    {list.state.analytics
+                        ? <AnalyticsOrigin list={list} listName="issues" />
+                        : <DateRangeFilter dateRange={{ start: list.state.from, end: list.state.to }} onDateRangeChange={list.setDateRange} />}
                     <ListSearch list={list} placeholder="Search issue, description, vehicle, ticket, site…" />
                     <div className="sm:ml-auto">
                         <ColumnsButton columns={columns} visibleKeys={visibleKeys ?? defaultKeys} onChange={setVisibleKeys} defaultKeys={defaultKeys} />

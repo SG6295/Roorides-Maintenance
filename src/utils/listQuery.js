@@ -15,9 +15,14 @@
  *   min.value=1000&max.value=5000   a number between
  *   from.raised_on=2026-11-10&to.raised_on=2026-11-20   a date between
  *
+ *   an.from=…&an.to=…&an.site=…&an.acceptance=Violated   opened from an Analytics number
+ *                                (MAIN-152, src/utils/analyticsDrill.js); while present the
+ *                                Analytics period replaces from/to
+ *
  * The state turns into the `p_query` the database's list functions take (list_query,
  * migration main151_list_engine) with `toServerQuery`.
  */
+import { parseAnalytics, appendAnalytics, analyticsToServer } from './analyticsDrill'
 
 /** A filter on one column: { values: (string|null)[] } or { min, max } or { from, to }. */
 
@@ -47,7 +52,9 @@ export function parseListState(params, defaults) {
 
     const dir = params.get('dir')
     const page = parseInt(params.get('page') || '1', 10)
+    const analytics = parseAnalytics(params)
     return {
+        ...(analytics ? { analytics } : {}),
         search: params.get('q') || '',
         sort: params.get('sort') || defaults.sort,
         dir: dir === 'asc' || dir === 'desc' ? dir : defaults.dir,
@@ -61,7 +68,8 @@ export function parseListState(params, defaults) {
 /**
  * The state as URL parameters. Sort and direction are left out when they are the
  * defaults, so a plain link stays short; the date range is always written, so a shared
- * link opens the same period whatever month it is opened in.
+ * link opens the same period whatever month it is opened in — or, for a list opened from
+ * Analytics, the Analytics selection instead.
  */
 export function listStateToParams(state, defaults) {
     const p = new URLSearchParams()
@@ -71,8 +79,11 @@ export function listStateToParams(state, defaults) {
         p.set('dir', state.dir)
     }
     if (state.page > 1) p.set('page', String(state.page))
-    p.set('from', state.from || '')
-    p.set('to', state.to || '')
+    if (state.analytics) appendAnalytics(p, state.analytics)
+    else {
+        p.set('from', state.from || '')
+        p.set('to', state.to || '')
+    }
 
     for (const [key, spec] of Object.entries(state.filters || {})) {
         if (!isActiveFilter(spec)) continue
@@ -109,11 +120,12 @@ export function toServerQuery(state, { pageSize = DEFAULT_PAGE_SIZE, facet } = {
         filters[key] = out
     }
     const q = {
-        from: state.from || null,
-        to: state.to || null,
+        from: state.analytics ? null : (state.from || null),
+        to: state.analytics ? null : (state.to || null),
         search: state.search?.trim() || null,
         filters,
     }
+    if (state.analytics) q.analytics = analyticsToServer(state.analytics)
     if (facet) return { ...q, facet }
     return { ...q, sort: state.sort, dir: state.dir, page: state.page, page_size: pageSize }
 }
