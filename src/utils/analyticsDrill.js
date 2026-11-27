@@ -15,6 +15,9 @@
  * `where` keys are the bucket columns of those functions:
  *   tickets: status, acceptance, completion, job_card_type, overdue
  *   issues:  severity, category, job_card_type, rating, rating_pending, rated
+ *   labour:  completed_on, site, technician_id, technician_role, attributed
+ *            (MAIN-176, analytics_labour_rows — Analytics › Labour utilisation; its
+ *            trade and technician choices travel as technician_role / technician_id)
  */
 import { format, parseISO } from 'date-fns'
 
@@ -67,7 +70,7 @@ export function analyticsToServer(drill) {
 /**
  * The address a number opens.
  *
- * @param {'tickets'|'issues'} list
+ * @param {'tickets'|'issues'|'labour'} list
  * @param {{ from?: string, to?: string, sites?: string[] }} selection the Analytics filters;
  *        leave out from/to for a figure that ignores the period (Currently Overdue)
  * @param {Record<string, string|boolean>} where the bucket clicked ({} = everything)
@@ -105,7 +108,15 @@ const WHERE_TEXT = {
         rating_pending: v => (v === 'true' ? 'Rating pending' : 'Rating not pending'),
         rated: v => (v === 'true' ? 'Ratings collected' : 'Not rated'),
     },
+    labour: {
+        completed_on: v => `Completed ${dayText(v, true)}`,
+        site: v => `Site: ${v}`,
+        technician_role: v => `Trade: ${TRADE_LABELS[v] || v}`,
+        attributed: v => (v === 'true' ? 'Attributed hours' : 'Unattributed hours'),
+    },
 }
+
+const TRADE_LABELS = { mechanic: 'Mechanic', electrician: 'Electrician' }
 
 function dayText(iso, withYear) {
     try { return format(parseISO(iso), withYear ? 'd MMM yyyy' : 'd MMM') } catch { return iso }
@@ -121,18 +132,28 @@ export function periodText(from, to) {
     return from ? `from ${dayText(from, true)}` : `up to ${dayText(to, true)}`
 }
 
+const ALL_TEXT = { tickets: 'All tickets', issues: 'All issues', labour: 'All labour hours' }
+// Tickets by the day they were raised, issues by their own Raised day, labour by the
+// work item's activity complete day.
+const PERIOD_TEXT = { tickets: 'tickets raised', issues: 'issues raised', labour: 'completed' }
+
 /**
  * The parts of the "From Analytics" strip, e.g.
  * ["Acceptance SLA: Late", "tickets raised 1 Jan – 30 Nov 2026", "sites BWIS, KUNS"].
+ *
+ * `names` turns ids into words: { technician_id: { <uuid>: 'Ravi Kumar' } }.
  */
-export function describeDrill(list, drill) {
+export function describeDrill(list, drill, names = {}) {
     if (!drill) return []
     const text = WHERE_TEXT[list] || {}
-    const parts = Object.entries(drill.where || {}).map(([k, v]) => (text[k] ? text[k](String(v)) : `${k}: ${v}`))
-    if (parts.length === 0) parts.push(list === 'issues' ? 'All issues' : 'All tickets')
+    const parts = Object.entries(drill.where || {}).map(([k, v]) => {
+        if (names[k]) return names[k][v] || 'Technician'
+        return text[k] ? text[k](String(v)) : `${k}: ${v}`
+    })
+    if (parts.length === 0) parts.push(ALL_TEXT[list] || 'All')
     const period = periodText(drill.from, drill.to)
-    // Tickets by the day they were raised, issues by their own Raised day.
-    if (period) parts.push(`${list === 'issues' ? 'issues raised' : 'tickets raised'} ${period}`)
+    // A single day already names the period.
+    if (period && !('completed_on' in (drill.where || {}))) parts.push(`${PERIOD_TEXT[list] || ''} ${period}`.trim())
     const sites = drill.sites || []
     parts.push(sites.length === 0 ? 'all sites'
         : sites.length <= 3 ? `${sites.length === 1 ? 'site' : 'sites'} ${sites.join(', ')}`

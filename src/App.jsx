@@ -10,6 +10,7 @@ import TicketDetail from './pages/TicketDetail'
 import JobCards from './pages/JobCards'
 import JobCardDetail from './pages/JobCardDetail'
 import Issues from './pages/Issues'
+import Labour from './pages/Labour'
 import SLASettings from './pages/SLASettings'
 import Analytics from './pages/Analytics'
 import AnalyticsLayout, { AnalyticsIndex } from './pages/analytics/AnalyticsLayout'
@@ -153,6 +154,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Issues />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/labour"
+              element={
+                <ProtectedRoute allowedRoles={['maintenance_exec', 'super_admin', 'finance']}>
+                  <Labour />
                 </ProtectedRoute>
               }
             />

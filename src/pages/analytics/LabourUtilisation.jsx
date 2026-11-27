@@ -18,6 +18,7 @@ import DateRangeFilter from '../../components/tickets/DateRangeFilter'
 import MultiFilterSelect from '../../components/shared/MultiFilterSelect'
 import FilterSelect from '../../components/shared/FilterSelect'
 import { mechanicPath } from '../../utils/employeeId'
+import { labourHref } from '../../utils/labourList'
 
 // Categorical slice colours; "Other" is always the grey.
 const SLICE_COLORS = ['#2563eb', '#d97706', '#059669', '#7c3aed', '#db2777', '#0891b2']
@@ -62,6 +63,10 @@ export default function LabourUtilisation() {
     const grid = useMemo(() => (tooManyDays ? null : buildGrid(filtered, days)), [filtered, days, tooManyDays])
     const ranked = useMemo(() => rankSites(filtered), [filtered])
     const slices = useMemo(() => siteSlices(ranked), [ranked])
+
+    // Drill-down (MAIN-176): a figure opens the Labour list with this page's period, sites,
+    // trade and technician, narrowed to what was clicked.
+    const drillHref = (clicked) => labourHref(dateRange, { sites: selectedSites, trade, technicianId }, clicked)
 
     const siteLabel = useMemo(() => {
         const byName = new Map(sites.map(s => [s.name, formatSiteLabel(s)]))
@@ -128,7 +133,7 @@ export default function LabourUtilisation() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                         <Tile
                             label="Total labour hours"
-                            value={formatHours(summary.totalHours)}
+                            value={<HoursLink hours={summary.totalHours} href={drillHref({})} />}
                             note={`${summary.workItems} work item${summary.workItems === 1 ? '' : 's'}`}
                         />
                         <Tile
@@ -143,7 +148,7 @@ export default function LabourUtilisation() {
                         />
                         <Tile
                             label="Unattributed"
-                            value={`${formatHours(summary.unattributedHours)} h`}
+                            value={<><HoursLink hours={summary.unattributedHours} href={drillHref({ attributed: false })} /> h</>}
                             note="Logged before per-person tracking"
                         />
                     </div>
@@ -177,7 +182,7 @@ export default function LabourUtilisation() {
                                 {summary.unattributedHours > 0 && ` — the ${formatHours(summary.unattributedHours)} h here were logged before per-person tracking`}.
                             </p>
                         ) : (
-                            <LabourGrid grid={grid} days={days} />
+                            <LabourGrid grid={grid} days={days} drillHref={drillHref} />
                         )}
 
                         <p className="text-xs text-gray-500">
@@ -223,7 +228,9 @@ export default function LabourUtilisation() {
                                             <span className="h-3.5 bg-gray-100 rounded">
                                                 <span className="block h-3.5 bg-blue-600 rounded" style={{ width: `${(s.hours / ranked[0].hours) * 100}%` }} />
                                             </span>
-                                            <span className="text-sm text-gray-700 text-right tabular-nums">{formatHours(s.hours)}</span>
+                                            <span className="text-sm text-gray-700 text-right tabular-nums">
+                                                <HoursLink hours={s.hours} href={s.site === '—' ? null : drillHref({ site: s.site })} />
+                                            </span>
                                         </li>
                                     ))}
                                 </ul>
@@ -246,7 +253,24 @@ function Tile({ label, value, note }) {
     )
 }
 
-function LabourGrid({ grid, days }) {
+/** An hours figure that opens the Labour entries behind it in a new tab (MAIN-176). */
+function HoursLink({ hours, href, text = formatHours(hours) }) {
+    if (!href || !(hours > 0)) return <>{text}</>
+    return (
+        <Link
+            to={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open these labour entries in a new tab"
+            aria-label={`${text} hours — open these labour entries in a new tab`}
+            className="underline decoration-dotted underline-offset-4 decoration-current/40 hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-sm"
+        >
+            {text}
+        </Link>
+    )
+}
+
+function LabourGrid({ grid, days, drillHref }) {
     return (
         <div className="overflow-x-auto">
             <table className="border-separate border-spacing-[3px] text-xs">
@@ -280,20 +304,24 @@ function LabourGrid({ grid, days }) {
                                     title={c.items.length ? `${format(parseISO(c.day), 'dd MMM')}\n${c.items.join('\n')}` : undefined}
                                     className={`h-9 rounded text-center font-semibold tabular-nums ${HOUR_BANDS[hourBand(c.hours)].className}`}
                                 >
-                                    {c.hours ? formatHours(c.hours) : '–'}
+                                    {c.hours ? <HoursLink hours={c.hours} href={drillHref({ technician_id: t.id, completed_on: c.day })} /> : '–'}
                                 </td>
                             ))}
-                            <td className="px-2 text-right text-sm font-bold text-gray-900 tabular-nums">{formatHours(t.total)}</td>
+                            <td className="px-2 text-right text-sm font-bold text-gray-900 tabular-nums">
+                                <HoursLink hours={t.total} href={drillHref({ technician_id: t.id })} />
+                            </td>
                         </tr>
                     ))}
                     <tr>
                         <td className="sticky left-0 z-10 bg-white pr-3 pt-2 text-xs font-semibold text-gray-600 border-t border-gray-200">Day total</td>
                         {grid.dayTotals.map((h, i) => (
                             <td key={days[i]} className="pt-2 text-center font-semibold text-gray-700 border-t border-gray-200 tabular-nums">
-                                {h ? formatHours(h) : ''}
+                                {h ? <HoursLink hours={h} href={drillHref({ completed_on: days[i], attributed: true })} /> : ''}
                             </td>
                         ))}
-                        <td className="px-2 pt-2 text-right text-sm font-bold text-gray-900 border-t border-gray-200 tabular-nums">{formatHours(grid.grandTotal)}</td>
+                        <td className="px-2 pt-2 text-right text-sm font-bold text-gray-900 border-t border-gray-200 tabular-nums">
+                            <HoursLink hours={grid.grandTotal} href={drillHref({ attributed: true })} />
+                        </td>
                     </tr>
                 </tbody>
             </table>

@@ -11,11 +11,13 @@ import { describeFilter, isActiveFilter, DEFAULT_PAGE_SIZE, columnFilterKey, sor
  *
  * `list` = useListState(...) plus { rpc, keyBase }; `columns` as ColumnMenu describes, plus
  * `render(row)`, optional `align: 'right'` and `headerClassName` / `cellClassName`.
+ * Optional `rowClassName(row, index)` adds classes to a row, and `footer` (table rows)
+ * goes under the body — the Labour list's Total row (MAIN-176).
  */
 export default function DataTable({
     list, columns, rows = [], total = 0, loading = false, stale = false,
     rowKey = r => r.id, onRowClick, emptyText = 'Nothing matches these filters.',
-    pageSize = DEFAULT_PAGE_SIZE,
+    pageSize = DEFAULT_PAGE_SIZE, rowClassName, footer = null,
 }) {
     return (
         <div className="bg-white rounded-lg shadow border border-gray-200">
@@ -41,11 +43,11 @@ export default function DataTable({
                         {!loading && rows.length === 0 && (
                             <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-gray-600">{emptyText}</td></tr>
                         )}
-                        {rows.map(row => (
+                        {rows.map((row, index) => (
                             <tr
                                 key={rowKey(row)}
                                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                                className={`hover:bg-gray-50 ${onRowClick ? 'cursor-pointer' : ''}`}
+                                className={`hover:bg-gray-50 ${onRowClick ? 'cursor-pointer' : ''} ${rowClassName ? rowClassName(row, index) : ''}`}
                             >
                                 {columns.map(c => (
                                     <td key={c.key} className={`px-4 py-3 ${c.align === 'right' ? 'text-right' : ''} ${c.cellClassName ?? 'whitespace-nowrap'}`}>
@@ -55,6 +57,7 @@ export default function DataTable({
                             </tr>
                         ))}
                     </tbody>
+                    {footer && rows.length > 0 && <tfoot className="border-t border-gray-200">{footer}</tfoot>}
                 </table>
             </div>
             <Pagination page={list.state.page} pageSize={pageSize} total={total} onPage={list.setPage} />
@@ -197,12 +200,13 @@ export function ColumnsButton({ columns, visibleKeys, onChange, defaultKeys }) {
  * on a list opened from an Analytics number (MAIN-152). It stands in for the date range box
  * while it is there; ✕ goes back to the plain list.
  *
- * @param {'tickets'|'issues'} listName
+ * @param {'tickets'|'issues'|'labour'} listName
+ * @param {object} [names] ids to words, as describeDrill takes them
  */
-export function AnalyticsOrigin({ list, listName }) {
+export function AnalyticsOrigin({ list, listName, names }) {
     const drill = list.state.analytics
     if (!drill) return null
-    const parts = describeDrill(listName, drill)
+    const parts = describeDrill(listName, drill, names)
     return (
         <div className="inline-flex items-center gap-2 min-h-[44px] pl-3 pr-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-sm text-indigo-900 max-w-full">
             <span className="min-w-0">
