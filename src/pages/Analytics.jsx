@@ -234,6 +234,9 @@ function CompletionTable({ completion, href }) {
                 <p className="text-xs text-gray-500 mt-0.5">
                     By the ticket's job card type. In-house SLA % is Sharan's KPI; Outsource SLA % is Manjunath's KPI.
                 </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                    A ticket with both in-house and outsourced work counts once, as Outsource.
+                </p>
             </div>
             <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">

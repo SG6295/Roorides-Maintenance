@@ -131,8 +131,8 @@ export function describeDrill(list, drill) {
     const parts = Object.entries(drill.where || {}).map(([k, v]) => (text[k] ? text[k](String(v)) : `${k}: ${v}`))
     if (parts.length === 0) parts.push(list === 'issues' ? 'All issues' : 'All tickets')
     const period = periodText(drill.from, drill.to)
-    // Analytics places an issue by the day its ticket was raised, not its own day.
-    if (period) parts.push(`${list === 'issues' ? 'on tickets raised' : 'tickets raised'} ${period}`)
+    // Tickets by the day they were raised, issues by their own Raised day.
+    if (period) parts.push(`${list === 'issues' ? 'issues raised' : 'tickets raised'} ${period}`)
     const sites = drill.sites || []
     parts.push(sites.length === 0 ? 'all sites'
         : sites.length <= 3 ? `${sites.length === 1 ? 'site' : 'sites'} ${sites.join(', ')}`

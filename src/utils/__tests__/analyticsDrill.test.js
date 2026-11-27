@@ -72,7 +72,7 @@ describe('describeDrill', () => {
 
     it('says issues are placed by their ticket\'s raise day', () => {
         const parts = describeDrill('issues', { from: '2026-01-01', to: '2026-11-30', sites: [], where: { rating_pending: 'true' } })
-        expect(parts).toEqual(['Rating pending', 'on tickets raised 1 Jan – 30 Nov 2026', 'all sites'])
+        expect(parts).toEqual(['Rating pending', 'issues raised 1 Jan – 30 Nov 2026', 'all sites'])
     })
 
     it('reads a live figure with no period', () => {
