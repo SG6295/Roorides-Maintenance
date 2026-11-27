@@ -65,6 +65,21 @@ export default function Dashboard() {
               </Link>
             )}
 
+            {/* Labour (MAIN-176) */}
+            {(['maintenance_exec', 'super_admin', 'finance'].includes(userProfile?.role)) && (
+              <Link
+                to="/labour"
+                className="bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center group"
+              >
+                <div className="w-12 h-12 bg-cyan-100 rounded-full flex items-center justify-center mb-4 group-hover:bg-cyan-200 transition-colors">
+                  <svg className="w-6 h-6 text-cyan-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">Labour</h3>
+              </Link>
+            )}
+
             {/* 4. View Feedback */}
             <Link
               to="/feedback"

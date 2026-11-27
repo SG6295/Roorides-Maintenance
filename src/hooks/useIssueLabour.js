@@ -28,6 +28,7 @@ function invalidateLabour(queryClient, jobCardId) {
     queryClient.invalidateQueries({ queryKey: ['audit_logs'] })
     queryClient.invalidateQueries({ queryKey: ['vehicle_history'] })
     queryClient.invalidateQueries({ queryKey: ['mechanic_activity'] })
+    queryClient.invalidateQueries({ queryKey: ['labour_list'] })
 }
 
 /**

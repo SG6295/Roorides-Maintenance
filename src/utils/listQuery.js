@@ -161,6 +161,7 @@ export function describeFilter(spec, formatValue = v => v) {
 
 /** The sort menu's two labels, worded for the column's kind. */
 export function sortLabels(column) {
+    if (column.sortLabels) return column.sortLabels
     if (column.filter === 'date') return ['Oldest first', 'Newest first']
     if (column.filter === 'number') return ['Smallest first', 'Largest first']
     return ['Sort A → Z', 'Sort Z → A']

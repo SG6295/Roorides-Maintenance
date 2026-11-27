@@ -3192,6 +3192,19 @@ export type Database = {
           ticket_status: string
         }[]
       }
+      analytics_labour_rows: {
+        Args: { p_filters: Json }
+        Returns: {
+          attributed: boolean
+          completed_on: string
+          hours: number
+          issue_id: string
+          labour_id: string
+          site: string
+          technician_id: string
+          technician_role: string
+        }[]
+      }
       analytics_row_matches: {
         Args: { p_row: Json; p_where: Json }
         Returns: boolean
@@ -3355,6 +3368,7 @@ export type Database = {
       }
       get_issue_list: { Args: { p_query?: Json }; Returns: Json }
       get_job_card_list: { Args: { p_query?: Json }; Returns: Json }
+      get_labour_list: { Args: { p_query?: Json }; Returns: Json }
       get_labour_report: {
         Args: { p_from: string; p_to: string }
         Returns: {
@@ -3510,6 +3524,30 @@ export type Database = {
       job_card_value: {
         Args: { jc: Database["public"]["Tables"]["job_cards"]["Row"] }
         Returns: number
+      }
+      labour_list_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json[]
+      }
+      labour_report_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          attributed: boolean
+          category: string
+          completed_on: string
+          description: string
+          hours: number
+          issue_id: string
+          issue_number: string
+          job_card_number: number
+          labour_id: string
+          site: string
+          technician_employee_id: string
+          technician_id: string
+          technician_name: string
+          technician_role: string
+          vehicle_number: string
+        }[]
       }
       list_base_rows: {
         Args: { p_from: string; p_list: string; p_to: string }
